@@ -156,9 +156,10 @@ class QwenTTSManager:
     @classmethod
     async def is_worker_healthy(cls, target_url: Optional[str] = None) -> bool:
         url = (target_url or cls.resolve_target_url()).rstrip("/")
+        timeout_sec = 4.0 if cls.is_remote_url(url) else 1.5
         try:
             client = cls.get_client()
-            res = await client.get(f"{url}/health", timeout=1.5)
+            res = await client.get(f"{url}/health", timeout=timeout_sec)
             if res.status_code == 200:
                 data = res.json()
                 return data.get("status") == "ready"
@@ -210,9 +211,10 @@ class QwenTTSManager:
     @classmethod
     async def get_worker_status(cls, target_url: Optional[str] = None) -> Optional[str]:
         url = (target_url or cls.resolve_target_url()).rstrip("/")
+        timeout_sec = 4.0 if cls.is_remote_url(url) else 2.0
         try:
             client = cls.get_client()
-            res = await client.get(f"{url}/health", timeout=2.0)
+            res = await client.get(f"{url}/health", timeout=timeout_sec)
             if res.status_code == 200:
                 data = res.json()
                 return data.get("status")
@@ -304,6 +306,10 @@ class QwenTTSManager:
                     "text": text,
                     "language": language or "Portuguese",
                     "instruct": instruct,
+                    "temperature": 0.65,
+                    "top_p": 0.90,
+                    "repetition_penalty": 1.05,
+                    "max_new_tokens": 2048,
                 },
                 timeout=90.0,
             )
@@ -356,6 +362,10 @@ class QwenTTSManager:
                     "text": text,
                     "language": language or "Portuguese",
                     "instruct": instruct,
+                    "temperature": 0.65,
+                    "top_p": 0.90,
+                    "repetition_penalty": 1.05,
+                    "max_new_tokens": 2048,
                 },
                 timeout=httpx.Timeout(90.0, connect=5.0, read=90.0),
             )

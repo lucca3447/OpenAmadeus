@@ -17,6 +17,7 @@ class TTSRequest(BaseModel):
     rvc_model: Optional[str] = Field("KurisuRVCv147", alias="rvcModel")
     rvc_pitch: Optional[int] = Field(0, alias="rvcPitch")
     rvc_index_rate: Optional[float] = Field(0.75, alias="rvcIndexRate")
+    stream: Optional[bool] = False
 
 
 class QwenPingRequest(BaseModel):

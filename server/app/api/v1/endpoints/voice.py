@@ -25,6 +25,7 @@ async def text_to_speech(req: TTSRequest):
         qwen_remote_url=req.qwen_remote_url,
         emotion=req.emotion,
         instruct=req.instruct,
+        stream=bool(req.stream),
     )
     headers = {
         "X-Accel-Buffering": "no",

@@ -83,7 +83,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleTestVoice = async () => {
     setIsTestingVoice(true);
     const sampleText = voiceSettings.engine === 'qwen3'
-      ? 'Não precisa me envergonhar assim... seu idiota!'
+      ? 'Não precisa me envergonhar assim! Seu idiota!'
       : voiceSettings.engine === 'kokoro'
         ? 'Olá, este é o motor neural Kokoro ultrarrápido em português!'
         : voiceSettings.neuralVoice?.startsWith('ja-JP')

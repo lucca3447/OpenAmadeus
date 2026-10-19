@@ -3,9 +3,11 @@ from typing import Optional, Tuple
 from app.schemas.chat import LearnedMemoryInfo
 
 VALID_EMOTIONS = [
-    "neutral", "smile", "happy", "serious", "annoyed",
-    "surprised", "tsundere", "thinking", "smug", "flustered",
-    "sad", "puzzled", "desperate"
+    # Canonical 21 Visual Novel / OpenAmadeus emotions
+    "neutral", "tsundere", "flustered", "blushing", "smile", "happy",
+    "serious", "analytical", "thinking", "annoyed", "stern", "smug",
+    "disdain", "puzzled", "worried", "sad", "holding_back_tears",
+    "desperate", "wink", "look_side", "eyes_closed",
 ]
 
 def is_scratchpad_or_reasoning(text: Optional[str]) -> bool:
@@ -147,8 +149,8 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
     # Strip asterisks stage directions from dialogue
     clean = re.sub(r"\*[^*]+\*", "", clean)
 
-    # 4. Context-aware inference from user intent & physical command triggers
-    if user_message:
+    # 4. Context-aware inference from user intent & physical command triggers (only when LLM tag was not explicit)
+    if user_message and (not emotion_match or emotion in ("neutral", "serious")):
         u_lower = user_message.lower()
         if re.search(r"(?i)\b(barata|fujiko|inseto|insetos)\b", u_lower):
             emotion = "desperate"

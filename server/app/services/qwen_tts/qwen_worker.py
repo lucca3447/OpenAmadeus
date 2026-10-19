@@ -4,8 +4,18 @@ import sys
 import re
 import threading
 import numpy as np
-import torch
-import soundfile as sf
+try:
+    import torch
+    default_dtype = torch.float32
+except ImportError:
+    torch = None
+    default_dtype = None
+
+try:
+    import soundfile as sf
+except ImportError:
+    sf = None
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -15,7 +25,7 @@ from typing import Optional
 model = None
 load_error = None
 device_name = "cpu"
-dtype_used = torch.float32
+dtype_used = default_dtype
 active_backend = "unknown"
 _gpu_lock = threading.Lock()
 
@@ -35,6 +45,87 @@ def apply_boundary_continuity(chunk: np.ndarray, prev_sample: Optional[float]) -
     delta = prev_sample - smoothed[0]
     smoothed[:RAMP_LEN] += delta * ramp_weights
     return smoothed
+
+
+def sanitize_for_qwen(text: str) -> str:
+    """
+    Worker-level safety sanitizer for starrydark/Kurisu_Qwen3_TTS:
+    - Strips HTML comments, markdown, and emotes
+    - Converts interrobangs ('?!', '!?') to '?'
+    - Converts exclamation marks ('!') to '.' to prevent Japanese glottal-stop syllable clipping
+    - Strips non-lexical hesitation vocables ('Hum', 'Hmm', 'U-um', 'Uhm') that trigger VN sighs/moans
+    - De-stutters single-letter prefixes ('Q-quem' -> 'Quem')
+    - Replaces mid-sentence ellipses ('...', '…') with ', ' to prevent 2-3s silent gaps
+    - Ensures terminal punctuation ('.' or '?') for clean EOS
+    """
+    s = re.sub(r"<!--[^>]*-->", "", text or "")
+    s = re.sub(r"\*[^*]+\*", "", s)
+    s = re.sub(r"[*_~`#\"'«»]", "", s)
+    s = re.sub(r"[…‥]", "...", s)
+    s = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", s)
+    s = re.sub(r"!+", ".", s)
+    s = re.sub(r"([.,])\s*\.", r"\1", s)
+    s = re.sub(
+        r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+        "",
+        s,
+    )
+
+    def _un_stutter(m: re.Match) -> str:
+        prefix, word = m.group(1), m.group(2)
+        if prefix.lower() == word[0].lower():
+            return word.capitalize() if prefix.isupper() else word
+        return m.group(0)
+
+    s = re.sub(r"\b([A-Za-zÀ-ÿ])(?:\s*\.{2,}\s*|-)([a-zà-ÿ]+)\b", _un_stutter, s)
+    s = re.sub(r"\s*\.{2,}\s*$", ".", s)
+    s = re.sub(r"\s*\.{2,}\s*", ", ", s)
+    s = re.sub(r",\s*,+", ",", s)
+    s = re.sub(r"([.?!])\s*,", r"\1", s)
+    s = re.sub(r",\s*([.?!])", r"\1", s)
+    s = re.sub(r"^[,;:\s]+", "", s)
+    s = re.sub(r"\s+([.,?!])", r"\1", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if s and s[0].islower():
+        s = s[0].upper() + s[1:]
+    if s and s[-1] not in ".?":
+        s += "."
+    return s
+
+
+def prepare_worker_segments(text: str, max_single_pass_chars: int = 130) -> list[str]:
+    """
+    Sanitizes text and splits long multi-sentence paragraphs into stable sentence segments
+    to prevent attention drift, volume collapse, and premature codec EOS on long texts.
+    Short utterances (<= max_single_pass_chars) remain a single segment for fluid prosody.
+    """
+    cleaned = sanitize_for_qwen(text)
+    if not cleaned:
+        return []
+    if len(cleaned) <= max_single_pass_chars:
+        return [cleaned]
+
+    raw_parts = [p.strip() for p in re.split(r"(?<=[.?!])\s+", cleaned) if p.strip()]
+    segments: list[str] = []
+    for part in raw_parts:
+        if part[-1] not in ".?":
+            part += "."
+        if segments and (len(segments[-1]) + 1 + len(part) <= max_single_pass_chars or len(part) < 25):
+            segments[-1] = f"{segments[-1]} {part}"
+        else:
+            segments.append(part)
+    return segments or [cleaned]
+
+
+def _resolve_effective_instruct(instruct: Optional[str]) -> Optional[str]:
+    """
+    starrydark/Kurisu_Qwen3_TTS is a 12Hz Base SFT model (spk_id=3000) not trained with
+    CustomVoice instruct system prompts. Ignore instruct unless QWEN_USE_EMOTION_INSTRUCT=true.
+    """
+    use_instruct = os.environ.get("QWEN_USE_EMOTION_INSTRUCT", "false").lower() in ("1", "true", "yes")
+    if not use_instruct:
+        return None
+    return (instruct or "").strip() or None
 
 
 def _resolve_model_source() -> str:
@@ -89,6 +180,13 @@ def _load_model_worker():
                 attn_implementation="sdpa",
                 max_seq_len=2048,
             )
+            # Calibrate PredictorGraph (RVQ codebooks 1..15) before CUDA Graph capture
+            # Default 0.9/1.0 causes breath/timbre instability across runs
+            if hasattr(loaded_model, "predictor_graph") and loaded_model.predictor_graph is not None:
+                loaded_model.predictor_graph.temperature = 0.6
+                loaded_model.predictor_graph.top_p = 0.9
+                print("[Qwen3 Worker] Calibrated PredictorGraph (temperature=0.6, top_p=0.9) before warmup.")
+
             print("[Qwen3 Worker] Warming up Talker & Predictor CUDA Graphs...")
             loaded_model.warmup(prefill_len=100)
 
@@ -99,7 +197,7 @@ def _load_model_worker():
                     text="Oi.",
                     speaker="kurisu",
                     language="Portuguese",
-                    instruct="Voz calma.",
+                    instruct=None,
                     chunk_size=8,
                 ):
                     break
@@ -154,9 +252,10 @@ class SynthesizeRequest(BaseModel):
     text: str
     language: Optional[str] = "Portuguese"
     instruct: Optional[str] = None
-    temperature: Optional[float] = 0.75
-    top_p: Optional[float] = 0.95
+    temperature: Optional[float] = 0.65
+    top_p: Optional[float] = 0.90
     repetition_penalty: Optional[float] = 1.05
+    max_new_tokens: Optional[int] = 2048
 
 
 @app.get("/health")
@@ -189,52 +288,65 @@ def synthesize_stream(req: SynthesizeRequest):
     if model is None:
         raise HTTPException(status_code=503, detail="Qwen3-TTS Worker is still initializing.")
 
-    text = (req.text or "").strip()
-    if not text:
+    segments = prepare_worker_segments(req.text or "")
+    if not segments:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
+
+    effective_instruct = _resolve_effective_instruct(req.instruct)
+    eff_temp = min(req.temperature if req.temperature is not None else 0.65, 0.65)
+    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.92)
+    eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
+    eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
     def pcm_generator():
         with _gpu_lock:
             prev_sample = None
 
-            if active_backend == "faster":
-                # Real streaming generator powered by CUDA Graphs
-                stream_gen = model.generate_custom_voice_streaming(
-                    text=text,
-                    speaker="kurisu",
-                    language=req.language or "Portuguese",
-                    instruct=req.instruct or None,
-                    chunk_size=8,
-                    temperature=req.temperature if req.temperature is not None else 0.75,
-                    top_p=req.top_p if req.top_p is not None else 0.95,
-                    repetition_penalty=req.repetition_penalty if req.repetition_penalty is not None else 1.05,
-                )
-                for audio_chunk, sr, _ in stream_gen:
-                    chunk = audio_chunk.copy()
-                    chunk = apply_boundary_continuity(chunk, prev_sample)
-                    prev_sample = float(chunk[-1])
-                    pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-                    yield pcm16
-            else:
-                # Stock fallback: generate full audio, chunk into streamable packets
-                with torch.inference_mode():
-                    wavs, sr = model.generate_custom_voice(
-                        text=text,
+            for seg_idx, seg_text in enumerate(segments):
+                if seg_idx > 0:
+                    pause_chunk = np.zeros(int(24000 * 0.18), dtype=np.float32)
+                    pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
+                    prev_sample = float(pause_chunk[-1])
+                    yield (np.clip(pause_chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+
+                if active_backend == "faster":
+                    stream_gen = model.generate_custom_voice_streaming(
+                        text=seg_text,
                         speaker="kurisu",
                         language=req.language or "Portuguese",
-                        instruct=req.instruct or None,
-                        temperature=req.temperature if req.temperature is not None else 0.75,
-                        top_p=req.top_p if req.top_p is not None else 0.95,
-                        repetition_penalty=req.repetition_penalty if req.repetition_penalty is not None else 1.05,
+                        instruct=effective_instruct,
+                        chunk_size=8,
+                        temperature=eff_temp,
+                        top_p=eff_top_p,
+                        repetition_penalty=eff_rep,
+                        max_new_tokens=eff_max_tokens,
                     )
-                full_audio = wavs[0]
-                chunk_len = int(sr * 0.64)  # ~640ms chunks matching faster runtime
-                for i in range(0, len(full_audio), chunk_len):
-                    chunk = full_audio[i:i + chunk_len].copy()
-                    chunk = apply_boundary_continuity(chunk, prev_sample)
-                    prev_sample = float(chunk[-1])
-                    pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-                    yield pcm16
+                    for audio_chunk, sr, _ in stream_gen:
+                        chunk = audio_chunk.copy()
+                        chunk = apply_boundary_continuity(chunk, prev_sample)
+                        prev_sample = float(chunk[-1])
+                        pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                        yield pcm16
+                else:
+                    with torch.inference_mode():
+                        wavs, sr = model.generate_custom_voice(
+                            text=seg_text,
+                            speaker="kurisu",
+                            language=req.language or "Portuguese",
+                            instruct=effective_instruct,
+                            temperature=eff_temp,
+                            top_p=eff_top_p,
+                            repetition_penalty=eff_rep,
+                            max_new_tokens=eff_max_tokens,
+                        )
+                    full_audio = wavs[0]
+                    chunk_len = int(sr * 0.64)
+                    for i in range(0, len(full_audio), chunk_len):
+                        chunk = full_audio[i:i + chunk_len].copy()
+                        chunk = apply_boundary_continuity(chunk, prev_sample)
+                        prev_sample = float(chunk[-1])
+                        pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                        yield pcm16
 
     return StreamingResponse(
         pcm_generator(),
@@ -251,28 +363,53 @@ def synthesize_stream(req: SynthesizeRequest):
 def synthesize(req: SynthesizeRequest):
     """
     Non-streaming backwards-compatible endpoint delivering complete WAV PCM16 bytes.
+    Automatically segments multi-sentence paragraphs to prevent EOS truncation and volume decay.
     """
     global model
     if model is None:
         raise HTTPException(status_code=503, detail="Qwen3-TTS Worker is still initializing.")
 
-    text = (req.text or "").strip()
-    if not text:
+    segments = prepare_worker_segments(req.text or "")
+    if not segments:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
+
+    effective_instruct = _resolve_effective_instruct(req.instruct)
+    eff_temp = min(req.temperature if req.temperature is not None else 0.65, 0.65)
+    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.92)
+    eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
+    eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
     with _gpu_lock:
         try:
+            assembled_pieces = []
+            prev_sample = None
+            sr = 24000
+
             with torch.inference_mode():
-                wavs, sr = model.generate_custom_voice(
-                    text=text,
-                    speaker="kurisu",
-                    language=req.language or "Portuguese",
-                    instruct=req.instruct or None,
-                    temperature=req.temperature if req.temperature is not None else 0.75,
-                    top_p=req.top_p if req.top_p is not None else 0.95,
-                    repetition_penalty=req.repetition_penalty if req.repetition_penalty is not None else 1.05,
-                )
-            full_audio = wavs[0]
+                for seg_idx, seg_text in enumerate(segments):
+                    if seg_idx > 0:
+                        pause_chunk = np.zeros(int(sr * 0.18), dtype=np.float32)
+                        pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
+                        prev_sample = float(pause_chunk[-1])
+                        assembled_pieces.append(pause_chunk)
+
+                    wavs, sr = model.generate_custom_voice(
+                        text=seg_text,
+                        speaker="kurisu",
+                        language=req.language or "Portuguese",
+                        instruct=effective_instruct,
+                        temperature=eff_temp,
+                        top_p=eff_top_p,
+                        repetition_penalty=eff_rep,
+                        max_new_tokens=eff_max_tokens,
+                    )
+                    seg_audio = wavs[0].astype(np.float32, copy=True)
+                    seg_audio = apply_boundary_continuity(seg_audio, prev_sample)
+                    if len(seg_audio) > 0:
+                        prev_sample = float(seg_audio[-1])
+                    assembled_pieces.append(seg_audio)
+
+            full_audio = np.concatenate(assembled_pieces) if len(assembled_pieces) > 1 else assembled_pieces[0]
             buffer = io.BytesIO()
             sf.write(buffer, full_audio, sr, format="WAV", subtype="PCM_16")
             return Response(

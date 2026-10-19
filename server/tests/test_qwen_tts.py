@@ -29,6 +29,7 @@ class TestQwenTTS(unittest.TestCase):
         self.assertEqual(req1.qwen_mode, "remote")
         self.assertEqual(req1.qwen_remote_url, "https://amadeus-tts.trycloudflare.com")
         self.assertEqual(req1.rvc_model, "KurisuRVCv147")
+        self.assertFalse(req1.stream)
 
         # CamelCase input (from frontend JSON)
         req2 = TTSRequest.model_validate({
@@ -39,45 +40,107 @@ class TestQwenTTS(unittest.TestCase):
             "qwenMode": "local",
             "qwenRemoteUrl": "http://127.0.0.1:8005",
             "rvcModel": "KurisuRVCv147",
+            "stream": True,
         })
         self.assertEqual(req2.engine, "qwen3")
         self.assertEqual(req2.emotion, "flustered")
         self.assertEqual(req2.instruct, "voz envergonhada")
         self.assertEqual(req2.qwen_mode, "local")
         self.assertEqual(req2.qwen_remote_url, "http://127.0.0.1:8005")
+        self.assertTrue(req2.stream)
 
     def test_acoustic_instruction_mapper(self):
-        # Test tsundere emotion mapping
-        instruct_tsundere = resolve_acoustic_instruct("tsundere")
-        self.assertIn("som seco e direto sem eco", instruct_tsundere)
-        self.assertIn("Tom tsundere", instruct_tsundere)
-        self.assertEqual(EMOTION_INSTRUCT_MAP["tsundere"], instruct_tsundere)
+        import app.services.qwen_tts.emotion_mapper as em
 
-        # Test unknown emotion fallback
-        instruct_default = resolve_acoustic_instruct("unknown_emotion")
-        self.assertIn("som seco e direto sem eco", instruct_default)
-        self.assertEqual(EMOTION_INSTRUCT_MAP["neutral"], instruct_default)
+        # Default mode disables English instruct for starrydark/Kurisu_Qwen3_TTS Base SFT stability
+        self.assertFalse(em.QWEN_USE_EMOTION_INSTRUCT)
+        self.assertIsNone(resolve_acoustic_instruct("tsundere"))
+        self.assertIsNone(resolve_acoustic_instruct("flustered"))
+        self.assertIsNone(resolve_acoustic_instruct("neutral"))
 
-        # Test custom instruct override
+        # Explicit custom instruct override still works when passed directly to mapper
         custom = "Sussurrando bem perto do microfone."
-        instruct_custom = resolve_acoustic_instruct(custom_instruct=custom)
-        self.assertIn(custom, instruct_custom)
-        self.assertIn("som seco e direto sem eco", instruct_custom)
+        self.assertEqual(resolve_acoustic_instruct(custom_instruct=custom), custom)
+
+        # When QWEN_USE_EMOTION_INSTRUCT is toggled True, calibrated English prompts are returned
+        prev_flag = em.QWEN_USE_EMOTION_INSTRUCT
+        try:
+            em.QWEN_USE_EMOTION_INSTRUCT = True
+            instruct_tsundere = resolve_acoustic_instruct("tsundere")
+            self.assertIsNotNone(instruct_tsundere)
+            self.assertIn("Mid pitch", instruct_tsundere)
+            self.assertIn("defensive", instruct_tsundere)
+
+            instruct_smile = resolve_acoustic_instruct("smile")
+            self.assertIsNotNone(instruct_smile)
+            self.assertIn("subtle smile", instruct_smile)
+            self.assertIsNone(resolve_acoustic_instruct("neutral"))
+            self.assertIsNone(resolve_acoustic_instruct("unknown_emotion"))
+        finally:
+            em.QWEN_USE_EMOTION_INSTRUCT = prev_flag
+
+        # Test full 21 emotion mapping completeness and pitch anchoring (NO high pitch)
+        from app.services.qwen_tts.emotion_mapper import EMOTION_ACOUSTIC_TARGETS
+        from app.services.emotion_service import VALID_EMOTIONS
+        self.assertEqual(len(EMOTION_INSTRUCT_MAP), 21)
+        self.assertEqual(len(EMOTION_ACOUSTIC_TARGETS), 21)
+        self.assertEqual(len(VALID_EMOTIONS), 21)
+        self.assertEqual(set(EMOTION_INSTRUCT_MAP.keys()), set(VALID_EMOTIONS))
+
+        for emo, prompt in EMOTION_INSTRUCT_MAP.items():
+            self.assertIn(emo, EMOTION_ACOUSTIC_TARGETS)
+            if prompt is not None:
+                self.assertNotIn("high pitch", prompt.lower())
+                self.assertTrue(prompt.startswith("Mid") or prompt.startswith("Low"))
 
     def test_clean_text_for_tts(self):
         from app.services.voice_service import clean_text_for_tts
+        from app.services.qwen_tts.qwen_worker import prepare_worker_segments
 
         # Interrobangs replaced by ?
         raw1 = "O que você disse?! Não pode ser!? Sério?!!"
         self.assertEqual(clean_text_for_tts(raw1), "O que você disse? Não pode ser? Sério?")
 
-        # Multiple exclamation marks reduced to .
-        raw2 = "Idiota!! Cale a boca!!!"
-        self.assertEqual(clean_text_for_tts(raw2), "Idiota. Cale a boca.")
+        # Exclamation marks converted to '.' to prevent glottal-stop syllable clipping
+        raw2 = "Idiota!! Cale a boca e preste atenção no relatório!"
+        self.assertEqual(clean_text_for_tts(raw2), "Idiota. Cale a boca e preste atenção no relatório.")
 
-        # Preserves natural ellipses pause and strips emotion comments
-        raw3 = "<!-- emotion: tsundere --> Não é como se... eu me importasse com você! Idiota!!"
-        self.assertEqual(clean_text_for_tts(raw3), "Não é como se... eu me importasse com você! Idiota.")
+        # Unicode/ASCII ellipses replaced with ', ' mid-sentence and '.' at end; hesitation vocables stripped
+        raw_cut = "Hum, quem… não sei se devo acreditar nesse elogio vindo de alguém como você... mas se faz tanta questão, tudo bem."
+        cleaned_cut = clean_text_for_tts(raw_cut)
+        self.assertNotIn("…", cleaned_cut)
+        self.assertNotIn("...", cleaned_cut)
+        self.assertNotIn("Hum", cleaned_cut)
+        self.assertEqual(
+            cleaned_cut,
+            "Quem, não sei se devo acreditar nesse elogio vindo de alguém como você, mas se faz tanta questão, tudo bem.",
+        )
+
+        # Hesitation vocables and anime sighs/stutters (U-um, Uhm, Hmm) stripped cleanly
+        raw_stutter = "U-um... não sei! Uhm, quem você pensa que é? Hmm... espere."
+        cleaned_stutter = clean_text_for_tts(raw_stutter)
+        self.assertNotIn("U-um", cleaned_stutter)
+        self.assertNotIn("Uhm", cleaned_stutter)
+        self.assertNotIn("Hmm", cleaned_stutter)
+        self.assertNotIn("Hum", cleaned_stutter)
+        self.assertEqual(cleaned_stutter, "Não sei. quem você pensa que é? espere.")
+
+        # Single-letter prefix stutters (Q-quem, L-linda, N-não, M-mas) cleaned cleanly
+        raw_letters = "Q-quem?! L-linda?! N-não me diga que você acha isso... M-mas espere!"
+        cleaned_letters = clean_text_for_tts(raw_letters)
+        self.assertEqual(cleaned_letters, "Quem? Linda? Não me diga que você acha isso, Mas espere.")
+
+        # Long multi-sentence scientific text splits into 2 clean segments
+        long_sci = (
+            "Se analisarmos pelo princípio da relatividade geral e curvas temporais fechadas, "
+            "as equações de Kerr permitem soluções matemáticas para a rotação de buracos de minhoca. "
+            "No entanto, o colapso por flutuação quântica de vácuo ainda impede qualquer transmissão "
+            "causal sem violar as leis termodinâmicas."
+        )
+        segs = prepare_worker_segments(long_sci)
+        self.assertEqual(len(segs), 2)
+        self.assertTrue(segs[0].endswith("minhoca."))
+        self.assertTrue(segs[1].endswith("termodinâmicas."))
 
     def test_python_executable_discovery(self):
         py_exe = QwenTTSManager.get_python_executable()

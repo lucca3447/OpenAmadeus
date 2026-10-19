@@ -23,6 +23,7 @@ export interface SpeakOptions {
   qwenRemoteUrl?: string;
   emotion?: string;
   instruct?: string;
+  stream?: boolean;
   useNeural?: boolean;
   neuralVoice?: string;
   useRvc?: boolean;
@@ -52,7 +53,7 @@ export function normalizeForSpeech(rawText: string): string {
   text = text.replace(/[:;]-?[)(DPpOdD]/g, '');
 
   // 4. Remove robotic narration phrases like "Aqui vai um sorriso para você"
-  text = text.replace(/^(?:claro[,. ]+)?aqui vai um sorriso para voc[eê][.,! ]*/i, 'U-um sorriso? Se você faz tanta questão... ');
+  text = text.replace(/^(?:claro[,. ]+)?aqui vai um sorriso para voc[eê][.,! ]*/i, 'Um sorriso? Se você faz tanta questão... ');
   text = text.replace(/^(?:aqui est[aá] o meu sorriso|aqui vai o meu sorriso)[.,!:]*/i, '');
 
   // 5. Remove markdown code blocks, bold, italic, quotes
@@ -61,9 +62,8 @@ export function normalizeForSpeech(rawText: string): string {
   text = text.replace(/[*_~#]/g, '');
   text = text.replace(/\[(.*?)\]\(.*?\)/g, '$1');
 
-  // 3. Stutter / hesitation normalization for anime persona:
-  // "N-não" -> "N... não", "Q-quem" -> "Q... quem", "E-eu" -> "E... eu", "D-do que" -> "D... do que"
-  text = text.replace(/\b([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ])-([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]+)\b/g, '$1... $2');
+  // 3. Stutter preservation: keep natural hyphenated stutters (e.g. "N-não", "Q-quem", "U-um")
+  // without injecting triple dots that trigger early neural TTS speech cutoff.
 
   // 4. Steins;Gate Lore & Tech Acronym Pronunciations
   text = text.replace(/\bSERN\b/g, 'Sérn');
@@ -237,14 +237,14 @@ export class SpeechService {
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
       this.audioCtx = new AudioCtxClass();
 
-      // Make-up gain (1.5x) to elevate quieter speech segments before compression
+      // Make-up gain (1.65x / +4.3 dB) to elevate quieter speech segments (RMS ~0.035) before compression
       this.makeUpGain = this.audioCtx.createGain();
-      this.makeUpGain.gain.value = 1.5;
+      this.makeUpGain.gain.value = 1.65;
 
-      // Dynamics compressor to gently tame emphatic peaks while maintaining consistency
+      // Dynamics compressor calibrated to Asami Imai's empirical dynamic range (RMS 0.033 to 0.215)
       this.compressor = this.audioCtx.createDynamicsCompressor();
-      this.compressor.threshold.setValueAtTime(-18, this.audioCtx.currentTime);
-      this.compressor.knee.setValueAtTime(12, this.audioCtx.currentTime);
+      this.compressor.threshold.setValueAtTime(-20, this.audioCtx.currentTime);
+      this.compressor.knee.setValueAtTime(14, this.audioCtx.currentTime);
       this.compressor.ratio.setValueAtTime(3.5, this.audioCtx.currentTime);
       this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
       this.compressor.release.setValueAtTime(0.25, this.audioCtx.currentTime);
@@ -400,6 +400,7 @@ export class SpeechService {
           qwenRemoteUrl: options.qwenRemoteUrl,
           emotion: options.emotion,
           instruct: options.instruct,
+          stream: options.stream ?? false,
           voice,
           rate: rate.startsWith('-') || rate.startsWith('+') ? rate : `+${rate}`,
           pitch: pitch.startsWith('-') || pitch.startsWith('+') ? pitch : `+${pitch}`,
@@ -502,7 +503,7 @@ export class SpeechService {
     const reader = body.getReader();
     let remainder: Uint8Array | null = null;
     let nextStartTime = 0;
-    const JITTER_BUFFER_SEC = 0.12;
+    const JITTER_BUFFER_SEC = 0.48; // 480ms jitter buffer to protect against remote tunnel packet latency spikes
     let hasStarted = false;
 
     try {

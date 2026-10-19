@@ -34,7 +34,9 @@ def clean_speech_text(text: str) -> str:
     clean_text = re.sub(r"\*[^*]+\*", "", clean_text)
     clean_text = re.sub(r"[:;]-?[)(DPpOdD]", "", clean_text)
     clean_text = re.sub(r"[*_~`#\"'«»]", "", clean_text)
-    # Normalize excessive dots to clean triple dots (preserving natural tsundere pause)
+    # Normalize Unicode horizontal ellipsis (\u2026 '…' and \u2025 '‥')
+    clean_text = re.sub(r"[…‥]", "...", clean_text)
+    # Normalize excessive dots to clean triple dots
     clean_text = re.sub(r"\.{3,}", "...", clean_text)
     # Ensure proper spacing around ellipses
     clean_text = re.sub(r"\s*\.\.\.\s*", "... ", clean_text)
@@ -45,21 +47,55 @@ def clean_speech_text(text: str) -> str:
 def clean_text_for_tts(text: str) -> str:
     """
     Sanitizes text specifically for neural TTS (Qwen3-TTS) without altering the frontend transcript:
+    - Normalizes Unicode ellipsis (\u2026 '…' and \u2025 '‥') and replaces mid-sentence '...' with ', '
+      to prevent multi-second dead pauses and VN vocal sighs/groans
     - Converts interrobangs ('?!', '!?', '?!!', etc.) to a single clean '?'
-    - Reduces multiple or exaggerated exclamation marks ('!!', '!!!') to '.'
-    - Normalizes excessive punctuation while preserving natural pause tokens ('...')
-    Prevents high F0 spikes (480-571 Hz), unnatural Japanese phoneme degradation, and screeching.
+    - Converts exclamation marks ('!', '!!', '!!!') to '.' to prevent Japanese glottal-stop
+      clipping of final unstressed Portuguese syllables (e.g. 'relatório!' -> 'relató-')
+    - Removes non-lexical anime hesitation vocables ('Hum', 'Hmm', 'U-um', 'Uhm') that trigger moans
+    - De-stutters single-letter prefixes ('Q-quem' -> 'Quem', 'L-linda' -> 'Linda', 'N-não' -> 'Não')
     """
     clean_text = clean_speech_text(text)
-    # Replace combined punctuation (?!, !?, etc.) with a single question mark
+    # 1. Replace combined punctuation (?!, !?, etc.) with a single question mark
     clean_text = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", clean_text)
-    # Replace multiple exclamation marks (!!, !!!, etc.) with a period
-    clean_text = re.sub(r"!{2,}", ".", clean_text)
-    # Replace single ! preceded by , or . with just that punctuation
-    clean_text = re.sub(r"([.,])\s*!", r"\1", clean_text)
-    # Normalize spaces around punctuation
+    # 2. Replace exclamation marks with '.' to prevent glottal-stop syllable truncation
+    clean_text = re.sub(r"!+", ".", clean_text)
+    clean_text = re.sub(r"([.,])\s*\.", r"\1", clean_text)
+
+    # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum)
+    # that trigger Japanese VN vocal sighs/moans ("gemidos")
+    clean_text = re.sub(
+        r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+        "",
+        clean_text,
+    )
+
+    # 4. General single-letter stutters: Q-quem -> Quem, Q... quem -> Quem, L-linda -> Linda, N-não -> Não
+    def _un_stutter(m: re.Match) -> str:
+        prefix = m.group(1)
+        word = m.group(2)
+        if prefix.lower() == word[0].lower():
+            return word.capitalize() if prefix.isupper() else word
+        return m.group(0)
+
+    clean_text = re.sub(r"\b([A-Za-zÀ-ÿ])(?:\s*\.{2,}\s*|-)([a-zà-ÿ]+)\b", _un_stutter, clean_text)
+
+    # 5. Replace trailing ellipses with '.' and mid-sentence ellipses with ', '
+    # to eliminate 2-3s silent gaps and breath hallucinations
+    clean_text = re.sub(r"\s*\.{2,}\s*$", ".", clean_text)
+    clean_text = re.sub(r"\s*\.{2,}\s*", ", ", clean_text)
+
+    # 6. Clean redundant punctuation and normalize whitespace
+    clean_text = re.sub(r",\s*,+", ",", clean_text)
+    clean_text = re.sub(r"([.?!])\s*,", r"\1", clean_text)
+    clean_text = re.sub(r",\s*([.?!])", r"\1", clean_text)
+    clean_text = re.sub(r"^[,;:\s]+", "", clean_text)
     clean_text = re.sub(r"\s+([.,?!])", r"\1", clean_text)
     clean_text = re.sub(r"\s+", " ", clean_text).strip()
+
+    if clean_text and clean_text[0].islower():
+        clean_text = clean_text[0].upper() + clean_text[1:]
+
     return clean_text
 
 
@@ -109,6 +145,7 @@ async def synthesize_speech(
     qwen_remote_url: Optional[str] = None,
     emotion: Optional[str] = None,
     instruct: Optional[str] = None,
+    stream: bool = False,
 ) -> Tuple[str, AsyncGenerator[bytes, None]]:
     """
     Modular speech orchestrator with sequential fallback:
@@ -128,38 +165,76 @@ async def synthesize_speech(
     # =========================================================================
     if active_engine == "qwen3":
         qwen_text = clean_text_for_tts(text)
-        print(f"[Amadeus Voice] 🎙️ Qwen3 Synthesis (mode: {qwen_mode}) | Emotion: '{emotion or 'neutral'}' | Text: \"{qwen_text}\"")
+        print(f"[Amadeus Voice] 🎙️ Qwen3 Synthesis (mode: {qwen_mode}, stream: {stream}) | Emotion: '{emotion or 'neutral'}' | Text: \"{qwen_text}\"")
 
-        # 1.1 Attempt primary mode (Remote Colab or Local as requested) with streaming
-        try:
-            content_type, stream_gen = await QwenTTSManager.synthesize_stream(
-                text=qwen_text,
-                emotion=emotion,
-                custom_instruct=instruct,
-                language="Portuguese",
-                qwen_mode=qwen_mode or "remote",
-                qwen_remote_url=qwen_remote_url,
-            )
-            return content_type, stream_gen
-        except Exception as e:
-            print(f"[Amadeus Voice] Primary Qwen3 ({qwen_mode}) streaming error: {e}")
+        # 1.1 Complete WAV delivery (Default: 100% integrity, zero buffer underrun/cuts over tunnels)
+        if not stream:
+            try:
+                wav_bytes = await QwenTTSManager.synthesize(
+                    text=qwen_text,
+                    emotion=emotion,
+                    custom_instruct=instruct,
+                    language="Portuguese",
+                    qwen_mode=qwen_mode or "remote",
+                    qwen_remote_url=qwen_remote_url,
+                )
+                if wav_bytes:
+                    async def _wav_generator():
+                        yield wav_bytes
+                    return "audio/wav", _wav_generator()
+            except Exception as e:
+                print(f"[Amadeus Voice] Primary Qwen3 ({qwen_mode}) complete WAV error: {e}")
 
-        # 1.2 If Remote failed and mode was remote, check if Local worker happens to be healthy
-        if qwen_mode == "remote":
-            local_url = "http://127.0.0.1:8005"
-            if await QwenTTSManager.is_worker_healthy(local_url):
-                print("[Amadeus Voice] Remote Qwen offline, but Local Qwen worker is active! Attempting Local Qwen stream...")
-                try:
-                    content_type, local_stream_gen = await QwenTTSManager.synthesize_stream(
-                        text=qwen_text,
-                        emotion=emotion,
-                        custom_instruct=instruct,
-                        language="Portuguese",
-                        qwen_mode="local",
-                    )
-                    return content_type, local_stream_gen
-                except Exception as local_err:
-                    print(f"[Amadeus Voice] Local Qwen fallback error: {local_err}")
+            # Local fallback for complete WAV
+            if qwen_mode == "remote":
+                local_url = "http://127.0.0.1:8005"
+                if await QwenTTSManager.is_worker_healthy(local_url):
+                    print("[Amadeus Voice] Remote Qwen offline, attempting Local Qwen WAV...")
+                    try:
+                        local_wav = await QwenTTSManager.synthesize(
+                            text=qwen_text,
+                            emotion=emotion,
+                            custom_instruct=instruct,
+                            language="Portuguese",
+                            qwen_mode="local",
+                        )
+                        if local_wav:
+                            async def _local_wav_gen():
+                                yield local_wav
+                            return "audio/wav", _local_wav_gen()
+                    except Exception as local_err:
+                        print(f"[Amadeus Voice] Local Qwen WAV fallback error: {local_err}")
+
+        # 1.2 Streaming mode (if explicitly requested via stream=True)
+        else:
+            try:
+                content_type, stream_gen = await QwenTTSManager.synthesize_stream(
+                    text=qwen_text,
+                    emotion=emotion,
+                    custom_instruct=instruct,
+                    language="Portuguese",
+                    qwen_mode=qwen_mode or "remote",
+                    qwen_remote_url=qwen_remote_url,
+                )
+                return content_type, stream_gen
+            except Exception as e:
+                print(f"[Amadeus Voice] Primary Qwen3 ({qwen_mode}) streaming error: {e}")
+
+            if qwen_mode == "remote":
+                local_url = "http://127.0.0.1:8005"
+                if await QwenTTSManager.is_worker_healthy(local_url):
+                    print("[Amadeus Voice] Remote Qwen offline, attempting Local Qwen stream...")
+                    try:
+                        content_type, local_stream_gen = await QwenTTSManager.synthesize_stream(
+                            text=qwen_text,
+                            emotion=emotion,
+                            custom_instruct=instruct,
+                            language="Portuguese",
+                            qwen_mode="local",
+                        )
+                        return content_type, local_stream_gen
+                    except Exception as local_err:
+                        print(f"[Amadeus Voice] Local Qwen fallback error: {local_err}")
 
         # Cascade down to Kokoro-TTS with Kurisu RVC enabled
         print("[Amadeus Voice] Qwen3 offline or failed; cascaded fallback to Kokoro-TTS + RVC.")
