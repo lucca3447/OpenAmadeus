@@ -1,8 +1,10 @@
 import os
 from typing import Optional, Dict, Any
 
-# Flag to toggle between acoustic English instruct steering and pure pre-trained weights
-QWEN_USE_EMOTION_INSTRUCT = os.environ.get("QWEN_USE_EMOTION_INSTRUCT", "true").lower() in ("1", "true", "yes")
+# Flag to toggle between acoustic English instruct steering and pure pre-trained weights.
+# Default is "false" because starrydark/Kurisu_Qwen3_TTS is a 12Hz Base SFT model (spk_id=3000)
+# that was not trained with CustomVoice instruct system prompts.
+QWEN_USE_EMOTION_INSTRUCT = os.environ.get("QWEN_USE_EMOTION_INSTRUCT", "false").lower() in ("1", "true", "yes")
 
 # Acoustic ground-truth targets derived from Asami Imai's canonical Steins;Gate voicelines
 EMOTION_ACOUSTIC_TARGETS: Dict[str, Dict[str, Any]] = {

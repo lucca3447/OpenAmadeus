@@ -47,29 +47,30 @@ def clean_speech_text(text: str) -> str:
 def clean_text_for_tts(text: str) -> str:
     """
     Sanitizes text specifically for neural TTS (Qwen3-TTS) without altering the frontend transcript:
-    - Normalizes Unicode ellipsis (\u2026 '…' and \u2025 '‥') to ASCII '...'
-    - Preserves natural ASCII ellipses pauses ('...') mid-sentence for cadence
+    - Normalizes Unicode ellipsis (\u2026 '…' and \u2025 '‥') and replaces mid-sentence '...' with ', '
+      to prevent multi-second dead pauses and VN vocal sighs/groans
     - Converts interrobangs ('?!', '!?', '?!!', etc.) to a single clean '?'
-    - Reduces multiple or exaggerated exclamation marks ('!!', '!!!') to '.'
-    - Sanitizes anime sighs/hesitations ('U-um', 'U... um', 'Uhm') into articulate 'Hum,'
+    - Converts exclamation marks ('!', '!!', '!!!') to '.' to prevent Japanese glottal-stop
+      clipping of final unstressed Portuguese syllables (e.g. 'relatório!' -> 'relató-')
+    - Removes non-lexical anime hesitation vocables ('Hum', 'Hmm', 'U-um', 'Uhm') that trigger moans
     - De-stutters single-letter prefixes ('Q-quem' -> 'Quem', 'L-linda' -> 'Linda', 'N-não' -> 'Não')
-    Prevents early <|endofspeech|> truncation, high F0 spikes (480-571 Hz), and screeching.
     """
     clean_text = clean_speech_text(text)
-    # Replace combined punctuation (?!, !?, etc.) with a single question mark
+    # 1. Replace combined punctuation (?!, !?, etc.) with a single question mark
     clean_text = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", clean_text)
-    # Replace multiple exclamation marks (!!, !!!, etc.) with a single emphatic !
-    clean_text = re.sub(r"!{2,}", "!", clean_text)
-    # Replace single ! preceded by , or . with just that punctuation
-    clean_text = re.sub(r"([.,])\s*!", r"\1", clean_text)
-    # 1. Map ambiguous anime non-lexical hesitations and stutters (U-um, U... um, Uhm, Hmm)
-    # into articulate conversational interjection 'Hum,' to prevent vocal sighs/groans ("gemidos")
-    clean_text = re.sub(r"(?i)\b[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m\b", "Hum,", clean_text)
-    clean_text = re.sub(r"(?i)\b[u]+h+m*\b", "Hum", clean_text)
-    clean_text = re.sub(r"(?i)\b[u]+(?:\s*\.{2,}\s*|-|\s+)uh\b", "Hum,", clean_text)
-    clean_text = re.sub(r"(?i)\bh+m{2,}\b", "Hum", clean_text)
+    # 2. Replace exclamation marks with '.' to prevent glottal-stop syllable truncation
+    clean_text = re.sub(r"!+", ".", clean_text)
+    clean_text = re.sub(r"([.,])\s*\.", r"\1", clean_text)
 
-    # 2. General single-letter stutters: Q-quem -> Quem, Q... quem -> Quem, L-linda -> Linda, N-não -> Não
+    # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum)
+    # that trigger Japanese VN vocal sighs/moans ("gemidos")
+    clean_text = re.sub(
+        r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+        "",
+        clean_text,
+    )
+
+    # 4. General single-letter stutters: Q-quem -> Quem, Q... quem -> Quem, L-linda -> Linda, N-não -> Não
     def _un_stutter(m: re.Match) -> str:
         prefix = m.group(1)
         word = m.group(2)
@@ -79,15 +80,22 @@ def clean_text_for_tts(text: str) -> str:
 
     clean_text = re.sub(r"\b([A-Za-zÀ-ÿ])(?:\s*\.{2,}\s*|-)([a-zà-ÿ]+)\b", _un_stutter, clean_text)
 
-    # Clean redundant punctuation around Hum
-    clean_text = re.sub(r"\bHum\s*,\s*,", "Hum,", clean_text)
-    clean_text = re.sub(r"\bHum\s*,\s*\.\.\.", "Hum...", clean_text)
-    clean_text = re.sub(r"\bHum\s*,\s*", "Hum, ", clean_text)
+    # 5. Replace trailing ellipses with '.' and mid-sentence ellipses with ', '
+    # to eliminate 2-3s silent gaps and breath hallucinations
+    clean_text = re.sub(r"\s*\.{2,}\s*$", ".", clean_text)
+    clean_text = re.sub(r"\s*\.{2,}\s*", ", ", clean_text)
 
-    # Normalize spaces around punctuation while PRESERVING ASCII ellipsis (...) mid-sentence
-    clean_text = re.sub(r"\s*\.\.\.\s*", "... ", clean_text)
+    # 6. Clean redundant punctuation and normalize whitespace
+    clean_text = re.sub(r",\s*,+", ",", clean_text)
+    clean_text = re.sub(r"([.?!])\s*,", r"\1", clean_text)
+    clean_text = re.sub(r",\s*([.?!])", r"\1", clean_text)
+    clean_text = re.sub(r"^[,;:\s]+", "", clean_text)
     clean_text = re.sub(r"\s+([.,?!])", r"\1", clean_text)
     clean_text = re.sub(r"\s+", " ", clean_text).strip()
+
+    if clean_text and clean_text[0].islower():
+        clean_text = clean_text[0].upper() + clean_text[1:]
+
     return clean_text
 
 
