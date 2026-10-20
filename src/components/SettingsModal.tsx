@@ -100,6 +100,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       qwenMode: voiceSettings.qwenMode || 'remote',
       qwenRemoteUrl: voiceSettings.qwenRemoteUrl,
       emotion: 'tsundere',
+      stream: voiceSettings.engine === 'qwen3' ? Boolean(voiceSettings.stream) : false,
       useNeural: voiceSettings.useNeural !== false,
       neuralVoice: voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural',
       useRvc: Boolean(voiceSettings.useRvc),
@@ -357,6 +358,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     >
                       <Cpu className="w-3 h-3 text-amadeus-accent" />
                       <span>Local (GPU 8GB+ VRAM)</span>
+                    </button>
+                  </div>
+                </div>
+
+                                {/* Sub-mode Toggle: Delivery Mode (Streaming vs WAV) */}
+                <div className="space-y-1.5 pt-1 border-t border-amadeus-border/40">
+                  <label className="text-[10px] text-amadeus-muted block font-medium">Modo de Entrega de Áudio:</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: true })}
+                      className={`h-7 px-2 rounded text-[11px] font-medium border flex items-center justify-center gap-1.5 transition-all ${
+                        voiceSettings.stream
+                          ? 'border-amadeus-accent bg-amadeus-accent/20 text-white'
+                          : 'border-amadeus-border bg-black/40 text-amadeus-muted hover:text-white'
+                      }`}
+                    >
+                      <Zap className="w-3 h-3 text-amadeus-accent" />
+                      <span>⚡ Streaming Real (~500ms)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: false })}
+                      className={`h-7 px-2 rounded text-[11px] font-medium border flex items-center justify-center gap-1.5 transition-all ${
+                        !voiceSettings.stream
+                          ? 'border-amadeus-accent bg-amadeus-accent/20 text-white'
+                          : 'border-amadeus-border bg-black/40 text-amadeus-muted hover:text-white'
+                      }`}
+                    >
+                      <Radio className="w-3 h-3 text-amadeus-accent" />
+                      <span>🛡️ WAV Completo (Estável)</span>
                     </button>
                   </div>
                 </div>

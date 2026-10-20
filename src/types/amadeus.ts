@@ -93,6 +93,7 @@ export interface VoiceSettings {
   engine?: 'qwen3' | 'kokoro' | 'edge_rvc';
   qwenMode?: 'remote' | 'local' | 'auto';
   qwenRemoteUrl?: string;
+  stream?: boolean;
   useNeural?: boolean;
   neuralVoice?: string;
   useRvc?: boolean;

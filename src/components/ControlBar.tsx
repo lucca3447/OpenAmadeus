@@ -3,7 +3,8 @@ import {
   Mic, 
   MicOff, 
   Volume2, 
-  VolumeX, 
+  VolumeX,
+  Zap, 
   Brain, 
   Settings, 
   PhoneOff
@@ -18,6 +19,9 @@ interface ControlBarProps {
   onOpenMemory: () => void;
   onOpenSettings: () => void;
   onEndCall: () => void;
+  streamEnabled?: boolean;
+  onToggleStream?: () => void;
+  isQwen?: boolean;
   disabled?: boolean;
 }
 
@@ -30,6 +34,9 @@ export const ControlBar: React.FC<ControlBarProps> = ({
   onOpenMemory,
   onOpenSettings,
   onEndCall,
+  streamEnabled = false,
+  onToggleStream,
+  isQwen = false,
   disabled = false,
 }) => {
   const [inputValue, setInputValue] = useState('');
@@ -80,6 +87,26 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         >
           {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
         </button>
+
+                {/* Quick Stream vs Complete WAV Toggle */}
+        {isQwen && onToggleStream && (
+          <button
+            type="button"
+            onClick={onToggleStream}
+            title={
+              streamEnabled
+                ? '⚡ Streaming em Tempo Real Ativo (~500ms) — Clique para alternar para WAV Completo'
+                : '🛡️ Modo WAV Completo Ativo (Estável) — Clique para alternar para Streaming em Tempo Real'
+            }
+            className={`h-9 w-9 rounded-lg flex items-center justify-center transition-all ${
+              streamEnabled
+                ? 'bg-[#0c202e] border border-[#38bdf8]/60 text-[#38bdf8] shadow-[0_0_12px_rgba(56,189,248,0.4)]'
+                : 'bg-[#181c26] border border-[#262c3a] text-[#64748b] hover:text-[#cbd5e1]'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+          </button>
+        )}
 
         {/* TTS Voice Toggle */}
         <button

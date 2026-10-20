@@ -134,6 +134,7 @@ export const App: React.FC = () => {
       engine: 'qwen3',
       qwenMode: 'remote',
       qwenRemoteUrl: '',
+      stream: false,
       useNeural: true,
       neuralVoice: 'pt-BR-FranciscaNeural',
       useRvc: true,
@@ -243,6 +244,11 @@ export const App: React.FC = () => {
     });
   };
 
+  const handleToggleStream = () => {
+    const next = !voiceSettings.stream;
+    handleSaveVoiceSettings({ ...voiceSettings, stream: next });
+  };
+
   const speak = (text: string, emotion?: string) => {
     if (!voiceSettings.enabled || !voiceSettings.autoSpeak) return;
     SpeechService.speak(text, {
@@ -254,6 +260,7 @@ export const App: React.FC = () => {
       qwenMode: voiceSettings.qwenMode || 'remote',
       qwenRemoteUrl: voiceSettings.qwenRemoteUrl,
       emotion,
+      stream: voiceSettings.engine === 'qwen3' ? Boolean(voiceSettings.stream) : false,
       useNeural: voiceSettings.useNeural !== false,
       neuralVoice: voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural',
       useRvc: Boolean(voiceSettings.useRvc),
@@ -596,6 +603,9 @@ export const App: React.FC = () => {
                   if (!next) SpeechService.stopSpeaking();
                   handleSaveVoiceSettings({ ...voiceSettings, enabled: next });
                 }}
+                streamEnabled={Boolean(voiceSettings.stream)}
+                onToggleStream={handleToggleStream}
+                isQwen={(voiceSettings.engine || 'qwen3') === 'qwen3'}
                 currentModel={currentModel}
                 onSelectModel={handleSelectModel}
                 modelOptions={modelOptions}
@@ -658,6 +668,9 @@ export const App: React.FC = () => {
                   if (!next) SpeechService.stopSpeaking();
                   handleSaveVoiceSettings({ ...voiceSettings, enabled: next });
                 }}
+                streamEnabled={Boolean(voiceSettings.stream)}
+                onToggleStream={handleToggleStream}
+                isQwen={(voiceSettings.engine || 'qwen3') === 'qwen3'}
                 onOpenMemory={() => setIsMemoryModalOpen(true)}
                 onOpenSettings={() => setIsSettingsModalOpen(true)}
                 onEndCall={handleEndCall}

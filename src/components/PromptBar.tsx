@@ -5,6 +5,7 @@ import {
   Volume2, 
   VolumeX, 
   Sparkles,
+  Zap,
   ChevronDown
 } from 'lucide-react';
 
@@ -20,6 +21,9 @@ interface PromptBarProps {
   onSelectModel: (model: string) => void;
   modelOptions?: ModelOption[];
   currentProvider?: AIProvider;
+  streamEnabled?: boolean;
+  onToggleStream?: () => void;
+  isQwen?: boolean;
   disabled?: boolean;
 }
 
@@ -40,6 +44,9 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   onSelectModel,
   modelOptions,
   currentProvider: _currentProvider,
+  streamEnabled = false,
+  onToggleStream,
+  isQwen = false,
   disabled = false,
 }) => {
   const [input, setInput] = useState('');
@@ -151,6 +158,26 @@ export const PromptBar: React.FC<PromptBarProps> = ({
               >
                 {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
               </button>
+
+                            {/* Quick Stream vs Complete WAV Toggle */}
+              {isQwen && onToggleStream && (
+                <button
+                  type="button"
+                  onClick={onToggleStream}
+                  title={
+                    streamEnabled
+                      ? '⚡ Streaming em Tempo Real Ativo (~500ms) — Clique para alternar para WAV Completo'
+                      : '🛡️ Modo WAV Completo Ativo (Estável) — Clique para alternar para Streaming em Tempo Real'
+                  }
+                  className={`p-2 rounded-lg border transition-all ${
+                    streamEnabled
+                      ? 'border-[#38bdf8]/60 bg-[#0c202e] text-[#38bdf8] shadow-[0_0_10px_rgba(56,189,248,0.4)]'
+                      : 'border-[#2a3040] bg-[#161922] text-[#64748b] hover:text-[#cbd5e1]'
+                  }`}
+                >
+                  <Zap className="w-4 h-4" />
+                </button>
+              )}
 
               {/* TTS Voice Toggle */}
               <button
