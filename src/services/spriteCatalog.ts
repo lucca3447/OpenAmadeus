@@ -244,34 +244,71 @@ export function resolveKurisuSprite(
 }
 
 /**
- * Preloads all primary sprite frames to ensure zero lag or flicker when changing expressions and poses.
+ * Preloads initial sprites immediately, then lazily loads secondary sprites during browser idle time.
+ * Prevents network congestion (70MB waterfall) during initial page startup.
  */
 export function preloadPrimarySprites(): void {
-  const urlsToPreload = new Set<string>();
+  if (typeof window === 'undefined') return;
 
-  // Preload all Pose D frames (mouth closed, half, open, blink)
-  Object.values(KURISU_DEFAULT_EXPRESSIONS).forEach((expr) => {
-    urlsToPreload.add(expr.mouthClosed);
-    urlsToPreload.add(expr.mouthHalf);
-    urlsToPreload.add(expr.mouthOpen);
-    if (expr.blinkFrame) urlsToPreload.add(expr.blinkFrame);
-  });
-
-  // Preload Pose E crossed-arms frames
-  Object.values(KURISU_CROSSED_ARMS_EXPRESSIONS).forEach((expr) => {
-    if (expr) {
-      urlsToPreload.add(expr.mouthClosed);
-      urlsToPreload.add(expr.mouthHalf);
-      urlsToPreload.add(expr.mouthOpen);
-      if (expr.blinkFrame) urlsToPreload.add(expr.blinkFrame);
-    }
-  });
-
-  // Preload Pose F
-  urlsToPreload.add(KURISU_BACKVIEW_SPRITE);
-
-  urlsToPreload.forEach((url) => {
+  const loadImg = (url: string) => {
     const img = new Image();
     img.src = url;
+  };
+
+  // 1. Immediate priority: neutral baseline, thinking pose, and common tsundere reactions (~7 images)
+  const immediate = [
+    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthClosed,
+    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthHalf,
+    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthOpen,
+    KURISU_DEFAULT_EXPRESSIONS.neutral.blinkFrame,
+    KURISU_DEFAULT_EXPRESSIONS.happy.mouthClosed,
+    KURISU_DEFAULT_EXPRESSIONS.blushing.mouthClosed,
+    KURISU_CROSSED_ARMS_EXPRESSIONS.neutral?.mouthClosed,
+  ].filter((url): url is string => Boolean(url));
+
+  immediate.forEach(loadImg);
+
+  // 2. Deferred: Load remaining secondary sprites in idle time in staggered batches
+  const scheduleIdle =
+    'requestIdleCallback' in window
+      ? (window as any).requestIdleCallback
+      : (cb: () => void) => setTimeout(cb, 1200);
+
+  scheduleIdle(() => {
+    const remainingUrls = new Set<string>();
+
+    Object.values(KURISU_DEFAULT_EXPRESSIONS).forEach((expr) => {
+      remainingUrls.add(expr.mouthClosed);
+      remainingUrls.add(expr.mouthHalf);
+      remainingUrls.add(expr.mouthOpen);
+      if (expr.blinkFrame) remainingUrls.add(expr.blinkFrame);
+    });
+
+    Object.values(KURISU_CROSSED_ARMS_EXPRESSIONS).forEach((expr) => {
+      if (expr) {
+        remainingUrls.add(expr.mouthClosed);
+        remainingUrls.add(expr.mouthHalf);
+        remainingUrls.add(expr.mouthOpen);
+        if (expr.blinkFrame) remainingUrls.add(expr.blinkFrame);
+      }
+    });
+
+    remainingUrls.add(KURISU_BACKVIEW_SPRITE);
+
+    // Remove already loaded immediate sprites
+    immediate.forEach((url) => remainingUrls.delete(url));
+
+    // Stagger loading in chunks of 6 (matching HTTP/1.1 parallel socket limit)
+    const list = Array.from(remainingUrls);
+    let index = 0;
+    const chunkLoad = () => {
+      const slice = list.slice(index, index + 6);
+      slice.forEach(loadImg);
+      index += 6;
+      if (index < list.length) {
+        setTimeout(chunkLoad, 200);
+      }
+    };
+    chunkLoad();
   });
 }
