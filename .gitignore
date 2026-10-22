@@ -55,3 +55,7 @@ teste*.py
 *.wav
 server/*.wav
 CONTEXT.md
+
+#AI
+.agents/
+AGENTS.md
