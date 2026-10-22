@@ -24,9 +24,15 @@ import { AmadeusSpriteView } from './components/AmadeusSpriteView';
 import { AudioOscilloscope } from './components/AudioOscilloscope';
 import { SubtitleBox } from './components/SubtitleBox';
 import { ControlBar } from './components/ControlBar';
-import { MemoryInspectorModal } from './components/MemoryInspectorModal';
-import { SettingsModal } from './components/SettingsModal';
-import { LegalNoticeModal } from './components/LegalNoticeModal';
+const MemoryInspectorModal = React.lazy(() =>
+  import('./components/MemoryInspectorModal').then((m) => ({ default: m.MemoryInspectorModal }))
+);
+const SettingsModal = React.lazy(() =>
+  import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+);
+const LegalNoticeModal = React.lazy(() =>
+  import('./components/LegalNoticeModal').then((m) => ({ default: m.LegalNoticeModal }))
+);
 import { IncomingCallScreen } from './components/IncomingCallScreen';
 import { LabBackground } from './components/LabBackground';
 import { AppSidebar } from './components/AppSidebar';
@@ -681,32 +687,38 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      {/* Memory Cortex Inspector Modal */}
-      <MemoryInspectorModal
-        isOpen={isMemoryModalOpen}
-        onClose={() => setIsMemoryModalOpen(false)}
-        persona={persona}
-        recalledMemoryIds={recalledMemoryIds}
-        onMemoryAdded={() => setPersona(MemoryService.getPersona(persona.id))}
-      />
+      {/* Modais Carregados Sob Demanda (Lazy Loaded) */}
+      <React.Suspense fallback={null}>
+        {isMemoryModalOpen && (
+          <MemoryInspectorModal
+            isOpen={isMemoryModalOpen}
+            onClose={() => setIsMemoryModalOpen(false)}
+            persona={persona}
+            recalledMemoryIds={recalledMemoryIds}
+            onMemoryAdded={() => setPersona(MemoryService.getPersona(persona.id))}
+          />
+        )}
 
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
-        apiKey={apiKey}
-        onSaveApiKey={handleSaveApiKey}
-        voiceSettings={voiceSettings}
-        onSaveVoiceSettings={handleSaveVoiceSettings}
-        scanlines={scanlines}
-        onToggleScanlines={handleToggleScanlines}
-      />
+        {isSettingsModalOpen && (
+          <SettingsModal
+            isOpen={isSettingsModalOpen}
+            onClose={() => setIsSettingsModalOpen(false)}
+            apiKey={apiKey}
+            onSaveApiKey={handleSaveApiKey}
+            voiceSettings={voiceSettings}
+            onSaveVoiceSettings={handleSaveVoiceSettings}
+            scanlines={scanlines}
+            onToggleScanlines={handleToggleScanlines}
+          />
+        )}
 
-      {/* Legal & Intellectual Property Notice Modal */}
-      <LegalNoticeModal
-        isOpen={isLegalModalOpen}
-        onClose={() => setIsLegalModalOpen(false)}
-      />
+        {isLegalModalOpen && (
+          <LegalNoticeModal
+            isOpen={isLegalModalOpen}
+            onClose={() => setIsLegalModalOpen(false)}
+          />
+        )}
+      </React.Suspense>
     </div>
   );
 };
