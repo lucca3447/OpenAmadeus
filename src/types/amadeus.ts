@@ -121,10 +121,3 @@ export interface VoiceEngineStatus {
   active_engine: string;
 }
 
-export interface SystemConfig {
-  geminiApiKey: string;
-  model: string;
-  scanlinesEnabled: boolean;
-  activePersonaId: string;
-  useBackend: boolean;
-}

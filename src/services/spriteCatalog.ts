@@ -11,13 +11,6 @@ export const SPRITE_BASE_PATH = '/assets/sprites/kurisu';
 
 export const KURISU_AVATAR_DEFAULT = `${SPRITE_BASE_PATH}/CRS_JLD_40000100.png`;
 
-// Legacy SpriteFrames interface for backward compatibility
-export interface SpriteFrames {
-  idle: string;   // Mouth closed, normal eyes
-  talk: string;   // Mouth half/open, normal eyes
-  blink: string;  // True blink (eyes closed, slot 'a')
-}
-
 /**
  * Mapping of legacy or synonymous emotion tags to the canonical 12-emotion matrix
  */
@@ -249,125 +242,6 @@ export function resolveKurisuSprite(
       return frameSet.mouthClosed;
   }
 }
-
-/**
- * Backward compatibility: KURISU_SPRITES mapping (supports both canonical and legacy emotion keys)
- */
-export const KURISU_SPRITES: Record<Emotion, SpriteFrames> = {
-  // Canonical 12
-  neutral: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.neutral.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.neutral.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.neutral.blinkFrame!,
-  },
-  wink: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.wink.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.wink.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.wink.blinkFrame!,
-  },
-  annoyed: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.annoyed.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.annoyed.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.annoyed.blinkFrame!,
-  },
-  worried: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.worried.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.worried.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.worried.blinkFrame!,
-  },
-  disdain: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.disdain.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.disdain.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.disdain.blinkFrame!,
-  },
-  happy: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.happy.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.happy.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.happy.blinkFrame!,
-  },
-  stern: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.stern.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.stern.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.stern.blinkFrame!,
-  },
-  blushing: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.blushing.blinkFrame!,
-  },
-  look_side: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.look_side.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.look_side.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.look_side.blinkFrame!,
-  },
-  eyes_closed: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.eyes_closed.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.eyes_closed.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.eyes_closed.blinkFrame!,
-  },
-  analytical: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  holding_back_tears: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.blinkFrame!,
-  },
-
-  // Legacy aliases
-  smile: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.happy.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.happy.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.happy.blinkFrame!,
-  },
-  serious: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  surprised: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.worried.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.worried.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.worried.blinkFrame!,
-  },
-  tsundere: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.stern.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.stern.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.stern.blinkFrame!,
-  },
-  thinking: {
-    idle: KURISU_CROSSED_ARMS_EXPRESSIONS.neutral!.mouthClosed,
-    talk: KURISU_CROSSED_ARMS_EXPRESSIONS.neutral!.mouthHalf,
-    blink: KURISU_CROSSED_ARMS_EXPRESSIONS.neutral!.blinkFrame!,
-  },
-  smug: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  flustered: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.blushing.blinkFrame!,
-  },
-  sad: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.blinkFrame!,
-  },
-  puzzled: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  desperate: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.blinkFrame!,
-  },
-};
 
 /**
  * Preloads all primary sprite frames to ensure zero lag or flicker when changing expressions and poses.
