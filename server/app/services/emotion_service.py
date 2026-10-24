@@ -267,8 +267,6 @@ def infer_pose_and_camera(raw: Optional[str], emotion: str, user_message: Option
             pose = "crossed_arms"
         elif re.search(r"\b(descruze os bra[çc]os|solte os bra[çc]os)\b", u_low):
             pose = "default"
-        elif emotion in ("thinking", "analytical", "stern", "annoyed", "disdain", "tsundere", "smug"):
-            pose = "crossed_arms"
         else:
             pose = "default"
 
@@ -281,9 +279,7 @@ def infer_pose_and_camera(raw: Optional[str], emotion: str, user_message: Option
             camera = "medium"
         elif pose == "backview":
             camera = "full"
-        elif emotion in ("blushing", "flustered", "wink", "holding_back_tears", "sad", "desperate"):
-            camera = "closeup"
         else:
-            camera = "medium"
+            camera = "closeup"
 
     return pose, camera

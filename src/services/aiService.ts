@@ -1400,14 +1400,7 @@ export class AIService {
     cleanText = cleanText.replace(/[:;]-?[)(DPpOdD]/g, '');
     cleanText = cleanText.replace(/\s+/g, ' ').trim();
 
-    // Default pose adjustment
-    if (emotion === 'thinking' && !pose) {
-      pose = 'crossed_arms';
-    }
-
-    if ((emotion === 'thinking' || emotion === 'analytical' || emotion === 'stern' || emotion === 'annoyed') && !pose) {
-      pose = 'crossed_arms';
-    }
+    // Default pose is natural (default) unless explicitly set by tag or command
     if (!camera && userMessage) {
       const uLow = userMessage.toLowerCase();
       if (/close-?up|de perto|aproxime/.test(uLow)) camera = 'closeup';

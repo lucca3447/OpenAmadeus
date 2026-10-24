@@ -85,11 +85,7 @@ export function inferCameraFraming(
   isIdleLong: boolean = false
 ): CameraFraming {
   if (pose === 'backview' || isIdleLong) return 'full';
-  const canonical = normalizeEmotion(emotion);
-  if (canonical === 'blushing' || canonical === 'wink' || canonical === 'holding_back_tears') {
-    return 'closeup';
-  }
-  return 'medium';
+  return 'closeup';
 }
 
 /**
@@ -100,7 +96,7 @@ export function resolveKurisuSprite(
   mouthState: MouthState = 'closed',
   isBlinking: boolean = false,
   poseOverride?: CharacterPose,
-  camera: CameraFraming = 'medium'
+  camera: CameraFraming = 'closeup'
 ): string {
   const camCode = CAMERA_PREFIX[camera] || 'JM';
 
@@ -109,7 +105,7 @@ export function resolveKurisuSprite(
   }
 
   const canonical = normalizeEmotion(emotion);
-  const isCrossedArms = poseOverride === 'crossed_arms' || emotion === 'thinking';
+  const isCrossedArms = poseOverride === 'crossed_arms';
 
   if (isCrossedArms) {
     const slot = isBlinking ? '7' : (POSE_E_SLOTS[canonical] || '1');
@@ -128,59 +124,24 @@ const preloadedCameras = new Set<CameraFraming>();
 /**
  * Preloads active camera sprites on demand without causing a 70MB network waterfall.
  */
-export function preloadPrimarySprites(camera: CameraFraming = 'medium'): void {
+export function preloadPrimarySprites(camera: CameraFraming = 'closeup'): void {
   if (typeof window === 'undefined' || preloadedCameras.has(camera)) return;
   preloadedCameras.add(camera);
 
-  const camCode = CAMERA_PREFIX[camera] || 'JM';
+  const camCode = CAMERA_PREFIX[camera] || 'JL';
   const loadImg = (url: string) => {
     const img = new Image();
     img.src = url;
   };
 
-  // Immediate priority for active camera (~8 sprites)
+  // Immediate priority: preload only vital baseline frames (~6 sprites) without saturating the network
   const immediate = [
     `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000100.png`,
     `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000101.png`,
     `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000102.png`,
     `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000a00.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000900.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000b00.png`,
     `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000100.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000600.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000700.png`,
   ];
   immediate.forEach(loadImg);
-
-  // Staggered idle preload for remaining expressions of this camera
-  const scheduleIdle =
-    'requestIdleCallback' in window
-      ? (window as any).requestIdleCallback
-      : (cb: () => void) => setTimeout(cb, 1200);
-
-  scheduleIdle(() => {
-    const urls: string[] = [];
-    for (const slot of new Set(Object.values(POSE_D_SLOTS))) {
-      urls.push(
-        `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000${slot}00.png`,
-        `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000${slot}01.png`,
-        `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000${slot}02.png`
-      );
-    }
-    for (const slot of new Set(Object.values(POSE_E_SLOTS))) {
-      urls.push(
-        `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000${slot}00.png`,
-        `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000${slot}01.png`,
-        `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000${slot}02.png`
-      );
-    }
-    urls.push(`${SPRITE_BASE_PATH}/CRS_${camCode}F_00000001.png`);
-
-    let index = 0;
-    const chunkLoad = () => {
-      urls.slice(index, index + 6).forEach(loadImg);
-      index += 6;
-      if (index < urls.length) setTimeout(chunkLoad, 180);
-    };
-    chunkLoad();
-  });
 }
