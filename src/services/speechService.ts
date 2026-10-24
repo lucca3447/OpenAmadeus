@@ -103,6 +103,7 @@ export class SpeechService {
   private static neuralAudio: HTMLAudioElement | null = null;
   private static audioSourceConnected = false;
   private static isSpeakingAudio = false;
+  private static currentAudioUrl: string | null = null;
 
   // Listeners for acoustic amplitude and lip flap
   private static lipSyncListeners: Set<LipSyncCallback> = new Set();
@@ -432,6 +433,7 @@ export class SpeechService {
     const blob = await res.blob();
     if (abortCtrl.signal.aborted) return;
     const audioUrl = URL.createObjectURL(blob);
+    this.currentAudioUrl = audioUrl;
 
     if (!this.neuralAudio) {
       this.neuralAudio = new Audio();
@@ -465,6 +467,7 @@ export class SpeechService {
         this.isSpeakingAudio = false;
         this.notifyLipSync(false, 0);
         URL.revokeObjectURL(audioUrl);
+        if (this.currentAudioUrl === audioUrl) this.currentAudioUrl = null;
         options.onEnd?.();
         resolve();
       };
@@ -473,12 +476,14 @@ export class SpeechService {
         this.isSpeakingAudio = false;
         this.notifyLipSync(false, 0);
         URL.revokeObjectURL(audioUrl);
+        if (this.currentAudioUrl === audioUrl) this.currentAudioUrl = null;
         options.onEnd?.();
         reject(e);
       };
 
       audio.play().catch((err) => {
         URL.revokeObjectURL(audioUrl);
+        if (this.currentAudioUrl === audioUrl) this.currentAudioUrl = null;
         reject(err);
       });
     });
@@ -682,6 +687,11 @@ export class SpeechService {
     if (this.simulatedLipSyncTimeout) {
       clearTimeout(this.simulatedLipSyncTimeout);
       this.simulatedLipSyncTimeout = null;
+    }
+
+    if (this.currentAudioUrl) {
+      URL.revokeObjectURL(this.currentAudioUrl);
+      this.currentAudioUrl = null;
     }
 
     if (this.neuralAudio) {

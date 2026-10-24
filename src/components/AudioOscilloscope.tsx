@@ -148,8 +148,12 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
         ctx.shadowBlur = 0;
       }
 
-      phase += currentSpeed;
-      animationFrameId = requestAnimationFrame(render);
+      if (isActive || isListening) {
+        phase += currentSpeed;
+      }
+      if (isActive || isListening) {
+        animationFrameId = requestAnimationFrame(render);
+      }
     };
 
     render();

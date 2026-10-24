@@ -11,13 +11,6 @@ export const SPRITE_BASE_PATH = '/assets/sprites/kurisu';
 
 export const KURISU_AVATAR_DEFAULT = `${SPRITE_BASE_PATH}/CRS_JLD_40000100.png`;
 
-// Legacy SpriteFrames interface for backward compatibility
-export interface SpriteFrames {
-  idle: string;   // Mouth closed, normal eyes
-  talk: string;   // Mouth half/open, normal eyes
-  blink: string;  // True blink (eyes closed, slot 'a')
-}
-
 /**
  * Mapping of legacy or synonymous emotion tags to the canonical 12-emotion matrix
  */
@@ -251,153 +244,71 @@ export function resolveKurisuSprite(
 }
 
 /**
- * Backward compatibility: KURISU_SPRITES mapping (supports both canonical and legacy emotion keys)
- */
-export const KURISU_SPRITES: Record<Emotion, SpriteFrames> = {
-  // Canonical 12
-  neutral: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.neutral.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.neutral.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.neutral.blinkFrame!,
-  },
-  wink: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.wink.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.wink.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.wink.blinkFrame!,
-  },
-  annoyed: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.annoyed.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.annoyed.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.annoyed.blinkFrame!,
-  },
-  worried: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.worried.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.worried.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.worried.blinkFrame!,
-  },
-  disdain: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.disdain.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.disdain.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.disdain.blinkFrame!,
-  },
-  happy: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.happy.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.happy.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.happy.blinkFrame!,
-  },
-  stern: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.stern.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.stern.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.stern.blinkFrame!,
-  },
-  blushing: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.blushing.blinkFrame!,
-  },
-  look_side: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.look_side.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.look_side.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.look_side.blinkFrame!,
-  },
-  eyes_closed: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.eyes_closed.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.eyes_closed.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.eyes_closed.blinkFrame!,
-  },
-  analytical: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  holding_back_tears: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.blinkFrame!,
-  },
-
-  // Legacy aliases
-  smile: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.happy.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.happy.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.happy.blinkFrame!,
-  },
-  serious: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  surprised: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.worried.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.worried.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.worried.blinkFrame!,
-  },
-  tsundere: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.stern.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.stern.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.stern.blinkFrame!,
-  },
-  thinking: {
-    idle: KURISU_CROSSED_ARMS_EXPRESSIONS.neutral!.mouthClosed,
-    talk: KURISU_CROSSED_ARMS_EXPRESSIONS.neutral!.mouthHalf,
-    blink: KURISU_CROSSED_ARMS_EXPRESSIONS.neutral!.blinkFrame!,
-  },
-  smug: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  flustered: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.blushing.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.blushing.blinkFrame!,
-  },
-  sad: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.blinkFrame!,
-  },
-  puzzled: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.analytical.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.analytical.blinkFrame!,
-  },
-  desperate: {
-    idle: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthClosed,
-    talk: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.mouthHalf,
-    blink: KURISU_DEFAULT_EXPRESSIONS.holding_back_tears.blinkFrame!,
-  },
-};
-
-/**
- * Preloads all primary sprite frames to ensure zero lag or flicker when changing expressions and poses.
+ * Preloads initial sprites immediately, then lazily loads secondary sprites during browser idle time.
+ * Prevents network congestion (70MB waterfall) during initial page startup.
  */
 export function preloadPrimarySprites(): void {
-  const urlsToPreload = new Set<string>();
+  if (typeof window === 'undefined') return;
 
-  // Preload all Pose D frames (mouth closed, half, open, blink)
-  Object.values(KURISU_DEFAULT_EXPRESSIONS).forEach((expr) => {
-    urlsToPreload.add(expr.mouthClosed);
-    urlsToPreload.add(expr.mouthHalf);
-    urlsToPreload.add(expr.mouthOpen);
-    if (expr.blinkFrame) urlsToPreload.add(expr.blinkFrame);
-  });
-
-  // Preload Pose E crossed-arms frames
-  Object.values(KURISU_CROSSED_ARMS_EXPRESSIONS).forEach((expr) => {
-    if (expr) {
-      urlsToPreload.add(expr.mouthClosed);
-      urlsToPreload.add(expr.mouthHalf);
-      urlsToPreload.add(expr.mouthOpen);
-      if (expr.blinkFrame) urlsToPreload.add(expr.blinkFrame);
-    }
-  });
-
-  // Preload Pose F
-  urlsToPreload.add(KURISU_BACKVIEW_SPRITE);
-
-  urlsToPreload.forEach((url) => {
+  const loadImg = (url: string) => {
     const img = new Image();
     img.src = url;
+  };
+
+  // 1. Immediate priority: neutral baseline, thinking pose, and common tsundere reactions (~7 images)
+  const immediate = [
+    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthClosed,
+    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthHalf,
+    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthOpen,
+    KURISU_DEFAULT_EXPRESSIONS.neutral.blinkFrame,
+    KURISU_DEFAULT_EXPRESSIONS.happy.mouthClosed,
+    KURISU_DEFAULT_EXPRESSIONS.blushing.mouthClosed,
+    KURISU_CROSSED_ARMS_EXPRESSIONS.neutral?.mouthClosed,
+  ].filter((url): url is string => Boolean(url));
+
+  immediate.forEach(loadImg);
+
+  // 2. Deferred: Load remaining secondary sprites in idle time in staggered batches
+  const scheduleIdle =
+    'requestIdleCallback' in window
+      ? (window as any).requestIdleCallback
+      : (cb: () => void) => setTimeout(cb, 1200);
+
+  scheduleIdle(() => {
+    const remainingUrls = new Set<string>();
+
+    Object.values(KURISU_DEFAULT_EXPRESSIONS).forEach((expr) => {
+      remainingUrls.add(expr.mouthClosed);
+      remainingUrls.add(expr.mouthHalf);
+      remainingUrls.add(expr.mouthOpen);
+      if (expr.blinkFrame) remainingUrls.add(expr.blinkFrame);
+    });
+
+    Object.values(KURISU_CROSSED_ARMS_EXPRESSIONS).forEach((expr) => {
+      if (expr) {
+        remainingUrls.add(expr.mouthClosed);
+        remainingUrls.add(expr.mouthHalf);
+        remainingUrls.add(expr.mouthOpen);
+        if (expr.blinkFrame) remainingUrls.add(expr.blinkFrame);
+      }
+    });
+
+    remainingUrls.add(KURISU_BACKVIEW_SPRITE);
+
+    // Remove already loaded immediate sprites
+    immediate.forEach((url) => remainingUrls.delete(url));
+
+    // Stagger loading in chunks of 6 (matching HTTP/1.1 parallel socket limit)
+    const list = Array.from(remainingUrls);
+    let index = 0;
+    const chunkLoad = () => {
+      const slice = list.slice(index, index + 6);
+      slice.forEach(loadImg);
+      index += 6;
+      if (index < list.length) {
+        setTimeout(chunkLoad, 200);
+      }
+    };
+    chunkLoad();
   });
 }
