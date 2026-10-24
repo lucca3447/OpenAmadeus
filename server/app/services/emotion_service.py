@@ -124,7 +124,7 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
                 break
 
     # Infallible removal of any emotion tag variant
-    clean = re.sub(r"<!--\s*emotion:[^>]*-->", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"<!--\s*(?:emotion|pose|camera):[^>]*-->", "", clean, flags=re.IGNORECASE)
 
     # 3. Detect actions from asterisks stage directions before stripping (e.g. *sorri*, *fica pensativa*)
     asterisk_matches = re.findall(r"\*([^*]+)\*", clean)
@@ -231,3 +231,59 @@ def sanitize_repetitive_openers(text: str) -> str:
     return t
 
 
+
+
+def infer_pose_and_camera(raw: Optional[str], emotion: str, user_message: Optional[str] = None) -> Tuple[str, str]:
+    text = (raw or "").lower()
+    u_low = (user_message or "").lower()
+
+    pose = ""
+    camera = ""
+
+    pose_m = re.search(r"pose\s*:\s*([a-z_]+)", text)
+    if pose_m:
+        tok = pose_m.group(1)
+        if tok in ("crossed_arms", "thinking"):
+            pose = "crossed_arms"
+        elif tok in ("backview", "back"):
+            pose = "backview"
+        elif tok in ("default", "front"):
+            pose = "default"
+
+    cam_m = re.search(r"camera\s*:\s*([a-z_]+)", text)
+    if cam_m:
+        tok = cam_m.group(1)
+        if tok in ("closeup", "close", "jl"):
+            camera = "closeup"
+        elif tok in ("medium", "jm"):
+            camera = "medium"
+        elif tok in ("full", "far", "js"):
+            camera = "full"
+
+    if not pose:
+        if re.search(r"\b(de costas|vire de costas)\b", u_low):
+            pose = "backview"
+        elif re.search(r"\b(cruze os bra[çc]os|bra[çc]os cruzados)\b", u_low):
+            pose = "crossed_arms"
+        elif re.search(r"\b(descruze os bra[çc]os|solte os bra[çc]os)\b", u_low):
+            pose = "default"
+        elif emotion in ("thinking", "analytical", "stern", "annoyed", "disdain", "tsundere", "smug"):
+            pose = "crossed_arms"
+        else:
+            pose = "default"
+
+    if not camera:
+        if re.search(r"\b(close-?up|de perto|aproxime|rosto)\b", u_low):
+            camera = "closeup"
+        elif re.search(r"\b(corpo inteiro|afaste|de longe)\b", u_low):
+            camera = "full"
+        elif re.search(r"\b(meio corpo)\b", u_low):
+            camera = "medium"
+        elif pose == "backview":
+            camera = "full"
+        elif emotion in ("blushing", "flustered", "wink", "holding_back_tears", "sad", "desperate"):
+            camera = "closeup"
+        else:
+            camera = "medium"
+
+    return pose, camera

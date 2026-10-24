@@ -27,6 +27,8 @@ export type LegacyEmotion =
 export type Emotion = CanonicalEmotion | LegacyEmotion;
 
 export type CharacterPose = 'default' | 'crossed_arms' | 'backview';
+export type CameraFraming = 'closeup' | 'medium' | 'full';
+export type CameraMode = 'auto' | CameraFraming;
 
 export type MouthState = 'closed' | 'half' | 'open';
 
@@ -70,6 +72,7 @@ export interface ChatMessage {
   timestamp: number;
   emotion?: Emotion;
   pose?: CharacterPose;
+  camera?: CameraFraming;
   recalledMemories?: string[];
 }
 

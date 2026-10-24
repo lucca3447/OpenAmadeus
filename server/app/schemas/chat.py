@@ -20,6 +20,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     emotion: str
+    pose: Optional[str] = None
+    camera: Optional[str] = None
     recalledMemories: List[str]
     sessionId: Optional[str] = None
     model: Optional[str] = None

@@ -1,4 +1,4 @@
-import { ChatMessage, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
+import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
 
 export const BACKEND_URL =
   ((import.meta as any).env?.VITE_API_URL as string) || 'http://localhost:8000';
@@ -17,6 +17,8 @@ export interface BackendHealth {
 export interface BackendChatResponse {
   response: string;
   emotion: Emotion;
+  pose?: CharacterPose;
+  camera?: CameraFraming;
   recalledMemories: string[];
   sessionId?: string;
   model?: string;

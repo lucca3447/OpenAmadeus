@@ -1,4 +1,4 @@
-import { CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
+import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
 import { BackendService } from './backendService';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -194,6 +194,7 @@ export interface AIResult {
   response: string;
   emotion: Emotion;
   pose?: CharacterPose;
+  camera?: CameraFraming;
   status: AIStatus;
   /** true when the response is an error report, not something Amadeus "said" */
   isError: boolean;
@@ -691,6 +692,8 @@ export class AIService {
         return {
           response: backendRes.response,
           emotion: backendRes.emotion,
+          pose: backendRes.pose,
+          camera: backendRes.camera,
           status: { kind: 'online', model: backendRes.model || 'ChromaDB + SQLite (Python)' },
           isError: Boolean(backendRes.error),
           learnedMemory: backendRes.learnedMemory,
@@ -710,12 +713,13 @@ export class AIService {
     // 3. Browser-Mode: Groq Cloud (Ultra-fast LPU)
     if (isGroqKey(key)) {
       try {
-        const { response, emotion, pose, model, learnedMemory, fallbackModel, decommissionNotice } =
+        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
           await this.queryGroq(userMessage, persona, recalledMemories, key, history, selectedModel);
         return {
           response,
           emotion,
           pose,
+          camera,
           status: { kind: 'online', model },
           isError: false,
           learnedMemory,
@@ -734,12 +738,13 @@ export class AIService {
     // 4. Browser-Mode: OpenRouter
     if (isOpenRouterKey(key)) {
       try {
-        const { response, emotion, pose, model, learnedMemory, fallbackModel, decommissionNotice } =
+        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
           await this.queryOpenRouter(userMessage, persona, recalledMemories, key, history, selectedModel);
         return {
           response,
           emotion,
           pose,
+          camera,
           status: { kind: 'online', model },
           isError: false,
           learnedMemory,
@@ -757,12 +762,13 @@ export class AIService {
 
     // 5. Browser-Mode: Google Gemini
     try {
-      const { response, emotion, pose, model, learnedMemory, fallbackModel, decommissionNotice } =
+      const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
         await this.queryGemini(userMessage, persona, recalledMemories, key, history, selectedModel);
       return {
         response,
         emotion,
         pose,
+        camera,
         status: { kind: 'online', model },
         isError: false,
         learnedMemory,
@@ -812,6 +818,7 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -937,6 +944,7 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -1092,6 +1100,7 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -1261,10 +1270,12 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     learnedMemory?: LearnedMemoryInfo;
   } {
     let emotion: Emotion = 'neutral';
     let pose: CharacterPose | undefined = undefined;
+    let camera: CameraFraming | undefined = undefined;
     let cleanText = this.stripThinkingTags(rawText);
     let learnedMemory: LearnedMemoryInfo | undefined = undefined;
 
@@ -1309,7 +1320,15 @@ export class AIService {
       }
     }
     // Infallible removal of any emotion tag variant
-    cleanText = cleanText.replace(/<!--\s*emotion:[^>]*-->/gi, '');
+    // Infallible removal of any emotion/pose/camera tag variant
+    const camMatch = cleanText.match(/camera\s*:\s*([a-z_]+)/i);
+    if (camMatch && camMatch[1]) {
+      const cTok = camMatch[1].toLowerCase().trim();
+      if (cTok === 'closeup' || cTok === 'close' || cTok === 'jl') camera = 'closeup';
+      else if (cTok === 'medium' || cTok === 'jm') camera = 'medium';
+      else if (cTok === 'full' || cTok === 'far' || cTok === 'js') camera = 'full';
+    }
+    cleanText = cleanText.replace(/<!--\s*(?:emotion|pose|camera):[^>]*-->/gi, '');
 
     // 4. Extract stage directions from asterisks before stripping (*sorri*, *cruza os braços*)
     const asterisks = cleanText.match(/\*([^*]+)\*/g);
@@ -1386,7 +1405,16 @@ export class AIService {
       pose = 'crossed_arms';
     }
 
-    return { response: cleanText, emotion, pose, learnedMemory };
+    if ((emotion === 'thinking' || emotion === 'analytical' || emotion === 'stern' || emotion === 'annoyed') && !pose) {
+      pose = 'crossed_arms';
+    }
+    if (!camera && userMessage) {
+      const uLow = userMessage.toLowerCase();
+      if (/close-?up|de perto|aproxime/.test(uLow)) camera = 'closeup';
+      else if (/corpo inteiro|afaste|de longe/.test(uLow)) camera = 'full';
+      else if (/meio corpo/.test(uLow)) camera = 'medium';
+    }
+    return { response: cleanText, emotion, pose, camera, learnedMemory };
   }
 
   /**

@@ -1,19 +1,16 @@
 import {
+  CameraFraming,
   CanonicalEmotion,
   CharacterPose,
   Emotion,
   LegacyEmotion,
   MouthState,
-  SpriteExpressionFrames,
 } from '../types/amadeus';
 
 export const SPRITE_BASE_PATH = '/assets/sprites/kurisu';
 
 export const KURISU_AVATAR_DEFAULT = `${SPRITE_BASE_PATH}/CRS_JLD_40000100.png`;
 
-/**
- * Mapping of legacy or synonymous emotion tags to the canonical 12-emotion matrix
- */
 export const EMOTION_ALIASES: Record<LegacyEmotion, CanonicalEmotion> = {
   smile: 'happy',
   serious: 'analytical',
@@ -27,9 +24,6 @@ export const EMOTION_ALIASES: Record<LegacyEmotion, CanonicalEmotion> = {
   desperate: 'holding_back_tears',
 };
 
-/**
- * Normalizes any emotion (canonical or legacy) to a valid CanonicalEmotion
- */
 export function normalizeEmotion(emotion?: Emotion): CanonicalEmotion {
   if (!emotion) return 'neutral';
   if (emotion in EMOTION_ALIASES) {
@@ -38,276 +32,154 @@ export function normalizeEmotion(emotion?: Emotion): CanonicalEmotion {
   return emotion as CanonicalEmotion;
 }
 
-/**
- * Pose D (Default Frontal / Braços relaxados ao lado do corpo)
- * Complete 12-expression matrix (hex slots 1 to c)
- */
-export const KURISU_DEFAULT_EXPRESSIONS: Record<CanonicalEmotion, SpriteExpressionFrames> = {
-  neutral: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000100.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000101.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000102.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  wink: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000200.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000201.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000202.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  annoyed: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000300.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000301.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000302.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  worried: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000400.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000401.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000402.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  disdain: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000500.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000501.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000502.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  happy: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000600.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000601.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000602.png`,
-    // In expression 6, eyes are already closed in a happy arc (^^)
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000600.png`,
-  },
-  stern: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000700.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000701.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000702.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  blushing: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000800.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000801.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000802.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  look_side: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000900.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000901.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000902.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  eyes_closed: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000a01.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000a02.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  analytical: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000b00.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000b01.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000b02.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
-  holding_back_tears: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLD_40000c00.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLD_40000c01.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLD_40000c02.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLD_40000a00.png`,
-  },
+const CAMERA_PREFIX: Record<CameraFraming, 'JL' | 'JM' | 'JS'> = {
+  closeup: 'JL',
+  medium: 'JM',
+  full: 'JS',
+};
+
+// Pose D (Braços soltos): 12 hex slots (1..c), blink frame is slot 'a' (except 'happy' which is already closed in '6')
+const POSE_D_SLOTS: Record<CanonicalEmotion, string> = {
+  neutral: '1',
+  wink: '2',
+  annoyed: '3',
+  worried: '4',
+  disdain: '5',
+  happy: '6',
+  stern: '7',
+  blushing: '8',
+  look_side: '9',
+  eyes_closed: 'a',
+  analytical: 'b',
+  holding_back_tears: 'c',
+};
+
+// Pose E (Braços cruzados): 7 hex slots (1..7), blink frame is slot '7'
+const POSE_E_SLOTS: Record<CanonicalEmotion, string> = {
+  neutral: '1',
+  blushing: '2',
+  happy: '3',
+  wink: '3',
+  worried: '4',
+  holding_back_tears: '4',
+  disdain: '5',
+  annoyed: '5',
+  look_side: '5',
+  stern: '6',
+  analytical: '6',
+  eyes_closed: '7',
+};
+
+const MOUTH_INDEX: Record<MouthState, '00' | '01' | '02'> = {
+  closed: '00',
+  half: '01',
+  open: '02',
 };
 
 /**
- * Pose E (Braços cruzados sobre o peito com jaleco)
- * 7 canonical expressions available in MAGES engine (slots 1 to 7):
- * - Slot 1: Neutral (olhar frontal, repouso)
- * - Slot 2: Blushing (rubor evidente nas bochechas)
- * - Slot 3: Happy / Suave (sorriso amigável nos lábios)
- * - Slot 4: Worried (preocupada / aflita)
- * - Slot 5: Disdain (olhar semicerrado cético / tédio)
- * - Slot 6: Stern / Analytical (olhos bem abertos, foco intenso)
- * - Slot 7: Eyes Closed (olhos completamente fechados - frame verdadeiro de blink)
+ * Infers the best camera framing (JL closeup, JM medium, JS full) when camera is in 'auto' mode.
  */
-export const KURISU_CROSSED_ARMS_EXPRESSIONS: Partial<Record<CanonicalEmotion, SpriteExpressionFrames>> = {
-  neutral: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000100.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000101.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000102.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  blushing: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000200.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000201.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000202.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  happy: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000300.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000301.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000302.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  worried: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000400.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000401.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000402.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  disdain: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000500.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000501.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000502.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  annoyed: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000500.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000501.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000502.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  stern: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000600.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000601.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000602.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  analytical: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000600.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000601.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000602.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  eyes_closed: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000701.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000702.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-  wink: {
-    mouthClosed: `${SPRITE_BASE_PATH}/CRS_JLE_40000300.png`,
-    mouthHalf: `${SPRITE_BASE_PATH}/CRS_JLE_40000301.png`,
-    mouthOpen: `${SPRITE_BASE_PATH}/CRS_JLE_40000302.png`,
-    blinkFrame: `${SPRITE_BASE_PATH}/CRS_JLE_40000700.png`,
-  },
-};
+export function inferCameraFraming(
+  emotion: Emotion = 'neutral',
+  pose: CharacterPose = 'default',
+  isIdleLong: boolean = false
+): CameraFraming {
+  if (pose === 'backview' || isIdleLong) return 'full';
+  const canonical = normalizeEmotion(emotion);
+  if (canonical === 'blushing' || canonical === 'wink' || canonical === 'holding_back_tears') {
+    return 'closeup';
+  }
+  return 'medium';
+}
 
 /**
- * Pose F (De Costas / Back View)
- */
-export const KURISU_BACKVIEW_SPRITE = `${SPRITE_BASE_PATH}/CRS_JLF_00000001.png`;
-
-/**
- * Resolves the exact sprite file URL for Kurisu based on emotion, mouth state, blink, and pose.
+ * Resolves any of the 174 canonical MAGES sprites across JL (closeup), JM (medium), and JS (full).
  */
 export function resolveKurisuSprite(
   emotion: Emotion = 'neutral',
   mouthState: MouthState = 'closed',
   isBlinking: boolean = false,
-  poseOverride?: CharacterPose
+  poseOverride?: CharacterPose,
+  camera: CameraFraming = 'medium'
 ): string {
-  // 1. Backview pose has no face/mouth variations
+  const camCode = CAMERA_PREFIX[camera] || 'JM';
+
   if (poseOverride === 'backview') {
-    return KURISU_BACKVIEW_SPRITE;
+    return `${SPRITE_BASE_PATH}/CRS_${camCode}F_00000001.png`;
   }
 
-  // 2. Normalize emotion
   const canonical = normalizeEmotion(emotion);
-
-  // 3. Determine pose: if pose is crossed_arms (or emotion was legacy 'thinking'), use Pose E
   const isCrossedArms = poseOverride === 'crossed_arms' || emotion === 'thinking';
 
-  // 4. Select expression frame set
-  let frameSet: SpriteExpressionFrames | undefined;
   if (isCrossedArms) {
-    frameSet = KURISU_CROSSED_ARMS_EXPRESSIONS[canonical] || KURISU_CROSSED_ARMS_EXPRESSIONS.neutral;
-  }
-  if (!frameSet) {
-    frameSet = KURISU_DEFAULT_EXPRESSIONS[canonical] || KURISU_DEFAULT_EXPRESSIONS.neutral;
-  }
-
-  // 5. True Blink check: if blinking and not speaking, return matching closed-eyes frame
-  if (isBlinking && frameSet.blinkFrame) {
-    return frameSet.blinkFrame;
+    const slot = isBlinking ? '7' : (POSE_E_SLOTS[canonical] || '1');
+    const mouth = isBlinking ? '00' : MOUTH_INDEX[mouthState];
+    return `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000${slot}${mouth}.png`;
   }
 
-  // 6. Return appropriate mouth frame (00, 01, 02)
-  switch (mouthState) {
-    case 'open':
-      return frameSet.mouthOpen;
-    case 'half':
-      return frameSet.mouthHalf;
-    case 'closed':
-    default:
-      return frameSet.mouthClosed;
-  }
+  const baseSlot = POSE_D_SLOTS[canonical] || '1';
+  const slot = isBlinking ? (canonical === 'happy' ? '6' : 'a') : baseSlot;
+  const mouth = isBlinking ? '00' : MOUTH_INDEX[mouthState];
+  return `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000${slot}${mouth}.png`;
 }
 
-/**
- * Preloads initial sprites immediately, then lazily loads secondary sprites during browser idle time.
- * Prevents network congestion (70MB waterfall) during initial page startup.
- */
-export function preloadPrimarySprites(): void {
-  if (typeof window === 'undefined') return;
+const preloadedCameras = new Set<CameraFraming>();
 
+/**
+ * Preloads active camera sprites on demand without causing a 70MB network waterfall.
+ */
+export function preloadPrimarySprites(camera: CameraFraming = 'medium'): void {
+  if (typeof window === 'undefined' || preloadedCameras.has(camera)) return;
+  preloadedCameras.add(camera);
+
+  const camCode = CAMERA_PREFIX[camera] || 'JM';
   const loadImg = (url: string) => {
     const img = new Image();
     img.src = url;
   };
 
-  // 1. Immediate priority: neutral baseline, thinking pose, and common tsundere reactions (~7 images)
+  // Immediate priority for active camera (~8 sprites)
   const immediate = [
-    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthClosed,
-    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthHalf,
-    KURISU_DEFAULT_EXPRESSIONS.neutral.mouthOpen,
-    KURISU_DEFAULT_EXPRESSIONS.neutral.blinkFrame,
-    KURISU_DEFAULT_EXPRESSIONS.happy.mouthClosed,
-    KURISU_DEFAULT_EXPRESSIONS.blushing.mouthClosed,
-    KURISU_CROSSED_ARMS_EXPRESSIONS.neutral?.mouthClosed,
-  ].filter((url): url is string => Boolean(url));
-
+    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000100.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000101.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000102.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000a00.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000900.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000100.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000600.png`,
+    `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000700.png`,
+  ];
   immediate.forEach(loadImg);
 
-  // 2. Deferred: Load remaining secondary sprites in idle time in staggered batches
+  // Staggered idle preload for remaining expressions of this camera
   const scheduleIdle =
     'requestIdleCallback' in window
       ? (window as any).requestIdleCallback
       : (cb: () => void) => setTimeout(cb, 1200);
 
   scheduleIdle(() => {
-    const remainingUrls = new Set<string>();
+    const urls: string[] = [];
+    for (const slot of new Set(Object.values(POSE_D_SLOTS))) {
+      urls.push(
+        `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000${slot}00.png`,
+        `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000${slot}01.png`,
+        `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000${slot}02.png`
+      );
+    }
+    for (const slot of new Set(Object.values(POSE_E_SLOTS))) {
+      urls.push(
+        `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000${slot}00.png`,
+        `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000${slot}01.png`,
+        `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000${slot}02.png`
+      );
+    }
+    urls.push(`${SPRITE_BASE_PATH}/CRS_${camCode}F_00000001.png`);
 
-    Object.values(KURISU_DEFAULT_EXPRESSIONS).forEach((expr) => {
-      remainingUrls.add(expr.mouthClosed);
-      remainingUrls.add(expr.mouthHalf);
-      remainingUrls.add(expr.mouthOpen);
-      if (expr.blinkFrame) remainingUrls.add(expr.blinkFrame);
-    });
-
-    Object.values(KURISU_CROSSED_ARMS_EXPRESSIONS).forEach((expr) => {
-      if (expr) {
-        remainingUrls.add(expr.mouthClosed);
-        remainingUrls.add(expr.mouthHalf);
-        remainingUrls.add(expr.mouthOpen);
-        if (expr.blinkFrame) remainingUrls.add(expr.blinkFrame);
-      }
-    });
-
-    remainingUrls.add(KURISU_BACKVIEW_SPRITE);
-
-    // Remove already loaded immediate sprites
-    immediate.forEach((url) => remainingUrls.delete(url));
-
-    // Stagger loading in chunks of 6 (matching HTTP/1.1 parallel socket limit)
-    const list = Array.from(remainingUrls);
     let index = 0;
     const chunkLoad = () => {
-      const slice = list.slice(index, index + 6);
-      slice.forEach(loadImg);
+      urls.slice(index, index + 6).forEach(loadImg);
       index += 6;
-      if (index < list.length) {
-        setTimeout(chunkLoad, 200);
-      }
+      if (index < urls.length) setTimeout(chunkLoad, 180);
     };
     chunkLoad();
   });
