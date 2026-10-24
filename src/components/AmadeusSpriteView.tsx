@@ -21,7 +21,7 @@ interface AmadeusSpriteViewProps {
   className?: string;
 }
 
-const CAMERA_CYCLE: CameraMode[] = ['auto', 'medium', 'closeup', 'full'];
+const CAMERA_CYCLE: CameraMode[] = ['auto', 'closeup', 'medium', 'full'];
 const CAMERA_LABELS: Record<CameraFraming, string> = {
   closeup: 'JL',
   medium: 'JM',
@@ -65,7 +65,7 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
   const effectivePose: CharacterPose =
     pose === 'backview'
       ? 'backview'
-      : pose === 'crossed_arms' || effectiveEmotion === 'thinking'
+      : pose === 'crossed_arms'
       ? 'crossed_arms'
       : 'default';
 

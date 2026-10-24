@@ -308,7 +308,6 @@ export const App: React.FC = () => {
     setIsProcessing(true);
     // Immediate visual feedback while the model is working
     setCurrentEmotion('thinking');
-    setCurrentPose('crossed_arms');
 
     try {
       // 2. Query Amadeus (via Python backend with ChromaDB if available, or direct browser-side)
@@ -320,8 +319,6 @@ export const App: React.FC = () => {
       setCurrentCamera(result.camera);
       if (result.pose) {
         setCurrentPose(result.pose);
-      } else if (result.emotion === 'thinking') {
-        setCurrentPose('crossed_arms');
       } else {
         setCurrentPose('default');
       }
