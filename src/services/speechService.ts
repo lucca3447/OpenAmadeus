@@ -44,7 +44,7 @@ export function normalizeForSpeech(rawText: string): string {
   let text = rawText || '';
 
   // 1. Remove emotion, remember and pose tags
-  text = text.replace(/<!--\s*(?:emotion|remember|pose):[^>]*-->/gi, '');
+  text = text.replace(/<!--\s*(?:emotion|remember|pose|camera):[^>]*-->/gi, '');
 
   // 2. Remove stage directions / asterisk actions (*sorri*, *olha para o lado*)
   text = text.replace(/\*[^*]+\*/g, '');

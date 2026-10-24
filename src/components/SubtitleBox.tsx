@@ -30,7 +30,7 @@ const EMOTION_LABELS: Record<Emotion, { label: string; color: string }> = {
   serious: { label: 'Analítica / Foco Científico', color: 'text-[#38bdf8] border-[#38bdf8]/40' },
   surprised: { label: 'Surpresa / Chocada', color: 'text-[#f472b6] border-[#ec4899]/40' },
   tsundere: { label: 'Tsundere / Defensiva', color: 'text-[#ef4444] border-[#ef4444]/50' },
-  thinking: { label: 'Pensativa / Braços Cruzados', color: 'text-[#38bdf8] border-[#0ea5e9]/40' },
+  thinking: { label: 'Pensativa / Analítica', color: 'text-[#38bdf8] border-[#0ea5e9]/40' },
   smug: { label: 'Confiante / Debochada', color: 'text-[#fbbf24] border-[#f59e0b]/40' },
   flustered: { label: 'Envergonhada / Corada', color: 'text-[#fb7185] border-[#f43f5e]/40' },
   sad: { label: 'Melancólica / Magoada', color: 'text-[#93c5fd] border-[#3b82f6]/40' },

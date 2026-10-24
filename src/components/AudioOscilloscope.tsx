@@ -113,39 +113,48 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
 
       // Draw aesthetic harmonic wave when not using real audio
       if (!hasRealAudio) {
-        let baseAmplitude = height * 0.08;
-
-        if (isActive) {
-          baseAmplitude = height * 0.32 + Math.sin(phase * 3) * (height * 0.12);
-          currentSpeed = 0.14;
-        } else if (isListening) {
-          baseAmplitude = height * 0.22 + Math.sin(phase * 4) * (height * 0.08);
-          currentSpeed = 0.12;
-        }
-
-        ctx.beginPath();
-        ctx.strokeStyle = isActive ? '#f59e0b' : isListening ? '#38bdf8' : '#78350f';
-        ctx.lineWidth = 2;
-        ctx.shadowBlur = isActive || isListening ? 12 : 2;
-        ctx.shadowColor = isActive ? '#f59e0b' : isListening ? '#38bdf8' : 'transparent';
-
-        for (let x = 0; x < width; x++) {
-          const normX = x / width;
-          const wave1 = Math.sin(normX * 16 + phase) * baseAmplitude;
-          const wave2 = Math.sin(normX * 36 - phase * 1.5) * (baseAmplitude * 0.4);
-          const wave3 = Math.cos(normX * 8 + phase * 0.5) * (baseAmplitude * 0.2);
-
-          const taper = Math.sin(normX * Math.PI);
-          const y = centerY + (wave1 + wave2 + wave3) * taper;
-
-          if (x === 0) {
-            ctx.moveTo(x, y);
+        if (isActive || isListening) {
+          let baseAmplitude = height * 0.22;
+          if (isActive) {
+            baseAmplitude = height * 0.32 + Math.sin(phase * 3) * (height * 0.12);
+            currentSpeed = 0.14;
           } else {
-            ctx.lineTo(x, y);
+            baseAmplitude = height * 0.22 + Math.sin(phase * 4) * (height * 0.08);
+            currentSpeed = 0.12;
           }
+
+          ctx.beginPath();
+          ctx.strokeStyle = isActive ? '#f59e0b' : '#38bdf8';
+          ctx.lineWidth = 2;
+          ctx.shadowBlur = 12;
+          ctx.shadowColor = isActive ? '#f59e0b' : '#38bdf8';
+
+          for (let x = 0; x < width; x++) {
+            const normX = x / width;
+            const wave1 = Math.sin(normX * 16 + phase) * baseAmplitude;
+            const wave2 = Math.sin(normX * 36 - phase * 1.5) * (baseAmplitude * 0.4);
+            const wave3 = Math.cos(normX * 8 + phase * 0.5) * (baseAmplitude * 0.2);
+
+            const taper = Math.sin(normX * Math.PI);
+            const y = centerY + (wave1 + wave2 + wave3) * taper;
+
+            if (x === 0) {
+              ctx.moveTo(x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        } else {
+          // Precise razor-sharp horizontal reference line when in idle/standby
+          ctx.beginPath();
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+          ctx.lineWidth = 1.5;
+          ctx.moveTo(0, centerY);
+          ctx.lineTo(width, centerY);
+          ctx.stroke();
         }
-        ctx.stroke();
-        ctx.shadowBlur = 0;
       }
 
       if (isActive || isListening) {

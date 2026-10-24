@@ -11,6 +11,7 @@ interface CompanionPanelProps {
   isListening: boolean;
   isProcessing?: boolean;
   memoryPulse?: number;
+  scanlines?: boolean;
   personaName: string;
 }
 
@@ -22,6 +23,7 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
   isListening,
   isProcessing = false,
   memoryPulse = 0,
+  scanlines = false,
   personaName,
 }) => {
   return (
@@ -49,7 +51,7 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
           isListening={isListening}
           isProcessing={isProcessing}
           memoryPulse={memoryPulse}
-          scanlines={false}
+          scanlines={scanlines}
           className="h-full"
         />
       </div>

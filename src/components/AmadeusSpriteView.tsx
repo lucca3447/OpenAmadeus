@@ -51,6 +51,7 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
   });
 
   // Parallax state (-1..1 normalized mouse coords)
+  const mouseRafRef = useRef<number | null>(null);
   const [parallax, setParallax] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Transition & cognitive glitch states
@@ -228,6 +229,7 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
       lastPoseRef.current = effectivePose;
       lastCameraRef.current = activeCamera;
+      lastDisplayedUrlRef.current = currentFrameUrl;
 
       const t = window.setTimeout(() => {
         setPrevFrameUrl(null);
@@ -267,12 +269,22 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     <div
       className={`relative w-full h-full flex items-center justify-center overflow-hidden select-none ${className}`}
       onMouseMove={(e) => {
+        if (mouseRafRef.current) return;
         const rect = e.currentTarget.getBoundingClientRect();
         const nx = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
         const ny = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
-        setParallax({ x: nx, y: ny });
+        mouseRafRef.current = requestAnimationFrame(() => {
+          setParallax({ x: nx, y: ny });
+          mouseRafRef.current = null;
+        });
       }}
-      onMouseLeave={() => setParallax({ x: 0, y: 0 })}
+      onMouseLeave={() => {
+        if (mouseRafRef.current) {
+          cancelAnimationFrame(mouseRafRef.current);
+          mouseRafRef.current = null;
+        }
+        setParallax({ x: 0, y: 0 });
+      }}
     >
       {/* Subtle 2.5D Background Telemetry Ring (moves opposite to cursor) */}
       <div

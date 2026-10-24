@@ -175,16 +175,26 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
 
     // 2. Check for markdown tables
     const lines = content.split('\n');
-    const isTable = lines.some((l) => l.trim().startsWith('|') && l.trim().endsWith('|'));
+    const firstTableIdx = lines.findIndex((l) => l.trim().startsWith('|') && l.trim().endsWith('|'));
 
-    if (isTable) {
-      const tableLines = lines.filter((l) => l.trim().startsWith('|') && l.trim().endsWith('|'));
-      const textLines = lines.filter((l) => !(l.trim().startsWith('|') && l.trim().endsWith('|')));
+    if (firstTableIdx !== -1) {
+      let lastTableIdx = firstTableIdx;
+      while (
+        lastTableIdx + 1 < lines.length &&
+        lines[lastTableIdx + 1].trim().startsWith('|') &&
+        lines[lastTableIdx + 1].trim().endsWith('|')
+      ) {
+        lastTableIdx++;
+      }
+
+      const textBefore = lines.slice(0, firstTableIdx).join('\n').trim();
+      const tableLines = lines.slice(firstTableIdx, lastTableIdx + 1);
+      const textAfter = lines.slice(lastTableIdx + 1).join('\n').trim();
 
       return (
         <div className="space-y-3 font-sans">
-          {textLines.length > 0 && (
-            <p className="leading-relaxed whitespace-pre-wrap">{renderInlineFormatted(textLines.join('\n').trim())}</p>
+          {textBefore && (
+            <div className="leading-relaxed whitespace-pre-wrap">{renderInlineFormatted(textBefore)}</div>
           )}
           <div className="overflow-x-auto my-2 rounded-lg border border-[#252b3a] bg-[#0f1218]">
             <table className="w-full text-xs font-sans text-left">
@@ -216,6 +226,9 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
               </tbody>
             </table>
           </div>
+          {textAfter && (
+            <div className="leading-relaxed whitespace-pre-wrap">{renderInlineFormatted(textAfter)}</div>
+          )}
         </div>
       );
     }
