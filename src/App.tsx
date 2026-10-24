@@ -22,6 +22,7 @@ import { BackendService, BackendHealth } from './services/backendService';
 import { SpeechService } from './services/speechService';
 import { CallHeader } from './components/CallHeader';
 import { AmadeusSpriteView } from './components/AmadeusSpriteView';
+import { preloadPrimarySprites } from './services/spriteCatalog';
 import { AudioOscilloscope } from './components/AudioOscilloscope';
 import { SubtitleBox } from './components/SubtitleBox';
 import { ControlBar } from './components/ControlBar';
@@ -156,8 +157,9 @@ export const App: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
 
-  // Check Python backend health on mount
+  // Check Python backend health on mount & preload baseline sprites early
   useEffect(() => {
+    preloadPrimarySprites('closeup');
     BackendService.checkHealth().then((health) => {
       setBackendHealth(health);
     });
@@ -631,6 +633,7 @@ export const App: React.FC = () => {
               memoryPulse={memoryPulse}
               isSpeaking={isSpeaking}
               isListening={isListening}
+              scanlines={scanlines}
               personaName={persona.name}
             />
           </>
@@ -647,7 +650,7 @@ export const App: React.FC = () => {
                 isProcessing={isProcessing}
                 memoryPulse={memoryPulse}
                 isSpeaking={isSpeaking}
-                scanlines={false}
+                scanlines={scanlines}
                 className="h-full w-full"
               />
             </div>

@@ -129,19 +129,19 @@ export function preloadPrimarySprites(camera: CameraFraming = 'closeup'): void {
   preloadedCameras.add(camera);
 
   const camCode = CAMERA_PREFIX[camera] || 'JL';
-  const loadImg = (url: string) => {
+  const loadImg = (url: string, priority: 'high' | 'auto' = 'auto') => {
     const img = new Image();
+    if ('fetchPriority' in img) {
+      (img as any).fetchPriority = priority;
+    }
     img.src = url;
   };
 
-  // Immediate priority: preload only vital baseline frames (~6 sprites) without saturating the network
-  const immediate = [
-    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000100.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000101.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000102.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000a00.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}D_40000b00.png`,
-    `${SPRITE_BASE_PATH}/CRS_${camCode}E_40000100.png`,
-  ];
-  immediate.forEach(loadImg);
+  // Immediate priority: high-priority preload for mouth flapping and expression baseline
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000100.png`, 'high');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000101.png`, 'high');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000102.png`, 'high');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000a00.png`, 'auto');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000b00.png`, 'auto');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}E_40000100.png`, 'auto');
 }
