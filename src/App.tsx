@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
+  CameraFraming,
   CharacterPose, 
   ChatMessage, 
   Emotion, 
@@ -88,6 +89,8 @@ export const App: React.FC = () => {
   const [persona, setPersona] = useState<PersonaProfile>(() => MemoryService.getPersona('kurisu'));
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>('neutral');
   const [currentPose, setCurrentPose] = useState<CharacterPose>('default');
+  const [currentCamera, setCurrentCamera] = useState<CameraFraming | undefined>(undefined);
+  const [memoryPulse, setMemoryPulse] = useState<number>(0);
   const [recalledMemoryIds, setRecalledMemoryIds] = useState<string[]>([]);
   const [learnedNotification, setLearnedNotification] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
@@ -285,6 +288,7 @@ export const App: React.FC = () => {
     // 1. Retrieve active memories from cognitive cortex (Local RAG)
     const matched = MemoryService.matchMemories(text, persona);
     setRecalledMemoryIds(matched.map((m: MemoryItem) => m.id));
+    if (matched.length > 0) setMemoryPulse((p) => p + 1);
 
     SpeechService.stopSpeaking();
     setIsSpeaking(false);
@@ -313,6 +317,7 @@ export const App: React.FC = () => {
       setAiStatus(result.status);
       setCurrentSubtitle(result.response);
       setCurrentEmotion(result.emotion);
+      setCurrentCamera(result.camera);
       if (result.pose) {
         setCurrentPose(result.pose);
       } else if (result.emotion === 'thinking') {
@@ -624,6 +629,9 @@ export const App: React.FC = () => {
             <CompanionPanel
               emotion={currentEmotion}
               pose={currentPose}
+              camera={currentCamera}
+              isProcessing={isProcessing}
+              memoryPulse={memoryPulse}
               isSpeaking={isSpeaking}
               isListening={isListening}
               personaName={persona.name}
@@ -637,6 +645,10 @@ export const App: React.FC = () => {
               <AmadeusSpriteView
                 emotion={currentEmotion}
                 pose={currentPose}
+                camera={currentCamera}
+                isListening={isListening}
+                isProcessing={isProcessing}
+                memoryPulse={memoryPulse}
                 isSpeaking={isSpeaking}
                 scanlines={false}
                 className="h-full w-full"
