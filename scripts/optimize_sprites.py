@@ -6,12 +6,25 @@ OpenAmadeus Companion - Utilitário de Otimização de Sprites da Persona
 Otimiza os arquivos PNG em public/assets/sprites/kurisu/ reduzindo o
 tamanho individual de ~1.2 MB para ~150 KB (redução de ~87%) através de
 quantização de 256 cores preservando o canal alfa e a extensão .png.
+
+Como executar usando o venv existente do projeto:
+    .\server\rvc_env\Scripts\python.exe scripts/optimize_sprites.py
+ou ativando o venv:
+    .\server\rvc_env\Scripts\Activate.ps1
+    python scripts/optimize_sprites.py
 """
 
 import sys
 import time
 from pathlib import Path
-from PIL import Image
+try:
+    from PIL import Image
+except ModuleNotFoundError:
+    print("[!] Erro: A biblioteca 'Pillow' não foi encontrada neste ambiente Python.")
+    print("    Para rodar, use o ambiente virtual existente do projeto:")
+    print(r"    .\server\rvc_env\Scripts\python.exe scripts/optimize_sprites.py")
+    print(r"    Ou ative o ambiente com: .\server\rvc_env\Scripts\Activate.ps1")
+    sys.exit(1)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SPRITES_DIR = REPO_ROOT / "public" / "assets" / "sprites" / "kurisu"

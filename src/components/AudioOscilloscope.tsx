@@ -49,9 +49,15 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
       const height = canvas.height;
       const centerY = height / 2;
 
-      // Dark obsidian background with slight persistence
-      ctx.fillStyle = 'rgba(12, 14, 18, 0.28)';
-      ctx.fillRect(0, 0, width, height);
+      // Dark obsidian background: full clear when idle to eliminate ghost wave trails,
+      // slight persistence (alpha 0.28) during animation for CRT phosphor trail
+      if (!isActive && !isListening) {
+        ctx.fillStyle = '#0c0e12';
+        ctx.fillRect(0, 0, width, height);
+      } else {
+        ctx.fillStyle = 'rgba(12, 14, 18, 0.28)';
+        ctx.fillRect(0, 0, width, height);
+      }
 
       // Draw faint technical grid lines (amber/charcoal)
       ctx.strokeStyle = 'rgba(245, 158, 11, 0.06)';
@@ -148,6 +154,7 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
           ctx.shadowBlur = 0;
         } else {
           // Precise razor-sharp horizontal reference line when in idle/standby
+          ctx.shadowBlur = 0;
           ctx.beginPath();
           ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
           ctx.lineWidth = 1.5;
