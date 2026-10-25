@@ -81,10 +81,9 @@ const MOUTH_INDEX: Record<MouthState, '00' | '01' | '02'> = {
  */
 export function inferCameraFraming(
   emotion: Emotion = 'neutral',
-  pose: CharacterPose = 'default',
-  isIdleLong: boolean = false
+  pose: CharacterPose = 'default'
 ): CameraFraming {
-  if (pose === 'backview' || isIdleLong) return 'full';
+  if (pose === 'backview') return 'full';
   return 'closeup';
 }
 
@@ -120,6 +119,35 @@ export function resolveKurisuSprite(
 }
 
 const preloadedCameras = new Set<CameraFraming>();
+const preloadedEmotionCache = new Set<string>();
+
+/**
+ * Preloads all 3 mouth frames (00, 01, 02) for the given emotion/pose/camera
+ * to ensure seamless, instantaneous lip-sync before speech begins.
+ */
+export function preloadEmotionSprites(
+  emotion: Emotion,
+  pose: CharacterPose = 'default',
+  camera: CameraFraming = 'closeup'
+): void {
+  if (typeof window === 'undefined') return;
+  const camCode = CAMERA_PREFIX[camera] || 'JL';
+  const canonical = normalizeEmotion(emotion);
+  const isCrossed = pose === 'crossed_arms';
+  const poseCode = isCrossed ? 'E' : 'D';
+  const slot = isCrossed ? (POSE_E_SLOTS[canonical] || '1') : (POSE_D_SLOTS[canonical] || '1');
+  const key = `${camCode}_${poseCode}_${slot}`;
+
+  if (preloadedEmotionCache.has(key)) return;
+  preloadedEmotionCache.add(key);
+
+  const frames = ['00', '01', '02'];
+  frames.forEach((mouth) => {
+    const img = new Image();
+    if ('fetchPriority' in img) (img as any).fetchPriority = 'high';
+    img.src = `${SPRITE_BASE_PATH}/CRS_${camCode}${poseCode}_40000${slot}${mouth}.png`;
+  });
+}
 
 /**
  * Preloads active camera sprites on demand without causing a 70MB network waterfall.
@@ -137,11 +165,22 @@ export function preloadPrimarySprites(camera: CameraFraming = 'closeup'): void {
     img.src = url;
   };
 
-  // Immediate priority: high-priority preload for mouth flapping and expression baseline
+  // Immediate priority: baseline neutral mouth flap frames
   loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000100.png`, 'high');
   loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000101.png`, 'high');
   loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000102.png`, 'high');
-  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000a00.png`, 'auto');
-  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000b00.png`, 'auto');
-  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}E_40000100.png`, 'auto');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000a00.png`, 'auto'); // blink
+
+  // High priority for happy/smile (the most common greeting expression)
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000600.png`, 'high');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000601.png`, 'high');
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000602.png`, 'high');
+
+  // Baseline closed frames for other core emotions
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000b00.png`, 'auto'); // thinking/analytical
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000700.png`, 'auto'); // stern/tsundere
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000800.png`, 'auto'); // blushing
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000300.png`, 'auto'); // annoyed
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}D_40000400.png`, 'auto'); // worried
+  loadImg(`${SPRITE_BASE_PATH}/CRS_${camCode}E_40000100.png`, 'auto'); // crossed arms
 }

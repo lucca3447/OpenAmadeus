@@ -62,6 +62,11 @@ def import_from_archive_or_dir(source_path: Path):
         return False
 
     print(f"[OK] {imported_count} sprites importados com sucesso para:\n     {SPRITES_DIR}")
+    try:
+        from optimize_sprites import optimize_sprites
+        optimize_sprites(SPRITES_DIR)
+    except Exception:
+        pass
     return True
 
 def main():

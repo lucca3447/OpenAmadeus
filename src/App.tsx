@@ -22,7 +22,7 @@ import { BackendService, BackendHealth } from './services/backendService';
 import { SpeechService } from './services/speechService';
 import { CallHeader } from './components/CallHeader';
 import { AmadeusSpriteView } from './components/AmadeusSpriteView';
-import { preloadPrimarySprites } from './services/spriteCatalog';
+import { preloadPrimarySprites, preloadEmotionSprites } from './services/spriteCatalog';
 import { AudioOscilloscope } from './components/AudioOscilloscope';
 import { SubtitleBox } from './components/SubtitleBox';
 import { ControlBar } from './components/ControlBar';
@@ -369,6 +369,9 @@ export const App: React.FC = () => {
       const updatedHistory = [...nextHistory, aiMessage];
       setHistory(updatedHistory);
       MemoryService.saveActiveSession(sessionId, updatedHistory);
+
+      // Preload the target emotion's mouth flap frames before speech starts
+      preloadEmotionSprites(result.emotion, result.pose, result.camera);
 
       // 3. Speak response with TTS if enabled
       speak(result.response, result.emotion);

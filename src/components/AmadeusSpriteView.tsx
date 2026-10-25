@@ -4,6 +4,7 @@ import {
   inferCameraFraming,
   normalizeEmotion,
   preloadPrimarySprites,
+  preloadEmotionSprites,
   resolveKurisuSprite,
 } from '../services/spriteCatalog';
 import { SpeechService } from '../services/speechService';
@@ -43,7 +44,6 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
   const [voiceAmplitude, setVoiceAmplitude] = useState<number>(0);
   const [isBlinking, setIsBlinking] = useState(false);
   const [idleGazeOverride, setIdleGazeOverride] = useState<Emotion | null>(null);
-  const [isIdleLong, setIsIdleLong] = useState(false);
 
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     const saved = localStorage.getItem('amadeus_camera_mode');
@@ -73,12 +73,17 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
   const activeCamera: CameraFraming =
     cameraMode !== 'auto'
       ? cameraMode
-      : camera || inferCameraFraming(effectiveEmotion, effectivePose, isIdleLong);
+      : camera || inferCameraFraming(effectiveEmotion, effectivePose);
 
   // Preload sprites whenever active camera changes
   useEffect(() => {
     preloadPrimarySprites(activeCamera);
   }, [activeCamera]);
+
+  // Preload mouth flap sequence when target emotion/pose/camera updates
+  useEffect(() => {
+    preloadEmotionSprites(effectiveEmotion, effectivePose, activeCamera);
+  }, [effectiveEmotion, effectivePose, activeCamera]);
 
   // Cycle camera mode on button click
   const handleCycleCamera = () => {
@@ -122,10 +127,9 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  // Autonomous Idle Saccades (look_side glance every ~12s of neutral silence) & Long Idle detector
+  // Autonomous Idle Saccades (look_side glance every ~12s of neutral silence)
   useEffect(() => {
     setIdleGazeOverride(null);
-    setIsIdleLong(false);
 
     if (isSpeaking || isProcessing || isListening) return;
 
@@ -137,14 +141,9 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
       }
     }, 12500);
 
-    const longIdleTimer = window.setTimeout(() => {
-      setIsIdleLong(true);
-    }, 45000);
-
     return () => {
       clearInterval(saccadeInterval);
       clearTimeout(gazeRevertTimer);
-      clearTimeout(longIdleTimer);
     };
   }, [emotion, effectivePose, isSpeaking, isProcessing, isListening]);
 
@@ -168,7 +167,9 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
         setVoiceAmplitude(0);
         return;
       }
-      lastAcousticTimestamp = Date.now();
+      if (isOpen || amplitude > 0.05) {
+        lastAcousticTimestamp = Date.now();
+      }
       setVoiceAmplitude(isOpen ? Math.min(1, amplitude) : 0);
 
       if (!isOpen) {
