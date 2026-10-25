@@ -233,6 +233,10 @@ class TestAmadeusBackend(unittest.TestCase):
         self.assertEqual(pose_nat, "default")
         self.assertEqual(cam_nat, "closeup")
 
+        # 4. Context-aware user_message evaluation without NameError
+        clean_user, emo_user, _ = parse_tags("Entendido.", user_message="Você é muito linda!")
+        self.assertEqual(emo_user, "flustered")
+
 if __name__ == "__main__":
     unittest.main()
 

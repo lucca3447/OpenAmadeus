@@ -112,6 +112,7 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
 
     # 2. Parse emotion tag (isolated <!--emotion:...--> or composite <!--emotion:tsundere,pose:...-->)
     emotion = "neutral"
+    emotion_match = None
     comment_matches = re.findall(r"<!--([\s\S]*?)-->", clean, re.IGNORECASE)
     for c in comment_matches:
         if c.strip().lower().startswith("remember:"):
@@ -123,6 +124,7 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
             for tok in tokens:
                 if tok in VALID_EMOTIONS:
                     emotion = tok
+                    emotion_match = emo_m
                     break
 
     # Infallible removal of all comment tags so zero metadata leaks into speech
