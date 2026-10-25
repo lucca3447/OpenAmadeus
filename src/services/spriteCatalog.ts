@@ -17,7 +17,7 @@ export const EMOTION_ALIASES: Record<LegacyEmotion, CanonicalEmotion> = {
   surprised: 'worried',
   tsundere: 'stern',
   thinking: 'analytical',
-  smug: 'analytical',
+  smug: 'disdain',
   flustered: 'blushing',
   sad: 'holding_back_tears',
   puzzled: 'analytical',
