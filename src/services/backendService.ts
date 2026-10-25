@@ -173,6 +173,19 @@ export class BackendService {
   }
 
   /**
+   * Deletes a session from SQLite
+   */
+  static async deleteSession(sessionId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch {}
+    return false;
+  }
+
+  /**
    * Fetches real-time Worldline Divergence from Divergence Meter
    */
   static async getDivergence(): Promise<{

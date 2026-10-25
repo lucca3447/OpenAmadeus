@@ -238,36 +238,41 @@ export class MemoryService {
       STORAGE_ACTIVE_SESSION,
       JSON.stringify({ sessionId, messages })
     );
+
+    // Keep sessions log synchronized in real-time so ongoing chats show in the sidebar immediately
+    if (messages.length > 0) {
+      const logs = this.getSessionLogs();
+      const existingIdx = logs.findIndex((s) => s.id === sessionId);
+
+      // Intelligent title: extract first real user message or fallback to clean description
+      const userMsg = messages.find((m) => m.sender === 'user');
+      const summary = userMsg
+        ? (userMsg.content.length > 55 ? userMsg.content.slice(0, 55) + '...' : userMsg.content)
+        : (messages[0]?.content.slice(0, 50) || 'Nova conversa com Kurisu');
+
+      const sessionItem: CallSession = {
+        id: sessionId,
+        startedAt: existingIdx >= 0 ? logs[existingIdx].startedAt : (messages[0]?.timestamp || Date.now()),
+        endedAt: Date.now(),
+        summary,
+        messageCount: messages.length,
+        messages,
+      };
+
+      if (existingIdx >= 0) {
+        logs.splice(existingIdx, 1);
+      }
+      logs.unshift(sessionItem);
+
+      // Keep up to 30 past sessions
+      localStorage.setItem(STORAGE_SESSIONS_LOG, JSON.stringify(logs.slice(0, 30)));
+    }
   }
 
   static archiveAndStartNewSession(currentMessages: ChatMessage[]): string {
     const active = this.getActiveSession();
     if (currentMessages.length > 0) {
-      const existingLogsStr = localStorage.getItem(STORAGE_SESSIONS_LOG);
-      let logs: CallSession[] = [];
-      if (existingLogsStr) {
-        try {
-          logs = JSON.parse(existingLogsStr);
-        } catch {
-          logs = [];
-        }
-      }
-
-      const sessionSummary = currentMessages.length > 2
-        ? currentMessages[1]?.content?.slice(0, 70) + '...'
-        : 'Chamada curta';
-
-      logs.unshift({
-        id: active.sessionId,
-        startedAt: currentMessages[0]?.timestamp || Date.now(),
-        endedAt: Date.now(),
-        summary: sessionSummary,
-        messageCount: currentMessages.length,
-        messages: currentMessages,
-      });
-
-      // Keep up to 20 past sessions
-      localStorage.setItem(STORAGE_SESSIONS_LOG, JSON.stringify(logs.slice(0, 20)));
+      this.saveActiveSession(active.sessionId, currentMessages);
     }
 
     const newId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -291,8 +296,11 @@ export class MemoryService {
   static loadSession(sessionId: string): ChatMessage[] | null {
     const logs = this.getSessionLogs();
     const found = logs.find((s) => s.id === sessionId);
-    if (found && found.messages) {
-      this.saveActiveSession(found.id, found.messages);
+    if (found && found.messages && found.messages.length > 0) {
+      localStorage.setItem(
+        STORAGE_ACTIVE_SESSION,
+        JSON.stringify({ sessionId: found.id, messages: found.messages })
+      );
       return found.messages;
     }
     return null;

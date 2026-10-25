@@ -162,6 +162,22 @@ export const App: React.FC = () => {
     preloadPrimarySprites('closeup');
     BackendService.checkHealth().then((health) => {
       setBackendHealth(health);
+      if (health) {
+        // Hydrate and merge sessions from backend SQLite with LocalStorage
+        BackendService.listSessions().then((remoteSessions) => {
+          if (remoteSessions && remoteSessions.length > 0) {
+            const localLogs = MemoryService.getSessionLogs();
+            const mergedMap = new Map<string, CallSession>();
+            remoteSessions.forEach((s) => mergedMap.set(s.id, s));
+            localLogs.forEach((s) => mergedMap.set(s.id, s));
+            const merged = Array.from(mergedMap.values()).sort(
+              (a, b) => (b.startedAt || 0) - (a.startedAt || 0)
+            );
+            localStorage.setItem('amadeus_sessions_log', JSON.stringify(merged.slice(0, 30)));
+            setSessions(merged.slice(0, 30));
+          }
+        });
+      }
     });
   }, []);
 
@@ -306,6 +322,7 @@ export const App: React.FC = () => {
     const nextHistory = [...history, userMessage];
     setHistory(nextHistory);
     MemoryService.saveActiveSession(sessionId, nextHistory);
+    setSessions(MemoryService.getSessionLogs());
     setErrorNotice(null);
     setIsProcessing(true);
     // Immediate visual feedback while the model is working
@@ -369,6 +386,7 @@ export const App: React.FC = () => {
       const updatedHistory = [...nextHistory, aiMessage];
       setHistory(updatedHistory);
       MemoryService.saveActiveSession(sessionId, updatedHistory);
+      setSessions(MemoryService.getSessionLogs());
 
       // Preload the target emotion's mouth flap frames before speech starts
       preloadEmotionSprites(result.emotion, result.pose, result.camera);
@@ -391,9 +409,11 @@ export const App: React.FC = () => {
   const handleNewSession = () => {
     SpeechService.stopSpeaking();
     setErrorNotice(null);
+    if (history.length > 0) {
+      MemoryService.saveActiveSession(sessionId, history);
+    }
     const newSessionId = MemoryService.archiveAndStartNewSession(history);
     setSessionId(newSessionId);
-    setSessions(MemoryService.getSessionLogs());
 
     const initialMsgs: ChatMessage[] = [
       { id: newId(), sender: 'amadeus', content: INITIAL_GREETING, timestamp: Date.now(), emotion: 'neutral', pose: 'default' },
@@ -403,16 +423,32 @@ export const App: React.FC = () => {
     setCurrentEmotion('neutral');
     setCurrentPose('default');
     MemoryService.saveActiveSession(newSessionId, initialMsgs);
+    setSessions(MemoryService.getSessionLogs());
   };
 
   // Switch to a previous session from the sidebar
-  const handleSelectSession = (selectedId: string) => {
+  const handleSelectSession = async (selectedId: string) => {
     SpeechService.stopSpeaking();
     setErrorNotice(null);
-    const loaded = MemoryService.loadSession(selectedId);
-    if (loaded) {
+
+    // 1. Ensure active session is saved before switching so no messages are lost
+    if (history.length > 0) {
+      MemoryService.saveActiveSession(sessionId, history);
+    }
+
+    // 2. Load from LocalStorage or fallback to SQLite backend
+    let loaded = MemoryService.loadSession(selectedId);
+    if (!loaded || loaded.length === 0) {
+      loaded = await BackendService.getSessionMessages(selectedId);
+      if (loaded && loaded.length > 0) {
+        MemoryService.saveActiveSession(selectedId, loaded);
+      }
+    }
+
+    if (loaded && loaded.length > 0) {
       setSessionId(selectedId);
       setHistory(loaded);
+      setSessions(MemoryService.getSessionLogs());
       const lastAi = [...loaded].reverse().find((m) => m.sender === 'amadeus');
       if (lastAi) {
         setCurrentSubtitle(lastAi.content);
@@ -425,6 +461,7 @@ export const App: React.FC = () => {
   // Delete session
   const handleDeleteSession = (delId: string) => {
     MemoryService.deleteSession(delId);
+    BackendService.deleteSession(delId);
     setSessions(MemoryService.getSessionLogs());
     if (sessionId === delId) {
       handleNewSession();
@@ -468,6 +505,7 @@ export const App: React.FC = () => {
       ];
       setHistory(initialMsgs);
       MemoryService.saveActiveSession(sessionId, initialMsgs);
+      setSessions(MemoryService.getSessionLogs());
       speak(INITIAL_GREETING);
     } else {
       const lastMsg = [...history].reverse().find((m) => m.sender === 'amadeus');
