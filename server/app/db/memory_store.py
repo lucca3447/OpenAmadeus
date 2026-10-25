@@ -77,8 +77,11 @@ class MemoryStore:
         if not dataset_path.exists():
             return
 
+        with open(dataset_path, "r", encoding="utf-8") as f:
+            total_lines = sum(1 for line in f if line.strip())
+
         count = self.exemplars_collection.count()
-        if count > 0:
+        if count >= total_lines:
             return
 
         ids = []

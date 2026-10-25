@@ -83,7 +83,10 @@ export class BackendService {
   ): Promise<BackendChatResponse> {
     const formattedHistory = history.slice(-20).map((msg) => ({
       role: msg.sender === 'user' ? 'user' : 'model',
-      content: msg.content,
+      content:
+        msg.sender !== 'user' && msg.emotion
+          ? `${msg.content} <!--emotion:${msg.emotion}-->`
+          : msg.content,
     }));
 
     const res = await fetch(`${BACKEND_URL}/api/chat`, {

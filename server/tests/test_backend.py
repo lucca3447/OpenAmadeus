@@ -244,6 +244,34 @@ class TestAmadeusBackend(unittest.TestCase):
         clean_sad, emo_sad, _ = parse_tags("Não posso aceitar esse desfecho...", user_message="A Mayuri se foi...")
         self.assertEqual(emo_sad, "sad")
 
+    def test_15_tag_instructions_and_exemplars_dataset(self):
+        import json
+        from app.core.config import PERSONAS_DIR, TRAINING_DIR
+        from app.services.emotion_service import parse_tags, infer_pose_and_camera
+
+        # 1. Verify kurisu.json prompt has updated tag instructions
+        kurisu_file = PERSONAS_DIR / "kurisu.json"
+        with open(kurisu_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        prompt = data.get("systemPrompt", "")
+        self.assertIn("analytical", prompt)
+        self.assertIn("disdain", prompt)
+        self.assertIn("<!--emotion:NOME-->", prompt)
+
+        # 2. Verify dataset contains at least 86 lines and includes pose/camera exemplars
+        ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
+        with open(ds_file, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        self.assertGreaterEqual(len(lines), 86)
+
+        # Check that composite tag is properly parsed
+        comp_sample = "As sinapses não armazenam apenas dados brutos... <!--emotion:analytical,pose:crossed_arms,camera:closeup-->"
+        c_text, emo, _ = parse_tags(comp_sample)
+        pose, cam = infer_pose_and_camera(comp_sample, emo)
+        self.assertEqual(emo, "analytical")
+        self.assertEqual(pose, "crossed_arms")
+        self.assertEqual(cam, "closeup")
+
 if __name__ == "__main__":
     unittest.main()
 
