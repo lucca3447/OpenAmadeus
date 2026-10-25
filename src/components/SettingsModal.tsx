@@ -819,7 +819,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </h3>
                   </div>
                   <p className="text-[10px] text-amadeus-muted font-mono mt-0.5">
-                    FrancescoCaracciolo / Kurisu-RVC • Asami Imai (今井 麻美)
+                    FrancescoCaracciolo / Kurisu-RVC • Modelo de Voz RVC v2
                   </p>
                 </div>
                 <a

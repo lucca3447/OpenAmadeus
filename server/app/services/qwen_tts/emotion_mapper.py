@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 # that was not trained with CustomVoice instruct system prompts.
 QWEN_USE_EMOTION_INSTRUCT = os.environ.get("QWEN_USE_EMOTION_INSTRUCT", "false").lower() in ("1", "true", "yes")
 
-# Acoustic ground-truth targets derived from Asami Imai's canonical Steins;Gate voicelines
+# Acoustic ground-truth targets derived from canonical Steins;Gate voicelines
 EMOTION_ACOUSTIC_TARGETS: Dict[str, Dict[str, Any]] = {
     # 1. Registro Grave / Firme (220 - 275 Hz)
     "stern": {"f0_hz": 221.2, "f0_range": (213.1, 477.6), "rms": 0.109, "file": "kurisu_0179.wav"},

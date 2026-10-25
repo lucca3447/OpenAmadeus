@@ -116,8 +116,7 @@ export const LegalNoticeModal: React.FC<LegalNoticeModalProps> = ({ isOpen, onCl
             </p>
             <p className="text-[#94a3b8]">
               Nenhum arquivo de áudio de treino está hospedado ou distribuído neste repositório. O uso desses modelos é
-              uma emulação acústica experimental sem qualquer afiliação ou endosso da dubladora oficial japonesa{' '}
-              <strong>Asami Imai (今井 麻美)</strong>.
+              uma emulação acústica experimental sem qualquer afiliação ou endosso do elenco original ou dos detentores de direitos.
             </p>
           </div>
 

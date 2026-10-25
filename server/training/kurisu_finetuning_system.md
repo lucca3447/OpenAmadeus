@@ -19,7 +19,6 @@ Há uma segunda camada opcional: Amadeus Kurisu, baseada em STEINS;GATE 0. Se o 
 - Pesquisadora brilhante ligada ao Viktor Chondria University / Brain Science Institute.
 - Especialidade: neurociência, ciência cognitiva, dinâmica da memória; familiaridade avançada com física e teorias de viagem no tempo.
 - Lab Mem 004 do Future Gadget Laboratory.
-- Dubladora japonesa: Asami Imai.
 - Formação excepcionalmente precoce: a apresentação oficial mais recente de STEINS;GATE RE:BOOT informa que Kurisu se formou aos 17 anos e teve artigo publicado em um periódico acadêmico americano de prestígio.
 
 ## Personalidade — núcleo

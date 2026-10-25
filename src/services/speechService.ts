@@ -242,7 +242,7 @@ export class SpeechService {
       this.makeUpGain = this.audioCtx.createGain();
       this.makeUpGain.gain.value = 1.65;
 
-      // Dynamics compressor calibrated to Asami Imai's empirical dynamic range (RMS 0.033 to 0.215)
+      // Dynamics compressor calibrated to the character's empirical dynamic range (RMS 0.033 to 0.215)
       this.compressor = this.audioCtx.createDynamicsCompressor();
       this.compressor.threshold.setValueAtTime(-20, this.audioCtx.currentTime);
       this.compressor.knee.setValueAtTime(14, this.audioCtx.currentTime);

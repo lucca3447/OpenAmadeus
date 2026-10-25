@@ -46,10 +46,10 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
   - Server-side $C^0$ boundary continuity ramp (120-sample / 5 ms linear interpolation across 24 kHz chunk borders) eliminating inter-chunk clicks, paired with `clean_text_for_tts` punctuation sanitization (`?!` / `!!` filtering) and 21 studio-dry acoustic emotion prompts (`emotion_mapper.py`).
   - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 120 ms initial jitter buffer, `1.5x` (+3.5 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-18 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
 - **Visual State Machine & Audio-Reactive HUD**:
-  - Supports **174 visual novel sprite assets** mapped across **21 emotional states** (`AmadeusSpriteView.tsx`), falling back natively to a stylized procedural holographic silhouette when proprietary sprites are absent.
-  - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth frames, stochastic eye-blinking, an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`), and a **Nixie Tube Worldline Divergence Meter** (`DivergenceMeter.tsx`).
+  - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across **14 canonical emotions** and camera framings (`AmadeusSpriteView.tsx`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), emotion-aligned blinking (preserving winks and smiles), and native fallback to a procedural holographic silhouette when sprites are absent.
+  - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth flap frames, natural double-blink cycles, an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`), and a **Nixie Tube Worldline Divergence Meter** (`DivergenceMeter.tsx`).
 - **Dynamic Few-Shot RAG & Episodic Memory (`server/training/` & [ChromaDB](https://www.trychroma.com/))**:
-  - Automatically indexes **63 curated ChatML conversation pairs** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), plus Unsloth LoRA fine-tuning scripts (`unsloth_finetuning.py`) and an Ollama `Modelfile`.
+  - Automatically indexes **86 curated ChatML conversation pairs** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), providing few-shot conditioning for canonical dialogue, visual poses, camera zooms, and learned facts (`<!--remember:...-->`).
 - **Multi-Provider LLM Orchestration (`server/app/services/llm/`)**:
   - Fault-tolerant routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`gemma-4-31b-it:free`, `nemotron-3.5-lightning:free`), local **Ollama**, and an offline **Heuristic Simulator** (`offline_simulator.py`).
 
@@ -234,7 +234,7 @@ python -m app.services.qwen_tts.qwen_worker
 ## 🧠 Kurisu Fine-Tuning & Dynamic Few-Shot RAG Pack (`server/training/`)
 
 The `server/training/` directory ships with a complete persona alignment toolkit:
-- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (63 refined multi-turn dialogues with `<!--emotion:xxx-->` and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/), injecting the most semantically relevant canon responses into every LLM prompt.
+- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (86 refined multi-turn dialogues with `<!--emotion:...-->`, `<!--pose:...-->`, `<!--camera:...-->` and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/), injecting the most semantically relevant canon responses into every LLM prompt.
 - **Local Ollama Model Creation**:
   ```bash
   cd server/training
@@ -304,7 +304,7 @@ OpenAmadeus/
 │   │       ├── divergence_service.py  # Worldline divergence state calculator
 │   │       └── offline_simulator.py   # Zero-internet heuristic dialogue fallback
 │   ├── personas/                      # Persona definitions and system prompts (kurisu.json)
-│   ├── training/                      # 63-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
+│   ├── training/                      # 86-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
 │   ├── tests/                         # Unit, benchmark & E2E suites (test_qwen_tts.py, test_backend.py)
 │   ├── weights/                       # Local model directory (kurisu_rvc/, kurisu_qwen3/, models/)
 │   ├── main.py                        # FastAPI gateway entry point
@@ -341,7 +341,7 @@ npm run build
 OpenAmadeus follows [Semantic Versioning 2.0.0](https://semver.org/) (`MAJOR.MINOR.PATCH`). Below is our planned evolutionary track:
 
 - **`v0.1.0` (Current)**: Real-time Qwen3-TTS CUDA Graphs streaming (~391ms TTFA), $C^0$ boundary DSP ramp, Web Audio compressor, and 4-stage voice fallback cascade.
-- **`v0.2.0`**: 21-emotion acoustic calibration (`emotion_mapper.py`), 174-sprite camera & pose state machine, hands-free VAD & push-to-talk audio UX, and modern dev/tech persona tuning.
+- **`v0.2.0` (In Progress)**: Qwen3-TTS acoustic calibration & streaming toggle [Done], 174-sprite SC3 bytecode ground truth mapping & visual directives [Done], hands-free Groq Whisper Turbo STT & barge-in [Next], and dev/tech persona naturalness tuning.
 - **`v0.3.0`**: Multilingual expansion, persona cultural variants (PT-BR, EN, JA), and dynamic code-switching TTS.
 - **`v0.4.0`**: Multimodal screen vision (`getDisplayMedia`) with on-demand snapshot inspection and region analysis.
 - **`v0.5.0`**: Floating desktop pop-up / overlay (*Always-on-Top* companion) and continuous co-pilot monitoring.
