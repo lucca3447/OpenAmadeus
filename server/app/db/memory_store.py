@@ -78,6 +78,8 @@ class MemoryStore:
             return
 
         count = self.exemplars_collection.count()
+        if count > 0:
+            return
 
         ids = []
         documents = []
