@@ -1294,41 +1294,52 @@ export class AIService {
           emotionalWeight: remMatch[3].trim() || 'Factual',
         };
       }
-      cleanText = cleanText.replace(/<!--\s*remember:.*?\s*-->/gi, '');
     }
 
-    // 2. Extract pose tag: <!--pose:crossed_arms|default|backview-->
-    const poseMatch = cleanText.match(/<!--\s*pose:\s*([^>]+?)\s*-->/i);
-    if (poseMatch && poseMatch[1]) {
-      const pTok = poseMatch[1].toLowerCase().trim();
-      if (pTok === 'crossed_arms' || pTok === 'thinking') pose = 'crossed_arms';
-      else if (pTok === 'backview' || pTok === 'back') pose = 'backview';
-      else if (pTok === 'default' || pTok === 'front') pose = 'default';
-      cleanText = cleanText.replace(/<!--\s*pose:[^>]*-->/gi, '');
-    }
+    // 2. Extract directives from all comment tags <!-- ... -->
+    // Handles isolated tags (<!--emotion:happy--> <!--pose:crossed_arms--> <!--camera:medium-->)
+    // and composite tags (<!--emotion:tsundere,pose:crossed_arms,camera:medium-->)
+    const commentMatches = cleanText.match(/<!--([\s\S]*?)-->/g);
+    if (commentMatches) {
+      for (const comment of commentMatches) {
+        const inner = comment.replace(/^<!--|-->$/g, '').trim();
+        if (/^remember:/i.test(inner)) continue;
 
-    // 3. Extract emotion tag: handle piped or multiple values like happy|smile, smile/happy
-    const match = cleanText.match(/<!--\s*emotion:\s*([^>]+?)\s*-->/i);
-    if (match && match[1]) {
-      const rawVal = match[1].toLowerCase().trim();
-      const tokens = rawVal.split(/[\s|,;/]+/);
-      for (const tok of tokens) {
-        if (VALID_EMOTIONS.includes(tok as Emotion)) {
-          emotion = tok as Emotion;
-          break;
+        // Emotion
+        const emoMatch = inner.match(/(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)/i);
+        if (emoMatch) {
+          const rawVal = emoMatch[1].toLowerCase().trim();
+          const tokens = rawVal.split(/[\s|,;/]+/);
+          for (const tok of tokens) {
+            if (VALID_EMOTIONS.includes(tok as Emotion)) {
+              emotion = tok as Emotion;
+              break;
+            }
+          }
+        }
+
+        // Pose
+        const pMatch = inner.match(/(?:^|[,;|\s])pose\s*:\s*([^,;|\s>]+)/i);
+        if (pMatch) {
+          const pTok = pMatch[1].toLowerCase().trim();
+          if (pTok === 'crossed_arms' || pTok === 'thinking') pose = 'crossed_arms';
+          else if (pTok === 'backview' || pTok === 'back') pose = 'backview';
+          else if (pTok === 'default' || pTok === 'front') pose = 'default';
+        }
+
+        // Camera
+        const cMatch = inner.match(/(?:^|[,;|\s])camera\s*:\s*([^,;|\s>]+)/i);
+        if (cMatch) {
+          const cTok = cMatch[1].toLowerCase().trim();
+          if (cTok === 'closeup' || cTok === 'close' || cTok === 'jl') camera = 'closeup';
+          else if (cTok === 'medium' || cTok === 'jm') camera = 'medium';
+          else if (cTok === 'full' || cTok === 'far' || cTok === 'js') camera = 'full';
         }
       }
     }
-    // Infallible removal of any emotion tag variant
-    // Infallible removal of any emotion/pose/camera tag variant
-    const camMatch = cleanText.match(/camera\s*:\s*([a-z_]+)/i);
-    if (camMatch && camMatch[1]) {
-      const cTok = camMatch[1].toLowerCase().trim();
-      if (cTok === 'closeup' || cTok === 'close' || cTok === 'jl') camera = 'closeup';
-      else if (cTok === 'medium' || cTok === 'jm') camera = 'medium';
-      else if (cTok === 'full' || cTok === 'far' || cTok === 'js') camera = 'full';
-    }
-    cleanText = cleanText.replace(/<!--\s*(?:emotion|pose|camera):[^>]*-->/gi, '');
+
+    // 3. Single-pass removal of all comment tags so zero metadata leaks into speech
+    cleanText = cleanText.replace(/<!--[\s\S]*?-->/g, '').trim();
 
     // 4. Extract stage directions from asterisks before stripping (*sorri*, *cruza os braços*)
     const asterisks = cleanText.match(/\*([^*]+)\*/g);

@@ -204,6 +204,35 @@ class TestAmadeusBackend(unittest.TestCase):
         self.assertIsNotNone(mem_36)
         self.assertIn("ruivo", mem_36.get("content", "").lower())
 
+    def test_14_directive_parser_and_comment_isolation(self):
+        from app.services.emotion_service import parse_tags, infer_pose_and_camera
+
+        # 1. Composite directive tag: emotion, pose, camera in a single tag
+        composite_raw = "Não faça perguntas tão óbvias! <!--emotion:tsundere,pose:crossed_arms,camera:medium-->"
+        clean, emo, _ = parse_tags(composite_raw)
+        pose, cam = infer_pose_and_camera(composite_raw, emo)
+        self.assertEqual(clean, "Não faça perguntas tão óbvias!")
+        self.assertEqual(emo, "tsundere")
+        self.assertEqual(pose, "crossed_arms")
+        self.assertEqual(cam, "medium")
+
+        # 2. Separate directive tags
+        separate_raw = "Aqui estão os dados. <!--emotion:analytical--> <!--pose:crossed_arms--> <!--camera:closeup-->"
+        clean_sep, emo_sep, _ = parse_tags(separate_raw)
+        pose_sep, cam_sep = infer_pose_and_camera(separate_raw, emo_sep)
+        self.assertEqual(clean_sep, "Aqui estão os dados.")
+        self.assertEqual(emo_sep, "analytical")
+        self.assertEqual(pose_sep, "crossed_arms")
+        self.assertEqual(cam_sep, "closeup")
+
+        # 3. Natural dialogue mentioning camera: or pose: outside comments
+        natural_raw = "Minha camera: Sony HD. Qual sua pose: braços cruzados?"
+        clean_nat, emo_nat, _ = parse_tags(natural_raw)
+        pose_nat, cam_nat = infer_pose_and_camera(natural_raw, emo_nat)
+        self.assertEqual(clean_nat, "Minha camera: Sony HD. Qual sua pose: braços cruzados?")
+        self.assertEqual(pose_nat, "default")
+        self.assertEqual(cam_nat, "closeup")
+
 if __name__ == "__main__":
     unittest.main()
 

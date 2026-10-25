@@ -110,21 +110,23 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
             learned_info = LearnedMemoryInfo(title=title, content=content, emotionalWeight=emotion)
         clean = re.sub(r"<!--remember:.*?-->", "", clean, flags=re.IGNORECASE)
 
-    # 2. Parse emotion tag (flexible regex matching piped/multiple tokens like happy|smile)
+    # 2. Parse emotion tag (isolated <!--emotion:...--> or composite <!--emotion:tsundere,pose:...-->)
     emotion = "neutral"
+    comment_matches = re.findall(r"<!--([\s\S]*?)-->", clean, re.IGNORECASE)
+    for c in comment_matches:
+        if c.strip().lower().startswith("remember:"):
+            continue
+        emo_m = re.search(r"(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)", c, re.IGNORECASE)
+        if emo_m:
+            raw_emo_val = emo_m.group(1).lower().strip()
+            tokens = re.split(r"[\s|,;/]+", raw_emo_val)
+            for tok in tokens:
+                if tok in VALID_EMOTIONS:
+                    emotion = tok
+                    break
 
-    emotion_match = re.search(r"<!--\s*emotion:\s*([^>]+?)\s*-->", clean, re.IGNORECASE)
-    if emotion_match:
-        raw_emo_val = emotion_match.group(1).lower().strip()
-        # Handle cases like happy|smile, happy, smile, happy/smile
-        tokens = re.split(r"[\s|,;/]+", raw_emo_val)
-        for tok in tokens:
-            if tok in VALID_EMOTIONS:
-                emotion = tok
-                break
-
-    # Infallible removal of any emotion tag variant
-    clean = re.sub(r"<!--\s*(?:emotion|pose|camera):[^>]*-->", "", clean, flags=re.IGNORECASE)
+    # Infallible removal of all comment tags so zero metadata leaks into speech
+    clean = re.sub(r"<!--[\s\S]*?-->", "", clean)
 
     # 3. Detect actions from asterisks stage directions before stripping (e.g. *sorri*, *fica pensativa*)
     asterisk_matches = re.findall(r"\*([^*]+)\*", clean)
@@ -240,7 +242,7 @@ def infer_pose_and_camera(raw: Optional[str], emotion: str, user_message: Option
     pose = ""
     camera = ""
 
-    pose_m = re.search(r"pose\s*:\s*([a-z_]+)", text)
+    pose_m = re.search(r"<!--[^\>]*\bpose\s*:\s*([a-z_]+)", text)
     if pose_m:
         tok = pose_m.group(1)
         if tok in ("crossed_arms", "thinking"):
@@ -250,7 +252,7 @@ def infer_pose_and_camera(raw: Optional[str], emotion: str, user_message: Option
         elif tok in ("default", "front"):
             pose = "default"
 
-    cam_m = re.search(r"camera\s*:\s*([a-z_]+)", text)
+    cam_m = re.search(r"<!--[^\>]*\bcamera\s*:\s*([a-z_]+)", text)
     if cam_m:
         tok = cam_m.group(1)
         if tok in ("closeup", "close", "jl"):
