@@ -1,21 +1,29 @@
 import React from 'react';
-import { Emotion, CharacterPose } from '../types/amadeus';
+import { CameraFraming, Emotion, CharacterPose } from '../types/amadeus';
 import { AmadeusSpriteView } from './AmadeusSpriteView';
 import { AudioOscilloscope } from './AudioOscilloscope';
 
 interface CompanionPanelProps {
   emotion: Emotion;
   pose?: CharacterPose;
+  camera?: CameraFraming;
   isSpeaking: boolean;
   isListening: boolean;
+  isProcessing?: boolean;
+  memoryPulse?: number;
+  scanlines?: boolean;
   personaName: string;
 }
 
 export const CompanionPanel: React.FC<CompanionPanelProps> = ({
   emotion,
   pose = 'default',
+  camera,
   isSpeaking,
   isListening,
+  isProcessing = false,
+  memoryPulse = 0,
+  scanlines = false,
   personaName,
 }) => {
   return (
@@ -38,8 +46,12 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
         <AmadeusSpriteView
           emotion={emotion}
           pose={pose}
+          camera={camera}
           isSpeaking={isSpeaking}
-          scanlines={false}
+          isListening={isListening}
+          isProcessing={isProcessing}
+          memoryPulse={memoryPulse}
+          scanlines={scanlines}
           className="h-full"
         />
       </div>

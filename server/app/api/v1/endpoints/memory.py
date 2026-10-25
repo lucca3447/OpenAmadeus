@@ -35,3 +35,8 @@ def new_session():
 @router.get("/sessions/{session_id}/messages")
 def get_session_messages(session_id: str):
     return memory_store.get_session_messages(session_id)
+
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: str):
+    memory_store.delete_session(session_id)
+    return {"ok": True, "deleted": session_id}

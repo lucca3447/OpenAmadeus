@@ -1,4 +1,4 @@
-import { CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
+import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
 import { BackendService } from './backendService';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -194,6 +194,7 @@ export interface AIResult {
   response: string;
   emotion: Emotion;
   pose?: CharacterPose;
+  camera?: CameraFraming;
   status: AIStatus;
   /** true when the response is an error report, not something Amadeus "said" */
   isError: boolean;
@@ -691,6 +692,8 @@ export class AIService {
         return {
           response: backendRes.response,
           emotion: backendRes.emotion,
+          pose: backendRes.pose,
+          camera: backendRes.camera,
           status: { kind: 'online', model: backendRes.model || 'ChromaDB + SQLite (Python)' },
           isError: Boolean(backendRes.error),
           learnedMemory: backendRes.learnedMemory,
@@ -710,12 +713,13 @@ export class AIService {
     // 3. Browser-Mode: Groq Cloud (Ultra-fast LPU)
     if (isGroqKey(key)) {
       try {
-        const { response, emotion, pose, model, learnedMemory, fallbackModel, decommissionNotice } =
+        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
           await this.queryGroq(userMessage, persona, recalledMemories, key, history, selectedModel);
         return {
           response,
           emotion,
           pose,
+          camera,
           status: { kind: 'online', model },
           isError: false,
           learnedMemory,
@@ -734,12 +738,13 @@ export class AIService {
     // 4. Browser-Mode: OpenRouter
     if (isOpenRouterKey(key)) {
       try {
-        const { response, emotion, pose, model, learnedMemory, fallbackModel, decommissionNotice } =
+        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
           await this.queryOpenRouter(userMessage, persona, recalledMemories, key, history, selectedModel);
         return {
           response,
           emotion,
           pose,
+          camera,
           status: { kind: 'online', model },
           isError: false,
           learnedMemory,
@@ -757,12 +762,13 @@ export class AIService {
 
     // 5. Browser-Mode: Google Gemini
     try {
-      const { response, emotion, pose, model, learnedMemory, fallbackModel, decommissionNotice } =
+      const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
         await this.queryGemini(userMessage, persona, recalledMemories, key, history, selectedModel);
       return {
         response,
         emotion,
         pose,
+        camera,
         status: { kind: 'online', model },
         isError: false,
         learnedMemory,
@@ -812,6 +818,7 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -937,6 +944,7 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -1092,6 +1100,7 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -1261,10 +1270,12 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
+  camera?: CameraFraming;
     learnedMemory?: LearnedMemoryInfo;
   } {
     let emotion: Emotion = 'neutral';
     let pose: CharacterPose | undefined = undefined;
+    let camera: CameraFraming | undefined = undefined;
     let cleanText = this.stripThinkingTags(rawText);
     let learnedMemory: LearnedMemoryInfo | undefined = undefined;
 
@@ -1283,33 +1294,52 @@ export class AIService {
           emotionalWeight: remMatch[3].trim() || 'Factual',
         };
       }
-      cleanText = cleanText.replace(/<!--\s*remember:.*?\s*-->/gi, '');
     }
 
-    // 2. Extract pose tag: <!--pose:crossed_arms|default|backview-->
-    const poseMatch = cleanText.match(/<!--\s*pose:\s*([^>]+?)\s*-->/i);
-    if (poseMatch && poseMatch[1]) {
-      const pTok = poseMatch[1].toLowerCase().trim();
-      if (pTok === 'crossed_arms' || pTok === 'thinking') pose = 'crossed_arms';
-      else if (pTok === 'backview' || pTok === 'back') pose = 'backview';
-      else if (pTok === 'default' || pTok === 'front') pose = 'default';
-      cleanText = cleanText.replace(/<!--\s*pose:[^>]*-->/gi, '');
-    }
+    // 2. Extract directives from all comment tags <!-- ... -->
+    // Handles isolated tags (<!--emotion:happy--> <!--pose:crossed_arms--> <!--camera:medium-->)
+    // and composite tags (<!--emotion:tsundere,pose:crossed_arms,camera:medium-->)
+    const commentMatches = cleanText.match(/<!--([\s\S]*?)-->/g);
+    if (commentMatches) {
+      for (const comment of commentMatches) {
+        const inner = comment.replace(/^<!--|-->$/g, '').trim();
+        if (/^remember:/i.test(inner)) continue;
 
-    // 3. Extract emotion tag: handle piped or multiple values like happy|smile, smile/happy
-    const match = cleanText.match(/<!--\s*emotion:\s*([^>]+?)\s*-->/i);
-    if (match && match[1]) {
-      const rawVal = match[1].toLowerCase().trim();
-      const tokens = rawVal.split(/[\s|,;/]+/);
-      for (const tok of tokens) {
-        if (VALID_EMOTIONS.includes(tok as Emotion)) {
-          emotion = tok as Emotion;
-          break;
+        // Emotion
+        const emoMatch = inner.match(/(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)/i);
+        if (emoMatch) {
+          const rawVal = emoMatch[1].toLowerCase().trim();
+          const tokens = rawVal.split(/[\s|,;/]+/);
+          for (const tok of tokens) {
+            if (VALID_EMOTIONS.includes(tok as Emotion)) {
+              emotion = tok as Emotion;
+              break;
+            }
+          }
+        }
+
+        // Pose
+        const pMatch = inner.match(/(?:^|[,;|\s])pose\s*:\s*([^,;|\s>]+)/i);
+        if (pMatch) {
+          const pTok = pMatch[1].toLowerCase().trim();
+          if (pTok === 'crossed_arms' || pTok === 'thinking') pose = 'crossed_arms';
+          else if (pTok === 'backview' || pTok === 'back') pose = 'backview';
+          else if (pTok === 'default' || pTok === 'front') pose = 'default';
+        }
+
+        // Camera
+        const cMatch = inner.match(/(?:^|[,;|\s])camera\s*:\s*([^,;|\s>]+)/i);
+        if (cMatch) {
+          const cTok = cMatch[1].toLowerCase().trim();
+          if (cTok === 'closeup' || cTok === 'close' || cTok === 'jl') camera = 'closeup';
+          else if (cTok === 'medium' || cTok === 'jm') camera = 'medium';
+          else if (cTok === 'full' || cTok === 'far' || cTok === 'js') camera = 'full';
         }
       }
     }
-    // Infallible removal of any emotion tag variant
-    cleanText = cleanText.replace(/<!--\s*emotion:[^>]*-->/gi, '');
+
+    // 3. Single-pass removal of all comment tags so zero metadata leaks into speech
+    cleanText = cleanText.replace(/<!--[\s\S]*?-->/g, '').trim();
 
     // 4. Extract stage directions from asterisks before stripping (*sorri*, *cruza os braços*)
     const asterisks = cleanText.match(/\*([^*]+)\*/g);
@@ -1381,12 +1411,14 @@ export class AIService {
     cleanText = cleanText.replace(/[:;]-?[)(DPpOdD]/g, '');
     cleanText = cleanText.replace(/\s+/g, ' ').trim();
 
-    // Default pose adjustment
-    if (emotion === 'thinking' && !pose) {
-      pose = 'crossed_arms';
+    // Default pose is natural (default) unless explicitly set by tag or command
+    if (!camera && userMessage) {
+      const uLow = userMessage.toLowerCase();
+      if (/close-?up|de perto|aproxime/.test(uLow)) camera = 'closeup';
+      else if (/corpo inteiro|afaste|de longe/.test(uLow)) camera = 'full';
+      else if (/meio corpo/.test(uLow)) camera = 'medium';
     }
-
-    return { response: cleanText, emotion, pose, learnedMemory };
+    return { response: cleanText, emotion, pose, camera, learnedMemory };
   }
 
   /**

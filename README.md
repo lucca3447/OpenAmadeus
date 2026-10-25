@@ -10,7 +10,7 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Qwen3-TTS](https://img.shields.io/badge/Qwen3--TTS-1.7B_BF16-624AFF)](https://huggingface.co/starrydark/Kurisu_Qwen3_TTS)
 [![Faster-Qwen3-TTS](https://img.shields.io/badge/CUDA_Graphs-~391ms_TTFA-00C853)](https://github.com/andimarafioti/faster-qwen3-tts)
-[![Kokoro-TTS](https://img.shields.io/badge/Kokoro--TTS-82M_Offline-FF9800)](https://kokorottsai.com/)
+[![Kokoro-TTS](https://img.shields.io/badge/Kokoro--TTS-82M_Offline-FF9800)](https://github.com/hexgrad/kokoro)
 [![Kurisu-RVC](https://img.shields.io/badge/RVC_v2-Kurisu--RVC-FF6B6B)](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_RAG-orange)](https://www.trychroma.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
@@ -39,17 +39,17 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
 
 - **4-Stage Universal Voice Engine Cascade (`server/app/services/voice_service.py`)**:
   - **Stage 1 — Kurisu Qwen3-TTS (`qwen3` — Remote Colab Tunnel or Local CUDA GPU)**: End-to-end 1.7B neural synthesis (`starrydark/Kurisu_Qwen3_TTS` built on [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)) accelerated via [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) static KV cache + CUDA Graphs, achieving **~391 ms Time-To-First-Audio (TTFA)** and **1.92x Real-Time Factor (RTF)** on a single NVIDIA L4 GPU.
-  - **Stage 2 — Kokoro-TTS 82M + Optional Kurisu RVC v2 (`kokoro` — Local Offline CPU/GPU)**: Ultra-lightweight 82M-parameter Brazilian Portuguese neural synthesis ([Kokoro-TTS](https://kokorottsai.com/) `pf_dora`, ~80–150 ms latency, ~350 MB footprint) optionally piped through **Kurisu RVC v2** ([FrancescoCaracciolo/Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)) to morph speech into the timbre of voice actress **Asami Imai (今井 麻美)**.
+  - **Stage 2 — Kokoro-TTS 82M + Optional Kurisu RVC v2 (`kokoro` — Local Offline CPU/GPU)**: Ultra-lightweight 82M-parameter Brazilian Portuguese neural synthesis ([hexgrad / Kokoro-82M](https://github.com/hexgrad/kokoro) `pf_dora`, ~80–150 ms latency, ~350 MB footprint) optionally piped through **Kurisu RVC v2** ([FrancescoCaracciolo/Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)) to morph speech into the canonical character voice timbre.
   - **Stage 3 — Microsoft Edge-TTS + Optional Kurisu RVC v2 (`edge_rvc` — Zero-Setup Cloud CPU)**: Runs out-of-the-box on any machine with 0 MB local weight downloads (`pt-BR-FranciscaNeural`, `pt-BR-ThalitaNeural`, `ja-JP-NanamiNeural`).
   - **Stage 4 — Browser Web Speech API Fallback**: Automatic client-side `SpeechSynthesisUtterance` fallback with word-boundary syllable lip-sync if the backend is unreachable.
 - **Real-Time PCM16 Streaming & Web Audio DSP Chain**:
-  - Server-side $C^0$ boundary continuity ramp (120-sample / 5 ms linear interpolation across 24 kHz chunk borders) eliminating inter-chunk clicks, paired with `clean_text_for_tts` punctuation sanitization (`?!` / `!!` filtering) and 21 studio-dry acoustic emotion prompts (`emotion_mapper.py`).
-  - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 120 ms initial jitter buffer, `1.5x` (+3.5 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-18 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
+  - Server-side $C^0$ boundary continuity ramp (120-sample / 5 ms linear interpolation across 24 kHz chunk borders) eliminating inter-chunk clicks, paired with `clean_text_for_tts` punctuation sanitization, pure-weight SFT acoustic stability (`QWEN_USE_EMOTION_INSTRUCT=false` by default to prevent attention glitches), and 21 empirical acoustic reference targets (`emotion_mapper.py`).
+  - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 480 ms jitter buffer, `1.65x` (+4.3 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-20 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
 - **Visual State Machine & Audio-Reactive HUD**:
-  - Supports **174 visual novel sprite assets** mapped across **21 emotional states** (`AmadeusSpriteView.tsx`), falling back natively to a stylized procedural holographic silhouette when proprietary sprites are absent.
-  - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth frames, stochastic eye-blinking, an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`), and a **Nixie Tube Worldline Divergence Meter** (`DivergenceMeter.tsx`).
+  - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across **14 canonical emotions** and camera framings (`AmadeusSpriteView.tsx`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), emotion-aligned blinking (preserving winks and smiles), and native fallback to a procedural holographic silhouette when sprites are absent.
+  - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth flap frames, natural double-blink cycles, an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`), and a **Nixie Tube Worldline Divergence Meter** (`DivergenceMeter.tsx`).
 - **Dynamic Few-Shot RAG & Episodic Memory (`server/training/` & [ChromaDB](https://www.trychroma.com/))**:
-  - Automatically indexes **63 curated ChatML conversation pairs** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), plus Unsloth LoRA fine-tuning scripts (`unsloth_finetuning.py`) and an Ollama `Modelfile`.
+  - Automatically indexes **86 curated ChatML conversation pairs** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), providing few-shot conditioning for canonical dialogue, visual poses, camera zooms, and learned facts (`<!--remember:...-->`).
 - **Multi-Provider LLM Orchestration (`server/app/services/llm/`)**:
   - Fault-tolerant routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`gemma-4-31b-it:free`, `nemotron-3.5-lightning:free`), local **Ollama**, and an offline **Heuristic Simulator** (`offline_simulator.py`).
 
@@ -61,8 +61,8 @@ OpenAmadeus scales from CPU-only laptops to local NVIDIA GPUs and free/low-cost 
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Tier 1: Edge-TTS** *(Universal)* | Cloud Neural Stream | **Any PC / Laptop (0 GB VRAM)** | ~400–900 ms | > 3.00x | Zero downloads required; works out-of-the-box on Windows, macOS, and Linux |
 | **Tier 2: Kokoro-TTS 82M** *(Offline)* | Local CPU / GPU | **CPU or GPU (~350 MB RAM/VRAM)** | ~80–300 ms | > 2.50x | 100% offline PT-BR synthesis (`pf_dora`), zero cloud dependency |
-| **Tier 3: Kokoro / Edge + RVC v2** | Local Timbre Morph | **NVIDIA GPU (~2–4 GB VRAM FP16)** | ~800–1,500 ms | ~1.50x | Converts Kokoro or Edge speech into Asami Imai's acoustic timbre (`KurisuRVCv147`) |
-| **Tier 4: Qwen3-TTS (`faster`)** | **Streaming PCM16 (CUDA Graphs)** | **Colab L4/A100 or Local GPU (~4–6 GB VRAM)** | **~391 ms** | **1.92x** *(L4)* | End-to-end Kurisu synthesis with sighs, hesitation pauses (`...`), and 21 emotions |
+| **Tier 3: Kokoro / Edge + RVC v2** | Local Timbre Morph | **NVIDIA GPU (~2–4 GB VRAM FP16)** | ~800–1,500 ms | ~1.50x | Converts Kokoro or Edge speech into Kurisu's canonical acoustic timbre (`KurisuRVCv147`) |
+| **Tier 4: Qwen3-TTS (`faster`)** | **Streaming PCM16 (CUDA Graphs)** | **Colab L4/A100 or Local GPU (~4–6 GB VRAM)** | **~391 ms** | **1.92x** *(L4)* | End-to-end Kurisu synthesis with natural sighs, calibrated cadence, and pure-weight SFT stability |
 | **Tier 4 (Legacy): Qwen3-TTS (`stock`)** | Batch WAV (Dynamic Cache) | NVIDIA GPU (~6 GB VRAM) | ~14,000–20,000 ms | ~0.44x | Fallback batch mode when `faster-qwen3-tts` is disabled (`QWEN_BACKEND=stock`) |
 
 ## 🏛️ System Architecture & DSP Pipeline
@@ -75,7 +75,7 @@ flowchart TD
         Oscilloscope["AudioOscilloscope (HTML5 Canvas FFT)"]
         NixieMeter["DivergenceMeter (Nixie Tube Telemetry)"]
         Reader["speechService.ts: PCM16 Stream Reader + Remainder Byte Buffer"]
-        DSP["Web Audio DSP: Jitter (+120ms) -> Make-up Gain (1.5x) -> Compressor (-18dB) -> AnalyserNode"]
+        DSP["Web Audio DSP: Jitter (+480ms) -> Make-up Gain (1.65x) -> Compressor (-20dB) -> AnalyserNode"]
         UI --> Reader
         Reader --> DSP
         DSP --> SpriteEngine
@@ -112,7 +112,7 @@ flowchart TD
 
     subgraph Persistence["Hybrid Memory & Fine-Tuning Layer"]
         SQLite[("SQLite: amadeus.db")]
-        ChromaDB[("ChromaDB: memory_db + 63 Few-Shot Kurisu Dialogues")]
+        ChromaDB[("ChromaDB: memory_db + 86 Few-Shot Kurisu Dialogues")]
     end
 
     subgraph ExternalLLMs["LLM Inference Providers"]
@@ -234,7 +234,7 @@ python -m app.services.qwen_tts.qwen_worker
 ## 🧠 Kurisu Fine-Tuning & Dynamic Few-Shot RAG Pack (`server/training/`)
 
 The `server/training/` directory ships with a complete persona alignment toolkit:
-- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (63 refined multi-turn dialogues with `<!--emotion:xxx-->` and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/), injecting the most semantically relevant canon responses into every LLM prompt.
+- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (86 refined multi-turn dialogues with `<!--emotion:...-->`, `<!--pose:...-->`, `<!--camera:...-->` and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/), injecting the most semantically relevant canon responses into every LLM prompt.
 - **Local Ollama Model Creation**:
   ```bash
   cd server/training
@@ -296,7 +296,7 @@ OpenAmadeus/
 │   │   ├── schemas/                   # Pydantic request/response contracts (chat, memory, voice)
 │   │   └── services/
 │   │       ├── llm/                   # Multi-provider orchestrator (gemini.py, groq.py, openrouter.py)
-│   │       ├── qwen_tts/              # qwen_worker.py, qwen_manager.py, emotion_mapper.py (21 states)
+│   │       ├── qwen_tts/              # qwen_worker.py, qwen_manager.py, emotion_mapper.py (21 empirical acoustic targets)
 │   │       ├── kokoro_tts/            # kokoro_manager.py (82M PT-BR local synthesis)
 │   │       ├── rvc/                   # rvc_manager.py, rvc_worker.py, pipeline.py (HuBERT/RMVPE)
 │   │       ├── voice_service.py       # 4-stage voice cascade & clean_text_for_tts sanitizer
@@ -304,7 +304,7 @@ OpenAmadeus/
 │   │       ├── divergence_service.py  # Worldline divergence state calculator
 │   │       └── offline_simulator.py   # Zero-internet heuristic dialogue fallback
 │   ├── personas/                      # Persona definitions and system prompts (kurisu.json)
-│   ├── training/                      # 63-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
+│   ├── training/                      # 86-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
 │   ├── tests/                         # Unit, benchmark & E2E suites (test_qwen_tts.py, test_backend.py)
 │   ├── weights/                       # Local model directory (kurisu_rvc/, kurisu_qwen3/, models/)
 │   ├── main.py                        # FastAPI gateway entry point
@@ -341,7 +341,7 @@ npm run build
 OpenAmadeus follows [Semantic Versioning 2.0.0](https://semver.org/) (`MAJOR.MINOR.PATCH`). Below is our planned evolutionary track:
 
 - **`v0.1.0` (Current)**: Real-time Qwen3-TTS CUDA Graphs streaming (~391ms TTFA), $C^0$ boundary DSP ramp, Web Audio compressor, and 4-stage voice fallback cascade.
-- **`v0.2.0`**: 21-emotion acoustic calibration (`emotion_mapper.py`), 174-sprite camera & pose state machine, hands-free VAD & push-to-talk audio UX, and modern dev/tech persona tuning.
+- **`v0.2.0` (In Progress)**: Qwen3-TTS acoustic calibration & streaming toggle [Done], 174-sprite SC3 bytecode ground truth mapping & visual directives [Done], hands-free Groq Whisper Turbo STT & barge-in [Next], and dev/tech persona naturalness tuning.
 - **`v0.3.0`**: Multilingual expansion, persona cultural variants (PT-BR, EN, JA), and dynamic code-switching TTS.
 - **`v0.4.0`**: Multimodal screen vision (`getDisplayMedia`) with on-demand snapshot inspection and region analysis.
 - **`v0.5.0`**: Floating desktop pop-up / overlay (*Always-on-Top* companion) and continuous co-pilot monitoring.
@@ -361,14 +361,13 @@ Contributions, bug reports, and acoustic calibration improvements are welcome!
    - `test(voice): ...` for unit and integration tests
 4. **Verification**: Ensure all Python unit tests and `npx tsc --noEmit` pass cleanly before opening a Pull Request.
 
-## 🙏 Credits & Acknowledgments
+## 🙏 Credits 
 
-- **starrydark / Kurisu_Qwen3_TTS** (`https://huggingface.co/starrydark/Kurisu_Qwen3_TTS`): Fine-tuned neural voice synthesis model of Makise Kurisu based on Alibaba Cloud Qwen3-TTS 1.7B.
+- **[starrydark / Kurisu_Qwen3_TTS](https://huggingface.co/starrydark/Kurisu_Qwen3_TTS)**: Fine-tuned neural voice synthesis model of Makise Kurisu based on Alibaba Cloud Qwen3-TTS 1.7B.
 - **[andimarafioti / faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts)**: Real-time Qwen3-TTS inference engine using static KV cache and CUDA Graphs.
 - **[FrancescoCaracciolo / Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)**: Trained Makise Kurisu RVC v2 voice model (`KurisuRVCv147.pth` and `KurisuRVCv147.index`).
 - **[Alibaba Cloud / Qwen Team](https://github.com/QwenLM/Qwen3-TTS)**: Qwen3-TTS base architecture and 12 Hz speech tokenizer.
-- **[Kokoro-TTS](https://kokorottsai.com/)**: Lightweight 82M-parameter open-weight multilingual neural TTS engine.
-- **Asami Imai (今井 麻美)**: Official Japanese voice actress for Makise Kurisu, whose iconic performance defines the character.
+- **[hexgrad / Kokoro-82M](https://github.com/hexgrad/kokoro)**: Lightweight 82M-parameter open-weight multilingual neural TTS engine.
 - **RVC Community & Microsoft Azure / Edge-TTS**: Open-source retrieval-based voice conversion and cloud neural speech synthesis.
 
 ## ⚖️ Legal Disclaimer & Intellectual Property Notice
@@ -380,7 +379,7 @@ Contributions, bug reports, and acoustic calibration improvements are welcome!
 > All characters, names, lore, and visual assets related to *STEINS;GATE* (including *Makise Kurisu*, *Amadeus System*, *Viktor Chondria University*, and *Lab 304*) are registered trademarks and copyrighted properties of **MAGES. Inc. / 5pb. / Chiyomaru Studio / KADOKAWA**. This project is not affiliated with, endorsed by, or sponsored by these entities.
 > 
 > **Voice Models & Attribution:**  
-> The community acoustic models (RVC v2 and Qwen3-TTS) are hosted externally on Hugging Face by independent researchers. They represent experimental synthetic voice emulation and are neither officially endorsed by nor affiliated with the official Japanese voice actress **Asami Imai (今井 麻美)**.
+> The community acoustic models (RVC v2 and Qwen3-TTS) are hosted externally on Hugging Face by independent researchers. They represent experimental synthetic voice emulation and are neither officially endorsed by nor affiliated with the original voice cast or copyright holders.
 > 
 > **Asset Distribution Policy:**  
 > To respect copyright boundaries, **no commercial game assets or sprite images are bundled or tracked in this Git repository**. The engine functions natively with a stylized procedural holographic silhouette. Users wishing to apply local character sprites do so privately on their own machines (`python scripts/setup_sprites.py`).

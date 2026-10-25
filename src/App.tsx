@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
+  CameraFraming,
   CharacterPose, 
   ChatMessage, 
   Emotion, 
@@ -21,6 +22,7 @@ import { BackendService, BackendHealth } from './services/backendService';
 import { SpeechService } from './services/speechService';
 import { CallHeader } from './components/CallHeader';
 import { AmadeusSpriteView } from './components/AmadeusSpriteView';
+import { preloadPrimarySprites, preloadEmotionSprites } from './services/spriteCatalog';
 import { AudioOscilloscope } from './components/AudioOscilloscope';
 import { SubtitleBox } from './components/SubtitleBox';
 import { ControlBar } from './components/ControlBar';
@@ -88,6 +90,8 @@ export const App: React.FC = () => {
   const [persona, setPersona] = useState<PersonaProfile>(() => MemoryService.getPersona('kurisu'));
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>('neutral');
   const [currentPose, setCurrentPose] = useState<CharacterPose>('default');
+  const [currentCamera, setCurrentCamera] = useState<CameraFraming | undefined>(undefined);
+  const [memoryPulse, setMemoryPulse] = useState<number>(0);
   const [recalledMemoryIds, setRecalledMemoryIds] = useState<string[]>([]);
   const [learnedNotification, setLearnedNotification] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
@@ -153,10 +157,27 @@ export const App: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
 
-  // Check Python backend health on mount
+  // Check Python backend health on mount & preload baseline sprites early
   useEffect(() => {
+    preloadPrimarySprites('closeup');
     BackendService.checkHealth().then((health) => {
       setBackendHealth(health);
+      if (health) {
+        // Hydrate and merge sessions from backend SQLite with LocalStorage
+        BackendService.listSessions().then((remoteSessions) => {
+          if (remoteSessions && remoteSessions.length > 0) {
+            const localLogs = MemoryService.getSessionLogs();
+            const mergedMap = new Map<string, CallSession>();
+            remoteSessions.forEach((s) => mergedMap.set(s.id, s));
+            localLogs.forEach((s) => mergedMap.set(s.id, s));
+            const merged = Array.from(mergedMap.values()).sort(
+              (a, b) => (b.startedAt || 0) - (a.startedAt || 0)
+            );
+            localStorage.setItem('amadeus_sessions_log', JSON.stringify(merged.slice(0, 30)));
+            setSessions(merged.slice(0, 30));
+          }
+        });
+      }
     });
   }, []);
 
@@ -285,6 +306,7 @@ export const App: React.FC = () => {
     // 1. Retrieve active memories from cognitive cortex (Local RAG)
     const matched = MemoryService.matchMemories(text, persona);
     setRecalledMemoryIds(matched.map((m: MemoryItem) => m.id));
+    if (matched.length > 0) setMemoryPulse((p) => p + 1);
 
     SpeechService.stopSpeaking();
     setIsSpeaking(false);
@@ -300,11 +322,11 @@ export const App: React.FC = () => {
     const nextHistory = [...history, userMessage];
     setHistory(nextHistory);
     MemoryService.saveActiveSession(sessionId, nextHistory);
+    setSessions(MemoryService.getSessionLogs());
     setErrorNotice(null);
     setIsProcessing(true);
     // Immediate visual feedback while the model is working
     setCurrentEmotion('thinking');
-    setCurrentPose('crossed_arms');
 
     try {
       // 2. Query Amadeus (via Python backend with ChromaDB if available, or direct browser-side)
@@ -313,10 +335,9 @@ export const App: React.FC = () => {
       setAiStatus(result.status);
       setCurrentSubtitle(result.response);
       setCurrentEmotion(result.emotion);
+      setCurrentCamera(result.camera);
       if (result.pose) {
         setCurrentPose(result.pose);
-      } else if (result.emotion === 'thinking') {
-        setCurrentPose('crossed_arms');
       } else {
         setCurrentPose('default');
       }
@@ -365,6 +386,10 @@ export const App: React.FC = () => {
       const updatedHistory = [...nextHistory, aiMessage];
       setHistory(updatedHistory);
       MemoryService.saveActiveSession(sessionId, updatedHistory);
+      setSessions(MemoryService.getSessionLogs());
+
+      // Preload the target emotion's mouth flap frames before speech starts
+      preloadEmotionSprites(result.emotion, result.pose, result.camera);
 
       // 3. Speak response with TTS if enabled
       speak(result.response, result.emotion);
@@ -384,9 +409,11 @@ export const App: React.FC = () => {
   const handleNewSession = () => {
     SpeechService.stopSpeaking();
     setErrorNotice(null);
+    if (history.length > 0) {
+      MemoryService.saveActiveSession(sessionId, history);
+    }
     const newSessionId = MemoryService.archiveAndStartNewSession(history);
     setSessionId(newSessionId);
-    setSessions(MemoryService.getSessionLogs());
 
     const initialMsgs: ChatMessage[] = [
       { id: newId(), sender: 'amadeus', content: INITIAL_GREETING, timestamp: Date.now(), emotion: 'neutral', pose: 'default' },
@@ -396,16 +423,32 @@ export const App: React.FC = () => {
     setCurrentEmotion('neutral');
     setCurrentPose('default');
     MemoryService.saveActiveSession(newSessionId, initialMsgs);
+    setSessions(MemoryService.getSessionLogs());
   };
 
   // Switch to a previous session from the sidebar
-  const handleSelectSession = (selectedId: string) => {
+  const handleSelectSession = async (selectedId: string) => {
     SpeechService.stopSpeaking();
     setErrorNotice(null);
-    const loaded = MemoryService.loadSession(selectedId);
-    if (loaded) {
+
+    // 1. Ensure active session is saved before switching so no messages are lost
+    if (history.length > 0) {
+      MemoryService.saveActiveSession(sessionId, history);
+    }
+
+    // 2. Load from LocalStorage or fallback to SQLite backend
+    let loaded = MemoryService.loadSession(selectedId);
+    if (!loaded || loaded.length === 0) {
+      loaded = await BackendService.getSessionMessages(selectedId);
+      if (loaded && loaded.length > 0) {
+        MemoryService.saveActiveSession(selectedId, loaded);
+      }
+    }
+
+    if (loaded && loaded.length > 0) {
       setSessionId(selectedId);
       setHistory(loaded);
+      setSessions(MemoryService.getSessionLogs());
       const lastAi = [...loaded].reverse().find((m) => m.sender === 'amadeus');
       if (lastAi) {
         setCurrentSubtitle(lastAi.content);
@@ -418,6 +461,7 @@ export const App: React.FC = () => {
   // Delete session
   const handleDeleteSession = (delId: string) => {
     MemoryService.deleteSession(delId);
+    BackendService.deleteSession(delId);
     setSessions(MemoryService.getSessionLogs());
     if (sessionId === delId) {
       handleNewSession();
@@ -461,6 +505,7 @@ export const App: React.FC = () => {
       ];
       setHistory(initialMsgs);
       MemoryService.saveActiveSession(sessionId, initialMsgs);
+      setSessions(MemoryService.getSessionLogs());
       speak(INITIAL_GREETING);
     } else {
       const lastMsg = [...history].reverse().find((m) => m.sender === 'amadeus');
@@ -624,8 +669,12 @@ export const App: React.FC = () => {
             <CompanionPanel
               emotion={currentEmotion}
               pose={currentPose}
+              camera={currentCamera}
+              isProcessing={isProcessing}
+              memoryPulse={memoryPulse}
               isSpeaking={isSpeaking}
               isListening={isListening}
+              scanlines={scanlines}
               personaName={persona.name}
             />
           </>
@@ -637,8 +686,12 @@ export const App: React.FC = () => {
               <AmadeusSpriteView
                 emotion={currentEmotion}
                 pose={currentPose}
+                camera={currentCamera}
+                isListening={isListening}
+                isProcessing={isProcessing}
+                memoryPulse={memoryPulse}
                 isSpeaking={isSpeaking}
-                scanlines={false}
+                scanlines={scanlines}
                 className="h-full w-full"
               />
             </div>

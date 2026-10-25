@@ -3,30 +3,32 @@ export type CanonicalEmotion =
   | 'wink'
   | 'annoyed'
   | 'worried'
-  | 'disdain'
+  | 'sad'
   | 'happy'
   | 'stern'
   | 'blushing'
-  | 'look_side'
+  | 'thinking'
   | 'eyes_closed'
-  | 'analytical'
-  | 'holding_back_tears';
+  | 'surprised'
+  | 'holding_back_tears'
+  | 'disdain'
+  | 'analytical';
 
 export type LegacyEmotion = 
   | 'smile'
   | 'serious'
-  | 'surprised'
   | 'tsundere'
-  | 'thinking'
   | 'smug'
   | 'flustered'
-  | 'sad'
   | 'puzzled'
-  | 'desperate';
+  | 'desperate'
+  | 'look_side';
 
 export type Emotion = CanonicalEmotion | LegacyEmotion;
 
 export type CharacterPose = 'default' | 'crossed_arms' | 'backview';
+export type CameraFraming = 'closeup' | 'medium' | 'full';
+export type CameraMode = 'auto' | CameraFraming;
 
 export type MouthState = 'closed' | 'half' | 'open';
 
@@ -70,6 +72,7 @@ export interface ChatMessage {
   timestamp: number;
   emotion?: Emotion;
   pose?: CharacterPose;
+  camera?: CameraFraming;
   recalledMemories?: string[];
 }
 

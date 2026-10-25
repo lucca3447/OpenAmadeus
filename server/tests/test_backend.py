@@ -204,6 +204,74 @@ class TestAmadeusBackend(unittest.TestCase):
         self.assertIsNotNone(mem_36)
         self.assertIn("ruivo", mem_36.get("content", "").lower())
 
+    def test_14_directive_parser_and_comment_isolation(self):
+        from app.services.emotion_service import parse_tags, infer_pose_and_camera
+
+        # 1. Composite directive tag: emotion, pose, camera in a single tag
+        composite_raw = "Não faça perguntas tão óbvias! <!--emotion:tsundere,pose:crossed_arms,camera:medium-->"
+        clean, emo, _ = parse_tags(composite_raw)
+        pose, cam = infer_pose_and_camera(composite_raw, emo)
+        self.assertEqual(clean, "Não faça perguntas tão óbvias!")
+        self.assertEqual(emo, "tsundere")
+        self.assertEqual(pose, "crossed_arms")
+        self.assertEqual(cam, "medium")
+
+        # 2. Separate directive tags
+        separate_raw = "Aqui estão os dados. <!--emotion:analytical--> <!--pose:crossed_arms--> <!--camera:closeup-->"
+        clean_sep, emo_sep, _ = parse_tags(separate_raw)
+        pose_sep, cam_sep = infer_pose_and_camera(separate_raw, emo_sep)
+        self.assertEqual(clean_sep, "Aqui estão os dados.")
+        self.assertEqual(emo_sep, "analytical")
+        self.assertEqual(pose_sep, "crossed_arms")
+        self.assertEqual(cam_sep, "closeup")
+
+        # 3. Natural dialogue mentioning camera: or pose: outside comments
+        natural_raw = "Minha camera: Sony HD. Qual sua pose: braços cruzados?"
+        clean_nat, emo_nat, _ = parse_tags(natural_raw)
+        pose_nat, cam_nat = infer_pose_and_camera(natural_raw, emo_nat)
+        self.assertEqual(clean_nat, "Minha camera: Sony HD. Qual sua pose: braços cruzados?")
+        self.assertEqual(pose_nat, "default")
+        self.assertEqual(cam_nat, "closeup")
+
+        # 4. Context-aware user_message evaluation without NameError
+        clean_user, emo_user, _ = parse_tags("Entendido.", user_message="Você é muito linda!")
+        self.assertEqual(emo_user, "flustered")
+
+        # 5. Canonical SC3 surprise and sadness emotion parsing
+        clean_surp, emo_surp, _ = parse_tags("O quê?! Isso não faz sentido!", user_message="Você viu aquela máquina?")
+        self.assertEqual(emo_surp, "surprised")
+
+        clean_sad, emo_sad, _ = parse_tags("Não posso aceitar esse desfecho...", user_message="A Mayuri se foi...")
+        self.assertEqual(emo_sad, "sad")
+
+    def test_15_tag_instructions_and_exemplars_dataset(self):
+        import json
+        from app.core.config import PERSONAS_DIR, TRAINING_DIR
+        from app.services.emotion_service import parse_tags, infer_pose_and_camera
+
+        # 1. Verify kurisu.json prompt has updated tag instructions
+        kurisu_file = PERSONAS_DIR / "kurisu.json"
+        with open(kurisu_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        prompt = data.get("systemPrompt", "")
+        self.assertIn("analytical", prompt)
+        self.assertIn("disdain", prompt)
+        self.assertIn("<!--emotion:NOME-->", prompt)
+
+        # 2. Verify dataset contains at least 86 lines and includes pose/camera exemplars
+        ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
+        with open(ds_file, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        self.assertGreaterEqual(len(lines), 86)
+
+        # Check that composite tag is properly parsed
+        comp_sample = "As sinapses não armazenam apenas dados brutos... <!--emotion:analytical,pose:crossed_arms,camera:closeup-->"
+        c_text, emo, _ = parse_tags(comp_sample)
+        pose, cam = infer_pose_and_camera(comp_sample, emo)
+        self.assertEqual(emo, "analytical")
+        self.assertEqual(pose, "crossed_arms")
+        self.assertEqual(cam, "closeup")
+
 if __name__ == "__main__":
     unittest.main()
 

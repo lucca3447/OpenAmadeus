@@ -1,4 +1,4 @@
-import { ChatMessage, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
+import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
 
 export const BACKEND_URL =
   ((import.meta as any).env?.VITE_API_URL as string) || 'http://localhost:8000';
@@ -17,6 +17,8 @@ export interface BackendHealth {
 export interface BackendChatResponse {
   response: string;
   emotion: Emotion;
+  pose?: CharacterPose;
+  camera?: CameraFraming;
   recalledMemories: string[];
   sessionId?: string;
   model?: string;
@@ -81,7 +83,10 @@ export class BackendService {
   ): Promise<BackendChatResponse> {
     const formattedHistory = history.slice(-20).map((msg) => ({
       role: msg.sender === 'user' ? 'user' : 'model',
-      content: msg.content,
+      content:
+        msg.sender !== 'user' && msg.emotion
+          ? `${msg.content} <!--emotion:${msg.emotion}-->`
+          : msg.content,
     }));
 
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
@@ -168,6 +173,19 @@ export class BackendService {
     const res = await fetch(`${BACKEND_URL}/api/sessions/${encodeURIComponent(sessionId)}/messages`);
     if (!res.ok) return [];
     return res.json();
+  }
+
+  /**
+   * Deletes a session from SQLite
+   */
+  static async deleteSession(sessionId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch {}
+    return false;
   }
 
   /**

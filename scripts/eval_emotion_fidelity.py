@@ -4,7 +4,7 @@
 OpenAmadeus Companion — Avaliador de Fidelidade Acústica das 21 Emoções
 ========================================================================
 Compara gravações geradas pelo Qwen3-TTS / FasterQwen3 com o gabarito
-acústico canônico extraído da dubladora oficial (Asami Imai).
+acústico canônico extraído do gabarito acústico canônico.
 """
 
 import argparse
@@ -77,7 +77,7 @@ def calcular_fidelidade(med_f0: float, rms: float, target_f0: float, target_rms:
 
 def print_gabarito():
     print("=" * 105)
-    print(" GABARITO OFICIAL ACÚSTICO — ASAMI IMAI (MAKISE KURISU) — 21 EMOÇÕES")
+    print(" GABARITO OFICIAL ACÚSTICO — MAKISE KURISU (CANONICAL) — 21 EMOÇÕES")
     print("=" * 105)
     header = f"{'EMOÇÃO':<20} | {'ALVO F0':<12} | {'FAIXA (P10-P90)':<17} | {'ALVO RMS':<9} | {'ARQUIVO CANÔNICO'}"
     print(header)
@@ -136,8 +136,8 @@ def main():
         print("-" * 75)
         print(f"Avaliação da Emoção: '{emo.upper()}'")
         print(f"Arquivo testado:    {args.file} ({dur:.2f}s)")
-        print(f"Frequência Medida:  {f0:.1f} Hz (Alvo Asami Imai: {target['f0_hz']} Hz)")
-        print(f"Volume RMS Medido:  {rms:.3f} (Alvo Asami Imai: {target['rms']})")
+        print(f"Frequência Medida:  {f0:.1f} Hz (Alvo Gabarito Canônico: {target['f0_hz']} Hz)")
+        print(f"Volume RMS Medido:  {rms:.3f} (Alvo Gabarito Canônico: {target['rms']})")
         print(f"Fidelidade Acústica: {score}%")
         print("-" * 75)
         return 0

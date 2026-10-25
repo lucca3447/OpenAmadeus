@@ -77,7 +77,12 @@ class MemoryStore:
         if not dataset_path.exists():
             return
 
+        with open(dataset_path, "r", encoding="utf-8") as f:
+            total_lines = sum(1 for line in f if line.strip())
+
         count = self.exemplars_collection.count()
+        if count >= total_lines:
+            return
 
         ids = []
         documents = []
@@ -302,12 +307,27 @@ class MemoryStore:
             if not cursor.fetchone():
                 cursor.execute("INSERT INTO sessions (id, started_at) VALUES (?, ?)", (session_id, time.time()))
 
+            if sender == "user":
+                clean_summary = content.strip()[:60] + ("..." if len(content.strip()) > 60 else "")
+                cursor.execute(
+                    "UPDATE sessions SET summary = ? WHERE id = ? AND (summary IS NULL OR summary = '')",
+                    (clean_summary, session_id)
+                )
+
             cursor.execute(
                 "INSERT INTO messages (id, session_id, sender, content, emotion, recalled_memories, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (msg_id, session_id, sender, content, emotion or "neutral", json.dumps(recalled or []), time.time())
             )
             conn.commit()
         return msg_id
+
+    def delete_session(self, session_id: str) -> bool:
+        with self._conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            conn.commit()
+        return True
 
     def get_session_messages(self, session_id: str) -> List[Dict[str, Any]]:
         with self._conn() as conn:

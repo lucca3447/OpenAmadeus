@@ -5,7 +5,7 @@ from app.core.config import MAX_HISTORY_MESSAGES
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
-from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers
+from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera
 from app.services.offline_simulator import offline_simulator
 from app.services.divergence_service import get_worldline_divergence
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
@@ -40,6 +40,7 @@ class LLMOrchestrator:
         # Offline Simulator fallback if no key
         if not api_key:
             clean_text, emotion, learned = offline_simulator(req.message, persona, semantic_matches)
+            pose, camera = infer_pose_and_camera(clean_text, emotion, req.message)
             
             # If offline simulator detected user fact, save to Chroma + SQLite
             if learned:
@@ -55,6 +56,8 @@ class LLMOrchestrator:
             return ChatResponse(
                 response=clean_text,
                 emotion=emotion,
+                pose=pose,
+                camera=camera,
                 recalledMemories=recalled_ids,
                 sessionId=session_id,
                 learnedMemory=learned,
@@ -297,6 +300,7 @@ class LLMOrchestrator:
 
             # Parse tags with user message context for action intent mapping
             clean_text, emotion, learned = parse_tags(raw_reply, user_message=req.message)
+            pose, camera = infer_pose_and_camera(raw_reply, emotion, user_message=req.message)
 
             # Auto-consolidate learned memory into ChromaDB + SQLite
             if learned:
@@ -315,6 +319,8 @@ class LLMOrchestrator:
             return ChatResponse(
                 response=clean_text,
                 emotion=emotion,
+                pose=pose,
+                camera=camera,
                 recalledMemories=recalled_ids,
                 sessionId=session_id,
                 model=used_model,

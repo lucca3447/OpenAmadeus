@@ -44,7 +44,7 @@ export function normalizeForSpeech(rawText: string): string {
   let text = rawText || '';
 
   // 1. Remove emotion, remember and pose tags
-  text = text.replace(/<!--\s*(?:emotion|remember|pose):[^>]*-->/gi, '');
+  text = text.replace(/<!--\s*(?:emotion|remember|pose|camera):[^>]*-->/gi, '');
 
   // 2. Remove stage directions / asterisk actions (*sorri*, *olha para o lado*)
   text = text.replace(/\*[^*]+\*/g, '');
@@ -242,7 +242,7 @@ export class SpeechService {
       this.makeUpGain = this.audioCtx.createGain();
       this.makeUpGain.gain.value = 1.65;
 
-      // Dynamics compressor calibrated to Asami Imai's empirical dynamic range (RMS 0.033 to 0.215)
+      // Dynamics compressor calibrated to the character's empirical dynamic range (RMS 0.033 to 0.215)
       this.compressor = this.audioCtx.createDynamicsCompressor();
       this.compressor.threshold.setValueAtTime(-20, this.audioCtx.currentTime);
       this.compressor.knee.setValueAtTime(14, this.audioCtx.currentTime);
