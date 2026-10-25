@@ -56,7 +56,7 @@ The backend operates as a decoupled, fault-tolerant multi-service pipeline:
 
 ### 2. Kurisu RVC v2 (Timbre Morphing)
 * **Hugging Face Repository**: [FrancescoCaracciolo/Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)
-* **Voice Reference**: Asami Imai (今井 麻美) — Official Japanese voice actress for Makise Kurisu.
+* **Voice Reference**: Makise Kurisu canonical voice timbre.
 * **Weights Directory Layout**:
   ```text
   server/
@@ -70,7 +70,7 @@ The backend operates as a decoupled, fault-tolerant multi-service pipeline:
   ```
 
 ### 3. Kokoro-TTS 82M & Microsoft Edge-TTS
-* **Kokoro-TTS**: 82M open-weight model (`kokorottsai.com`), providing instant offline synthesis.
+* **Kokoro-TTS**: 82M open-weight model ([hexgrad/kokoro](https://github.com/hexgrad/kokoro)), providing instant offline synthesis.
 * **Edge-TTS**: Zero configuration required, 100% free cloud neural synthesis.
 
 ---
