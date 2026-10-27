@@ -6,6 +6,7 @@ class HistoryTurn(BaseModel):
     content: str
 
 class LearnedMemoryInfo(BaseModel):
+    id: Optional[str] = None
     title: str
     content: str
     emotionalWeight: Optional[str] = None

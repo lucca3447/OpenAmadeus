@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import sqlite3
 import time
@@ -7,16 +8,30 @@ from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 
 import chromadb
-from app.core.config import SQLITE_PATH, CHROMA_DIR
+from app.core.config import (
+    SQLITE_PATH,
+    CHROMA_DIR,
+    MEMORY_MAX_DISTANCE,
+    EXEMPLAR_MAX_DISTANCE,
+    UPSERT_MAX_DISTANCE,
+)
+
+
+def _sanitize_field(value: Optional[str], max_len: int) -> str:
+    clean = re.sub(r"\s+", " ", (value or "").replace("\r", " ").replace("\n", " ")).strip()
+    return clean[:max_len]
+
 
 class MemoryStore:
-    def __init__(self):
+    def __init__(self, sqlite_path: Path = SQLITE_PATH, chroma_dir: Path = CHROMA_DIR):
+        self.sqlite_path = sqlite_path
+        self.chroma_dir = chroma_dir
         self._init_sqlite()
         self._init_chroma()
 
     @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(SQLITE_PATH)
+        conn = sqlite3.connect(self.sqlite_path)
         try:
             yield conn
         finally:
@@ -60,7 +75,7 @@ class MemoryStore:
 
     def _init_chroma(self):
         # Persistent ChromaDB client saving to local directory
-        self.chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        self.chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
         self.collection = self.chroma_client.get_or_create_collection(
             name="amadeus_cortex",
             metadata={"description": "Makise Kurisu digitized memories and user-learned facts"}
@@ -117,9 +132,10 @@ class MemoryStore:
             )
             print(f"[Amadeus Core] ChromaDB seeded with {len(ids)} Kurisu fine-tuning exemplars.")
 
-    def search_exemplars(self, query: str, n_results: int = 2) -> List[Dict[str, str]]:
+    def search_exemplars(self, query: str, n_results: int = 2, max_distance: float = EXEMPLAR_MAX_DISTANCE) -> List[Dict[str, str]]:
         """
-        Retrieves the most semantically relevant dialog turns from the fine-tuning dataset.
+        Retrieves the most semantically relevant dialog turns from the fine-tuning dataset
+        within max_distance.
         """
         count = self.exemplars_collection.count()
         if count == 0:
@@ -133,11 +149,15 @@ class MemoryStore:
 
         matched: List[Dict[str, str]] = []
         if results and results.get("metadatas") and len(results["metadatas"]) > 0:
-            for meta in results["metadatas"][0]:
-                matched.append({
-                    "user": meta.get("user", ""),
-                    "assistant": meta.get("assistant", "")
-                })
+            metas = results["metadatas"][0]
+            distances = results["distances"][0] if results.get("distances") else []
+            for i, meta in enumerate(metas):
+                dist = distances[i] if i < len(distances) else 999.0
+                if dist <= max_distance:
+                    matched.append({
+                        "user": meta.get("user", ""),
+                        "assistant": meta.get("assistant", "")
+                    })
         return matched
 
     def seed_canonical_memories(self, memories: List[Dict[str, Any]]):
@@ -167,7 +187,7 @@ class MemoryStore:
                     doc_text = f"{mem['title']}: {mem['content']}"
                     keywords = " ".join(mem.get("triggerKeywords", []))
                     full_text = f"{doc_text} (keywords: {keywords})" if keywords else doc_text
-                    
+
                     self.collection.upsert(
                         ids=[mem_id],
                         documents=[full_text],
@@ -181,18 +201,17 @@ class MemoryStore:
                     )
             conn.commit()
 
-    def search_memories(self, query: str, n_results: int = 4) -> List[Dict[str, Any]]:
-        """
-        Performs semantic vector search in ChromaDB.
-        """
-        count = self.collection.count()
-        if count == 0:
+    def _query_memory_group(self, query: str, where_filter: Dict[str, Any], group_limit: int, max_distance: float) -> List[Dict[str, Any]]:
+        if group_limit <= 0:
+            return []
+        group_ids = (self.collection.get(where=where_filter, include=[]) or {}).get("ids") or []
+        if not group_ids:
             return []
 
-        limit = min(n_results, count)
         results = self.collection.query(
             query_texts=[query],
-            n_results=limit
+            n_results=min(group_limit, len(group_ids)),
+            where=where_filter
         )
 
         matched: List[Dict[str, Any]] = []
@@ -202,9 +221,10 @@ class MemoryStore:
             distances = results["distances"][0] if results.get("distances") else []
 
             for i, mem_id in enumerate(ids):
+                dist = distances[i] if i < len(distances) else 999.0
+                if dist > max_distance:
+                    continue
                 meta = metadatas[i] if i < len(metadatas) else {}
-                dist = distances[i] if i < len(distances) else 1.0
-                # Chroma uses L2 or cosine distance; lower distance = higher similarity
                 matched.append({
                     "id": mem_id,
                     "title": meta.get("title", ""),
@@ -214,46 +234,130 @@ class MemoryStore:
                     "source": meta.get("source", "canonical"),
                     "distance": dist
                 })
-
         return matched
+
+    def search_memories(
+        self,
+        query: str,
+        max_kurisu: int = 2,
+        max_learned: int = 2,
+        max_distance: float = MEMORY_MAX_DISTANCE,
+        n_results: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Performs stratified semantic vector search in ChromaDB:
+        - Up to max_kurisu from source != 'learned' (canonical + custom)
+        - Up to max_learned from source == 'learned'
+        Discards any result with distance > max_distance.
+        """
+        if self.collection.count() == 0:
+            return []
+
+        if n_results is not None:
+            max_kurisu = n_results
+            max_learned = n_results
+
+        kurisu_matches = self._query_memory_group(query, {"source": {"$ne": "learned"}}, max_kurisu, max_distance)
+        learned_matches = self._query_memory_group(query, {"source": "learned"}, max_learned, max_distance)
+
+        combined = kurisu_matches + learned_matches
+        combined.sort(key=lambda m: m["distance"])
+        return combined
 
     def add_memory(self, category: str, title: str, content: str, emotional_weight: str = "Factual", source: str = "learned") -> Dict[str, Any]:
         """
-        Adds a new memory to both SQLite and ChromaDB.
+        Adds or updates (semantic upsert for source='learned') a memory in both SQLite and ChromaDB.
+        Sanitizes and bounds inputs at the storage trust boundary.
         """
-        mem_id = f"mem_{source}_{int(time.time())}_{os.urandom(2).hex()}"
+        clean_category = _sanitize_field(category, 40) or "user"
+        clean_title = _sanitize_field(title, 80)
+        clean_content = _sanitize_field(content, 280)
+        clean_emotion = _sanitize_field(emotional_weight, 80) or "Factual"
+        clean_source = _sanitize_field(source, 40) or "learned"
+
+        if not clean_title or not clean_content:
+            raise ValueError("Memory title and content must not be empty.")
+
         now = time.time()
+        doc_text = f"{clean_title}: {clean_content}"
+        mem_id: Optional[str] = None
 
         with self._conn() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO memories (id, category, title, content, emotional_weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (mem_id, category, title, content, emotional_weight, source, now)
-            )
+            if clean_source == "learned":
+                cursor.execute(
+                    "SELECT id FROM memories WHERE source = 'learned' AND LOWER(TRIM(title)) = ? LIMIT 1",
+                    (clean_title.lower(),)
+                )
+                row = cursor.fetchone()
+                if row:
+                    mem_id = row[0]
+                else:
+                    learned_ids = (self.collection.get(where={"source": "learned"}, include=[]) or {}).get("ids") or []
+                    if learned_ids:
+                        q = self.collection.query(
+                            query_texts=[doc_text],
+                            n_results=1,
+                            where={"source": "learned"}
+                        )
+                        if (
+                            q
+                            and q.get("ids")
+                            and q["ids"][0]
+                            and q.get("distances")
+                            and q["distances"][0][0] <= UPSERT_MAX_DISTANCE
+                        ):
+                            mem_id = q["ids"][0][0]
+
+            if mem_id:
+                cursor.execute(
+                    "UPDATE memories SET category = ?, title = ?, content = ?, emotional_weight = ?, created_at = ? WHERE id = ?",
+                    (clean_category, clean_title, clean_content, clean_emotion, now, mem_id)
+                )
+            else:
+                mem_id = f"mem_{clean_source}_{int(now)}_{os.urandom(2).hex()}"
+                cursor.execute(
+                    "INSERT INTO memories (id, category, title, content, emotional_weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (mem_id, clean_category, clean_title, clean_content, clean_emotion, clean_source, now)
+                )
             conn.commit()
 
-        doc_text = f"{title}: {content}"
         self.collection.upsert(
             ids=[mem_id],
             documents=[doc_text],
             metadatas=[{
-                "title": title,
-                "category": category,
-                "emotional_weight": emotional_weight,
-                "source": source,
-                "raw_content": content
+                "title": clean_title,
+                "category": clean_category,
+                "emotional_weight": clean_emotion,
+                "source": clean_source,
+                "raw_content": clean_content
             }]
         )
 
         return {
             "id": mem_id,
-            "category": category,
-            "title": title,
-            "content": content,
-            "emotionalWeight": emotional_weight,
-            "source": source,
+            "category": clean_category,
+            "title": clean_title,
+            "content": clean_content,
+            "emotionalWeight": clean_emotion,
+            "source": clean_source,
             "createdAt": now
         }
+
+    def clear_learned_memories(self) -> int:
+        with self._conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM memories WHERE source = 'learned'")
+            ids = [r[0] for r in cursor.fetchall()]
+            if ids:
+                cursor.execute("DELETE FROM memories WHERE source = 'learned'")
+                conn.commit()
+        if ids:
+            try:
+                self.collection.delete(ids=ids)
+            except Exception:
+                pass
+        return len(ids)
 
     def delete_memory(self, memory_id: str) -> bool:
         with self._conn() as conn:
