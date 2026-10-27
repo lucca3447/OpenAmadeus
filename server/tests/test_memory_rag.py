@@ -8,6 +8,7 @@ SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
 from app.db.memory_store import MemoryStore
+from app.services.emotion_service import parse_tags
 
 
 class TestMemoryRAG(unittest.TestCase):
@@ -22,8 +23,8 @@ class TestMemoryRAG(unittest.TestCase):
 
         kurisu_path = SERVER_DIR / "personas" / "kurisu.json"
         with open(kurisu_path, "r", encoding="utf-8") as f:
-            persona_data = json.load(f)
-        cls.store.seed_canonical_memories(persona_data["memories"])
+            cls.persona_data = json.load(f)
+        cls.store.seed_canonical_memories(cls.persona_data["memories"])
 
         ex_path = SERVER_DIR / "training" / "kurisu_finetuning_dataset_enhanced.jsonl"
         cls.store.seed_exemplars(ex_path)
@@ -148,6 +149,71 @@ class TestMemoryRAG(unittest.TestCase):
             cleared = mem_ep.clear_learned_memories()
             self.assertEqual(cleared["deletedCount"], 1)
             self.assertFalse(any(m["id"] == created["id"] for m in mem_ep.get_memories()))
+
+    def test_07_rebuild_index_restores_chroma_from_sqlite(self):
+        sqlite_total = len(self.store.get_all_memories())
+        all_ids = (self.store.collection.get(include=[]) or {}).get("ids") or []
+        if all_ids:
+            self.store.collection.delete(ids=all_ids)
+        self.assertEqual(self.store.collection.count(), 0)
+
+        rebuilt = self.store.rebuild_index(self.persona_data["memories"])
+        self.assertEqual(rebuilt, sqlite_total)
+        self.assertEqual(self.store.collection.count(), sqlite_total)
+
+        matches = self.store.search_memories("Como funciona a sua pesquisa de digitalizar memórias e sinapses no Amadeus?")
+        self.assertGreaterEqual(len(matches), 1)
+        self.assertEqual(matches[0]["id"], "mem_01")
+
+    def test_08_remember_tag_formats_and_sqlite_wal(self):
+        with self.store._conn() as conn:
+            mode = conn.execute("PRAGMA journal_mode;").fetchone()[0]
+            self.assertEqual(mode.lower(), "wal")
+
+        # 1. Standard 3 fields
+        _, _, l1 = parse_tags("Certo! <!--remember: Café | Gosta de café sem açúcar | Simpatia -->")
+        self.assertIsNotNone(l1)
+        self.assertEqual(l1.title, "Café")
+        self.assertEqual(l1.content, "Gosta de café sem açúcar")
+        self.assertEqual(l1.emotionalWeight, "Simpatia")
+
+        # 2. Only 2 fields (no emotion field)
+        _, _, l2 = parse_tags("Entendi. <!-- remember : Linguagem | Usa Python e TypeScript -->")
+        self.assertIsNotNone(l2)
+        self.assertEqual(l2.title, "Linguagem")
+        self.assertEqual(l2.content, "Usa Python e TypeScript")
+        self.assertEqual(l2.emotionalWeight, "Factual")
+
+        # 3. Extra pipe inside content (4 fields -> middle joined)
+        _, _, l3 = parse_tags("Anotado. <!--remember: Stack | Frontend: React | Backend: FastAPI | Curiosidade-->")
+        self.assertIsNotNone(l3)
+        self.assertEqual(l3.title, "Stack")
+        self.assertEqual(l3.content, "Frontend: React | Backend: FastAPI")
+        self.assertEqual(l3.emotionalWeight, "Curiosidade")
+
+        # 4. Template placeholder rejected
+        _, _, l4 = parse_tags("Olá! <!--remember: título curto | fato memorizado | sentimento-->")
+        self.assertIsNone(l4)
+
+    def test_09_rolling_context_summary_and_db_history_resolution(self):
+        from app.services.llm.orchestrator import LLMOrchestrator
+
+        orch = LLMOrchestrator()
+        sess_id = self.store.create_session()
+        self.store.save_message(sess_id, sender="user", content="Oi, meu nome é João.")
+        self.store.save_message(sess_id, sender="amadeus", content="Olá João, aqui é a Kurisu.")
+
+        from unittest.mock import patch
+        import app.services.llm.orchestrator as orch_mod
+        with patch.object(orch_mod, "memory_store", self.store):
+            turns = orch._resolve_history_turns(sess_id, [])
+            self.assertEqual(len(turns), 2)
+            self.assertEqual(turns[0]["role"], "user")
+            self.assertEqual(turns[1]["role"], "assistant")
+
+        self.assertEqual(self.store.get_session_context_summary(sess_id), "")
+        self.store.update_session_context_summary(sess_id, "Operador apresentou-se como João e iniciou conversa no laboratório.")
+        self.assertIn("João", self.store.get_session_context_summary(sess_id))
 
 
 if __name__ == "__main__":

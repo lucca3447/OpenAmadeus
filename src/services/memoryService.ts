@@ -190,25 +190,38 @@ export class MemoryService {
   }
 
   /**
+   * Parses <!-- remember: title | content | emotion --> tolerating variable spaces,
+   * 2 or 3+ pipe-separated fields, and rejecting template placeholders.
+   */
+  static parseRememberTag(rawText: string): { title: string; content: string; emotionalWeight: string } | null {
+    const match = rawText.match(/<!--\s*remember\s*:\s*([\s\S]*?)\s*-->/i);
+    if (!match) return null;
+    const parts = match[1].split('|').map((s) => s.trim());
+    if (parts.length < 2) return null;
+    const title = parts[0];
+    const content = parts.length === 2 ? parts[1] : parts.slice(1, -1).join(' | ').trim();
+    const emotionalWeight = (parts.length >= 3 ? parts[parts.length - 1] : '') || 'Factual';
+    const placeholderRe = /^(t[íi]tulo curto|fato memorizado|sentimento)$/i;
+    if (!title || !content || placeholderRe.test(title) || placeholderRe.test(content)) {
+      return null;
+    }
+    return { title, content, emotionalWeight };
+  }
+
+  /**
    * Auto-extracts memory from tags like <!--remember:Title|Content|Emotion--> or heuristic
    */
   static extractAndSaveLearnedMemory(personaId: string, rawText: string): MemoryItem | null {
-    const match = rawText.match(/<!--remember:(.*?)\|(.*?)\|(.*?)-->/i);
-    if (match) {
-      const title = match[1].trim();
-      const content = match[2].trim();
-      const emotionalWeight = match[3].trim() || 'Factual';
-
-      if (title && content) {
-        return this.addMemory(personaId, {
-          category: 'user',
-          title,
-          triggerKeywords: [title.toLowerCase()],
-          content,
-          emotionalWeight,
-          source: 'learned',
-        });
-      }
+    const parsed = this.parseRememberTag(rawText);
+    if (parsed) {
+      return this.addMemory(personaId, {
+        category: 'user',
+        title: parsed.title,
+        triggerKeywords: [parsed.title.toLowerCase()],
+        content: parsed.content,
+        emotionalWeight: parsed.emotionalWeight,
+        source: 'learned',
+      });
     }
     return null;
   }

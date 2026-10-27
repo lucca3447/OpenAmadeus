@@ -1,5 +1,6 @@
 import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
 import { BackendService } from './backendService';
+import { MemoryService } from './memoryService';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -1291,7 +1292,8 @@ export class AIService {
     }
 
     // 1. Extract remember tag: <!--remember:title|content|emotion-->
-    const remMatch = cleanText.match(/<!--\s*remember:\s*(.*?)\|(.*?)\|(.*?)\s*-->/i);
+    const parsedRem = MemoryService.parseRememberTag(cleanText);
+    const remMatch = parsedRem ? ['', parsedRem.title, parsedRem.content, parsedRem.emotionalWeight] : null;
     if (remMatch) {
       const title = remMatch[1].trim();
       if (!/^(t[íi]tulo curto|fato memorizado|sentimento)$/i.test(title)) {
@@ -1310,7 +1312,7 @@ export class AIService {
     if (commentMatches) {
       for (const comment of commentMatches) {
         const inner = comment.replace(/^<!--|-->$/g, '').trim();
-        if (/^remember:/i.test(inner)) continue;
+        if (/^remember\s*:/i.test(inner)) continue;
 
         // Emotion
         const emoMatch = inner.match(/(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)/i);

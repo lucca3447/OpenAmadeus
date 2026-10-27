@@ -1,18 +1,26 @@
 """
-Phase 0 Calibration Script: Measures real ChromaDB L2 distances across:
+Phase 0 & Phase 3 Calibration & Embedding Spike Script:
+Measures real ChromaDB distances across:
 1. Relevant queries (canonical + learned) vs. expected memory ID
 2. Casual greetings (should NOT trigger memories)
 3. Out-of-domain queries (should NOT trigger memories)
 4. Exemplar queries (relevant vs. greetings)
 5. Semantic upsert pairs (same fact updated vs. distinct facts)
 
+Pass `--compare-multilingual` to benchmark `all-MiniLM-L6-v2` (Chroma ONNX default)
+against `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (cosine)
+including boot latency, query latency, RAM delta, hit rate, and separation margin.
+
 Runs in an isolated temporary directory so live server/data is never touched.
 """
 import json
 import os
 import sys
+import time
 import tempfile
+import tracemalloc
 from pathlib import Path
+from typing import Any, List, Optional
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
@@ -69,8 +77,191 @@ UPSERT_PAIRS = [
 ]
 
 
+def _build_multilingual_ef():
+    import torch
+    from transformers import AutoTokenizer, AutoModel
+    from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
+
+    model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModel.from_pretrained(model_name)
+    model.eval()
+
+    class MultilingualTorchEF(EmbeddingFunction[Documents]):
+        def __call__(self, input: Documents) -> Embeddings:
+            encoded = tokenizer(list(input), padding=True, truncation=True, max_length=256, return_tensors="pt")
+            with torch.no_grad():
+                out = model(**encoded)
+            token_embeddings = out.last_hidden_state
+            mask = encoded["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
+            summed = torch.sum(token_embeddings * mask, 1)
+            counts = torch.clamp(mask.sum(1), min=1e-9)
+            pooled = summed / counts
+            normed = torch.nn.functional.normalize(pooled, p=2, dim=1)
+            return normed.cpu().numpy().tolist()
+
+    return MultilingualTorchEF()
+
+
+def run_benchmark(label: str, embedding_fn: Optional[Any] = None, space: str = "l2") -> dict:
+    import chromadb
+
+    t0 = time.perf_counter()
+    tracemalloc.start()
+
+    with tempfile.TemporaryDirectory(prefix="amadeus_spike_", ignore_cleanup_errors=True) as tmp_dir:
+        client = chromadb.PersistentClient(path=tmp_dir)
+        col_kwargs: dict = {"name": "cortex_bench", "metadata": {"hnsw:space": space}}
+        ex_kwargs: dict = {"name": "exemplars_bench", "metadata": {"hnsw:space": space}}
+        if embedding_fn is not None:
+            col_kwargs["embedding_function"] = embedding_fn
+            ex_kwargs["embedding_function"] = embedding_fn
+
+        col = client.create_collection(**col_kwargs)
+        ex_col = client.create_collection(**ex_kwargs)
+
+        kurisu_path = SERVER_DIR / "personas" / "kurisu.json"
+        with open(kurisu_path, "r", encoding="utf-8") as f:
+            persona_data = json.load(f)
+
+        ids, docs, metas = [], [], []
+        for mem in persona_data["memories"]:
+            doc_text = f"{mem['title']}: {mem['content']}"
+            kw = " ".join(mem.get("triggerKeywords", []))
+            full_text = f"{doc_text} (keywords: {kw})" if kw else doc_text
+            ids.append(mem["id"])
+            docs.append(full_text)
+            metas.append({"source": mem.get("source", "canonical"), "title": mem["title"], "raw_content": mem["content"]})
+
+        ids.extend(["LEARNED_1", "LEARNED_2"])
+        docs.extend([
+            "Perfil de João Lucca: Mora em São Paulo e estuda engenharia de software.",
+            "Projeto Atual: Está programando o sistema OpenAmadeus em Python e React.",
+        ])
+        metas.extend([
+            {"source": "learned", "title": "Perfil de João Lucca", "raw_content": "Mora em São Paulo e estuda engenharia de software."},
+            {"source": "learned", "title": "Projeto Atual", "raw_content": "Está programando o sistema OpenAmadeus em Python e React."},
+        ])
+        col.upsert(ids=ids, documents=docs, metadatas=metas)
+
+        ex_path = SERVER_DIR / "training" / "kurisu_finetuning_dataset_enhanced.jsonl"
+        ex_ids, ex_docs, ex_metas = [], [], []
+        with open(ex_path, "r", encoding="utf-8") as f:
+            for idx, line in enumerate(f):
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                msgs = data.get("messages", [])
+                u = next((m["content"] for m in msgs if m["role"] == "user"), "")
+                a = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
+                if u and a:
+                    ex_ids.append(f"ex_{idx}")
+                    ex_docs.append(u)
+                    ex_metas.append({"user": u, "assistant": a})
+        ex_col.upsert(ids=ex_ids, documents=ex_docs, metadatas=ex_metas)
+
+        seed_sec = time.perf_counter() - t0
+
+        hits = 0
+        total_rel = 0
+        rel_dists: List[float] = []
+        noise_dists: List[float] = []
+        q_start = time.perf_counter()
+
+        for qtype, query, expected in LABELED_MEMORIES:
+            k_res = col.query(query_texts=[query], n_results=2, where={"source": {"$ne": "learned"}})
+            l_res = col.query(query_texts=[query], n_results=2, where={"source": "learned"})
+            cand = []
+            for r in (k_res, l_res):
+                if r and r.get("ids") and r["ids"][0]:
+                    for i, cid in enumerate(r["ids"][0]):
+                        cand.append((cid, float(r["distances"][0][i])))
+            cand.sort(key=lambda x: x[1])
+            top1_id, d1 = cand[0] if cand else ("-", 999.0)
+            if qtype == "relevant":
+                total_rel += 1
+                if top1_id == expected:
+                    hits += 1
+                rel_dists.append(d1)
+            else:
+                noise_dists.append(d1)
+
+        avg_query_ms = ((time.perf_counter() - q_start) / len(LABELED_MEMORIES)) * 1000.0
+
+        ex_rel, ex_noise = [], []
+        for etype, query in EXEMPLAR_QUERIES:
+            r = ex_col.query(query_texts=[query], n_results=1)
+            d = float(r["distances"][0][0])
+            (ex_rel if etype == "relevant_ex" else ex_noise).append(d)
+
+        same_dists, diff_dists = [], []
+        for idx, (ptype, t1, c1, t2, c2) in enumerate(UPSERT_PAIRS):
+            tc_kwargs: dict = {"name": f"up_{idx}", "metadata": {"hnsw:space": space}}
+            if embedding_fn is not None:
+                tc_kwargs["embedding_function"] = embedding_fn
+            tc = client.create_collection(**tc_kwargs)
+            tc.upsert(ids=["m1"], documents=[f"{t1}: {c1}"])
+            q = tc.query(query_texts=[f"{t2}: {c2}"], n_results=1)
+            d = float(q["distances"][0][0])
+            (same_dists if ptype == "same_topic" else diff_dists).append(d)
+
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        return {
+            "label": label,
+            "space": space,
+            "seed_sec": seed_sec,
+            "avg_query_ms": avg_query_ms,
+            "peak_ram_mb": peak_bytes / (1024 * 1024),
+            "hits": f"{hits}/{total_rel}",
+            "rel_max": max(rel_dists),
+            "noise_min": min(noise_dists),
+            "mem_gap": min(noise_dists) - max(rel_dists),
+            "ex_rel_max": max(ex_rel),
+            "ex_noise_min": min(ex_noise),
+            "ex_gap": min(ex_noise) - max(ex_rel),
+            "upsert_same_max": max(same_dists),
+            "upsert_diff_min": min(diff_dists),
+            "upsert_gap": min(diff_dists) - max(same_dists),
+        }
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
+    if "--compare-multilingual" in sys.argv:
+        print("Running Phase 3 Embedding Spike Comparison...\n")
+        base_stats = run_benchmark("all-MiniLM-L6-v2 (Default ONNX)", embedding_fn=None, space="l2")
+        t_load0 = time.perf_counter()
+        multi_ef = _build_multilingual_ef()
+        load_sec = time.perf_counter() - t_load0
+        multi_stats = run_benchmark("paraphrase-multilingual-MiniLM-L12-v2 (Torch)", embedding_fn=multi_ef, space="cosine")
+        multi_stats["seed_sec"] += load_sec
+
+        print("| Metric | all-MiniLM-L6-v2 (ONNX, L2) | paraphrase-multilingual-MiniLM-L12-v2 (Torch, Cosine) |")
+        print("|---|---|---|")
+        for k, title in [
+            ("hits", "Top-1 Hit Rate (PT-BR)"),
+            ("seed_sec", "Boot + Model Load + Seed (s)"),
+            ("avg_query_ms", "Avg Query Latency (ms)"),
+            ("peak_ram_mb", "Python Traced Peak RAM (MB)"),
+            ("rel_max", "Memory Relevant Max Dist"),
+            ("noise_min", "Memory Noise Min Dist"),
+            ("mem_gap", "Memory Separation Margin (NoiseMin - RelMax)"),
+            ("ex_rel_max", "Exemplar Relevant Max Dist"),
+            ("ex_noise_min", "Exemplar Noise Min Dist"),
+            ("ex_gap", "Exemplar Separation Margin"),
+            ("upsert_same_max", "Upsert Same-Topic Max Dist"),
+            ("upsert_diff_min", "Upsert Diff-Topic Min Dist"),
+            ("upsert_gap", "Upsert Separation Margin"),
+        ]:
+            v1 = base_stats[k]
+            v2 = multi_stats[k]
+            f1 = f"{v1:.4f}" if isinstance(v1, float) else str(v1)
+            f2 = f"{v2:.4f}" if isinstance(v2, float) else str(v2)
+            print(f"| {title} | {f1} | {f2} |")
+        return
+
     with tempfile.TemporaryDirectory(prefix="amadeus_measure_", ignore_cleanup_errors=True) as tmp_dir:
         os.environ["AMADEUS_DATA_DIR"] = tmp_dir
 
@@ -99,7 +290,7 @@ def main() -> None:
 
         for qtype, query, expected in LABELED_MEMORIES:
             exp_id = learned_map.get(expected, expected)
-            res = store.search_memories(query, n_results=2)
+            res = store.search_memories(query, max_distance=999.0, n_results=2)
             top1 = res[0] if res else {"id": "-", "distance": 999.0}
             top2 = res[1] if len(res) > 1 else {"id": "-", "distance": 999.0}
             hit = "YES" if (exp_id and top1["id"] == exp_id) else ("-" if exp_id is None else f"NO (got {top1['id']})")

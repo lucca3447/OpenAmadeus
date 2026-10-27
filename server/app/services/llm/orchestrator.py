@@ -14,9 +14,115 @@ from app.services.llm.openrouter import get_openrouter_candidate_models
 
 _model_cache: Dict[str, str] = {}
 
+SUMMARY_INTERVAL = 10
+
+
 class LLMOrchestrator:
     def __init__(self):
         self.model_cache = _model_cache
+
+    def _resolve_history_turns(self, session_id: str, client_history: List[Any]) -> List[Dict[str, str]]:
+        """
+        Reads prior conversation turns from SQLite (single source of truth on backend),
+        falling back to client-supplied history only when the session has no prior DB messages.
+        """
+        db_msgs = memory_store.get_session_messages(session_id)
+        if db_msgs:
+            return [
+                {
+                    "role": "user" if m.get("sender") == "user" else "assistant",
+                    "content": m.get("content", ""),
+                }
+                for m in db_msgs[-MAX_HISTORY_MESSAGES:]
+            ]
+        return [
+            {
+                "role": "user" if t.role == "user" else "assistant",
+                "content": t.content,
+            }
+            for t in (client_history or [])[-MAX_HISTORY_MESSAGES:]
+        ]
+
+    async def _maybe_update_context_summary(
+        self,
+        session_id: str,
+        api_key: str,
+        is_groq: bool,
+        is_openrouter: bool,
+        active_model: str,
+    ) -> None:
+        """
+        Updates sessions.context_summary every SUMMARY_INTERVAL messages with a concise
+        rolling summary. Silent fallback preserves the previous summary on any error.
+        """
+        try:
+            all_msgs = memory_store.get_session_messages(session_id)
+            if len(all_msgs) < SUMMARY_INTERVAL or len(all_msgs) % SUMMARY_INTERVAL != 0:
+                return
+
+            prev_summary = memory_store.get_session_context_summary(session_id)
+            recent_slice = all_msgs[-SUMMARY_INTERVAL:]
+            transcript = "\n".join(
+                f"{'Operador' if m.get('sender') == 'user' else 'Kurisu'}: {m.get('content', '')}"
+                for m in recent_slice
+            )
+            prompt = (
+                "Resuma de forma factual e concisa em português (máximo 3 frases, sem tags HTML) "
+                "os principais tópicos, fatos sobre o operador e estado da conversa até agora.\n"
+                + (f"Resumo anterior: {prev_summary}\n" if prev_summary else "")
+                + f"Trecho recente:\n{transcript}"
+            )
+
+            summary_text = ""
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                if is_groq:
+                    model_id = self.model_cache.get(api_key[-8:]) or (await get_groq_candidate_models(client, api_key))[0]
+                    res = await client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.3,
+                            "max_tokens": 220,
+                        },
+                    )
+                    if res.status_code == 200:
+                        summary_text = ((res.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                elif is_openrouter:
+                    model_id = get_openrouter_candidate_models()[0]
+                    res = await client.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.3,
+                            "max_tokens": 220,
+                        },
+                    )
+                    if res.status_code == 200:
+                        summary_text = ((res.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                else:
+                    model_id = active_model or (await get_candidate_models(client, api_key, self.model_cache))[0]
+                    data = await gemini_request(
+                        client,
+                        "POST",
+                        f"models/{model_id}:generateContent",
+                        api_key,
+                        {
+                            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 220},
+                        },
+                    )
+                    parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
+                    summary_text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+
+            clean_summary = strip_thinking_tags(summary_text)
+            if clean_summary:
+                memory_store.update_session_context_summary(session_id, clean_summary)
+        except Exception as e:
+            print(f"[Amadeus Core] Rolling context summary skipped (preserving previous): {e}")
 
     async def handle_chat(self, req: ChatRequest) -> ChatResponse:
         persona = load_persona(req.personaId or "kurisu")
@@ -25,6 +131,10 @@ class LLMOrchestrator:
         session_id = req.sessionId
         if not session_id:
             session_id = memory_store.create_session()
+
+        # Read prior session history and rolling summary from SQLite before appending current turn
+        history_turns = self._resolve_history_turns(session_id, req.history)
+        context_summary = memory_store.get_session_context_summary(session_id)
 
         # 1. Semantic Memory Retrieval using ChromaDB
         semantic_matches = memory_store.search_memories(req.message, max_kurisu=2, max_learned=2)
@@ -51,9 +161,8 @@ class LLMOrchestrator:
                     emotional_weight=learned.emotionalWeight or "Factual",
                     source="learned"
                 )
-
-            if learned:
                 learned.id = saved["id"]
+
             memory_store.save_message(session_id, sender="amadeus", content=clean_text, emotion=emotion, recalled=recalled_ids)
             return ChatResponse(
                 response=clean_text,
@@ -71,6 +180,9 @@ class LLMOrchestrator:
         user_memories = [m for m in semantic_matches if m.get("source") == "learned"]
 
         memory_ctx_blocks = []
+        if context_summary:
+            memory_ctx_blocks.append(f"[RESUMO DO CONTEXTO ANTERIOR DESTA CONVERSA]:\n{context_summary}")
+
         if kurisu_memories:
             block = "[MEMÓRIAS DIGITALIZADAS DE MAKISE KURISU RESGATADAS PELO CÓRTEX]:\n" + "\n".join(
                 [f"- {m['title']}: {m['content']} (Sentimento: {m.get('emotionalWeight', 'Factual')})" for m in kurisu_memories]
@@ -103,13 +215,14 @@ class LLMOrchestrator:
         try:
             raw_reply = ""
             used_model = ""
+            selected_gemini_model = ""
 
             # --- A. Groq Branch (Ultra-fast LPU) ---
             if is_groq:
                 messages = [{"role": "system", "content": system_prompt}]
-                for turn in req.history[-MAX_HISTORY_MESSAGES:]:
-                    role = "user" if turn.role == "user" else "assistant"
-                    clean_content = sanitize_repetitive_openers(turn.content) if role == "assistant" else turn.content
+                for turn in history_turns:
+                    role = "user" if turn["role"] == "user" else "assistant"
+                    clean_content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
                     messages.append({
                         "role": role,
                         "content": clean_content
@@ -180,9 +293,9 @@ class LLMOrchestrator:
             # --- B. OpenRouter Branch ---
             elif is_openrouter:
                 messages = [{"role": "system", "content": system_prompt}]
-                for turn in req.history[-MAX_HISTORY_MESSAGES:]:
-                    role = "user" if turn.role == "user" else "assistant"
-                    clean_content = sanitize_repetitive_openers(turn.content) if role == "assistant" else turn.content
+                for turn in history_turns:
+                    role = "user" if turn["role"] == "user" else "assistant"
+                    clean_content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
                     messages.append({
                         "role": role,
                         "content": clean_content
@@ -250,9 +363,9 @@ class LLMOrchestrator:
             # --- C. Google Gemini Branch ---
             else:
                 contents: List[Dict[str, Any]] = []
-                for turn in req.history[-MAX_HISTORY_MESSAGES:]:
-                    role = "model" if turn.role in ("model", "assistant") else "user"
-                    turn_text = sanitize_repetitive_openers(turn.content) if role == "model" else turn.content
+                for turn in history_turns:
+                    role = "model" if turn["role"] in ("model", "assistant") else "user"
+                    turn_text = sanitize_repetitive_openers(turn["content"]) if role == "model" else turn["content"]
                     if contents and contents[-1]["role"] == role:
                         contents[-1]["parts"][0]["text"] += "\n" + turn_text
                     else:
@@ -299,6 +412,7 @@ class LLMOrchestrator:
                     parts = (candidate.get("content") or {}).get("parts") or []
                     raw_reply = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
                     used_model = selected_model
+                    selected_gemini_model = selected_model
 
             # Parse tags with user message context for action intent mapping
             clean_text, emotion, learned = parse_tags(raw_reply, user_message=req.message)
@@ -314,11 +428,13 @@ class LLMOrchestrator:
                     emotional_weight=learned.emotionalWeight or "Factual",
                     source="learned"
                 )
+                learned.id = saved["id"]
 
             # Save assistant message to SQLite
-            if learned:
-                learned.id = saved["id"]
             memory_store.save_message(session_id, sender="amadeus", content=clean_text, emotion=emotion, recalled=recalled_ids)
+
+            # Phase 5: Update rolling session context summary every SUMMARY_INTERVAL messages
+            await self._maybe_update_context_summary(session_id, api_key, is_groq, is_openrouter, selected_gemini_model)
 
             return ChatResponse(
                 response=clean_text,
