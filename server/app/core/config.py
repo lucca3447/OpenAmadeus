@@ -7,7 +7,7 @@ CORE_DIR = Path(__file__).resolve().parent
 APP_DIR = CORE_DIR.parent
 SERVER_DIR = APP_DIR.parent
 
-DATA_DIR = SERVER_DIR / "data"
+DATA_DIR = Path(os.environ.get("AMADEUS_DATA_DIR", str(SERVER_DIR / "data")))
 PERSONAS_DIR = SERVER_DIR / "personas"
 WEIGHTS_DIR = SERVER_DIR / "weights"
 TRAINING_DIR = SERVER_DIR / "training"
@@ -15,6 +15,11 @@ TRAINING_DIR = SERVER_DIR / "training"
 # Runtime Database Paths
 SQLITE_PATH = DATA_DIR / "amadeus.db"
 CHROMA_DIR = DATA_DIR / "memory_db"
+
+# Vector Retrieval Distance Thresholds (L2 squared in Chroma default space; lower = closer)
+MEMORY_MAX_DISTANCE: float = 1.00
+EXEMPLAR_MAX_DISTANCE: float = 0.65
+UPSERT_MAX_DISTANCE: float = 0.75
 
 # Ensure runtime directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)

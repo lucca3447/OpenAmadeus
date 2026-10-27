@@ -18,6 +18,11 @@ def create_memory(req: AddMemoryRequest):
         source=req.source or "custom"
     )
 
+@router.delete("/memories")
+def clear_learned_memories():
+    count = memory_store.clear_learned_memories()
+    return {"ok": True, "deletedCount": count}
+
 @router.delete("/memories/{memory_id}")
 def delete_memory(memory_id: str):
     memory_store.delete_memory(memory_id)

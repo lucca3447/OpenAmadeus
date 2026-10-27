@@ -58,28 +58,32 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
       .map((k) => k.trim())
       .filter(Boolean);
 
+    let savedOnBackend = false;
     if (backendAvailable) {
       try {
-        await BackendService.addMemory({
+        const created = await BackendService.addMemory({
           title: newTitle.trim(),
           category: newCategory,
           content: newContent.trim(),
           emotionalWeight: newEmotion.trim() || 'Factual / Neutro',
           source: 'custom',
         });
+        savedOnBackend = Boolean(created);
       } catch (err) {
         console.warn('Backend add failed, saving to LocalStorage:', err);
       }
     }
 
-    MemoryService.addMemory(persona.id, {
-      title: newTitle.trim(),
-      category: newCategory,
-      triggerKeywords: keywords,
-      content: newContent.trim(),
-      emotionalWeight: newEmotion.trim() || 'Neutro / Factual',
-      source: 'custom',
-    });
+    if (!savedOnBackend) {
+      MemoryService.addMemory(persona.id, {
+        title: newTitle.trim(),
+        category: newCategory,
+        triggerKeywords: keywords,
+        content: newContent.trim(),
+        emotionalWeight: newEmotion.trim() || 'Neutro / Factual',
+        source: 'custom',
+      });
+    }
 
     setNewTitle('');
     setNewKeywords('');
@@ -91,25 +95,31 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
 
   const handleDeleteMemory = async (memoryId: string) => {
     if (backendAvailable) {
-      try {
-        await BackendService.deleteMemory(memoryId);
-      } catch (err) {
-        console.error(err);
+      const ok = await BackendService.deleteMemory(memoryId);
+      if (!ok) {
+        MemoryService.deleteMemory(persona.id, memoryId);
       }
+    } else {
+      MemoryService.deleteMemory(persona.id, memoryId);
     }
-    MemoryService.deleteMemory(persona.id, memoryId);
     onMemoryAdded?.();
   };
 
-  const handleClearLearned = () => {
+  const handleClearLearned = async () => {
     if (confirm('Deseja realmente limpar todas as memórias aprendidas durante suas conversas? As memórias canônicas de Steins;Gate serão mantidas.')) {
-      MemoryService.clearLearnedMemories(persona.id);
+      if (backendAvailable) {
+        await BackendService.clearLearnedMemories();
+      } else {
+        MemoryService.clearLearnedMemories(persona.id);
+      }
       onMemoryAdded?.();
     }
   };
 
   const handleExportJSON = () => {
-    const json = MemoryService.exportMemoriesJSON(persona.id);
+    const json = backendAvailable
+      ? JSON.stringify(persona.memories, null, 2)
+      : MemoryService.exportMemoriesJSON(persona.id);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -124,9 +134,32 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const content = event.target?.result as string;
-      if (content) {
+      if (!content) return;
+
+      if (backendAvailable) {
+        try {
+          const parsed: MemoryItem[] = JSON.parse(content);
+          if (!Array.isArray(parsed)) throw new Error('Invalid JSON');
+          const nonCanonical = parsed.filter((m) => m.source !== 'canonical' && m.title && m.content);
+          let count = 0;
+          for (const item of nonCanonical) {
+            const created = await BackendService.addMemory({
+              title: item.title,
+              category: item.category || 'anecdote',
+              content: item.content,
+              emotionalWeight: item.emotionalWeight || 'Factual',
+              source: item.source === 'learned' ? 'learned' : 'custom',
+            });
+            if (created) count++;
+          }
+          alert(`${count} memórias importadas com sucesso para o Córtex!`);
+          onMemoryAdded?.();
+        } catch {
+          alert('Erro ao importar arquivo. Certifique-se de que é um JSON válido de memórias do Amadeus.');
+        }
+      } else {
         const res = MemoryService.importMemoriesJSON(persona.id, content);
         if (res.success) {
           alert(`${res.count} memórias importadas com sucesso para o Córtex!`);

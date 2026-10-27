@@ -185,6 +185,7 @@ export type AIStatus =
   | { kind: 'error'; message: string };
 
 export interface LearnedMemoryInfo {
+  id?: string;
   title: string;
   content: string;
   emotionalWeight?: string;
@@ -195,6 +196,7 @@ export interface AIResult {
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
+  recalledMemories?: string[];
   status: AIStatus;
   /** true when the response is an error report, not something Amadeus "said" */
   isError: boolean;
@@ -694,6 +696,7 @@ export class AIService {
           emotion: backendRes.emotion,
           pose: backendRes.pose,
           camera: backendRes.camera,
+          recalledMemories: backendRes.recalledMemories || [],
           status: { kind: 'online', model: backendRes.model || 'ChromaDB + SQLite (Python)' },
           isError: Boolean(backendRes.error),
           learnedMemory: backendRes.learnedMemory,
@@ -819,6 +822,7 @@ export class AIService {
     emotion: Emotion;
     pose?: CharacterPose;
   camera?: CameraFraming;
+  recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -945,6 +949,7 @@ export class AIService {
     emotion: Emotion;
     pose?: CharacterPose;
   camera?: CameraFraming;
+  recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -1101,6 +1106,7 @@ export class AIService {
     emotion: Emotion;
     pose?: CharacterPose;
   camera?: CameraFraming;
+  recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
@@ -1271,6 +1277,7 @@ export class AIService {
     emotion: Emotion;
     pose?: CharacterPose;
   camera?: CameraFraming;
+  recalledMemories?: string[];
     learnedMemory?: LearnedMemoryInfo;
   } {
     let emotion: Emotion = 'neutral';
