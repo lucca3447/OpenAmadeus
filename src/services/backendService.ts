@@ -23,6 +23,7 @@ export interface BackendChatResponse {
   sessionId?: string;
   model?: string;
   learnedMemory?: {
+    id?: string;
     title: string;
     content: string;
     emotionalWeight?: string;
@@ -115,7 +116,11 @@ export class BackendService {
   static async getMemories(): Promise<MemoryItem[]> {
     const res = await fetch(`${BACKEND_URL}/api/memories`);
     if (!res.ok) throw new Error('Falha ao buscar memórias do servidor');
-    return res.json();
+    const data = await res.json();
+    return (Array.isArray(data) ? data : []).map((m: any) => ({
+      ...m,
+      triggerKeywords: Array.isArray(m.triggerKeywords) ? m.triggerKeywords : [],
+    }));
   }
 
   /**
@@ -142,6 +147,16 @@ export class BackendService {
    */
   static async deleteMemory(memoryId: string): Promise<boolean> {
     const res = await fetch(`${BACKEND_URL}/api/memories/${encodeURIComponent(memoryId)}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  }
+
+  /**
+   * Clears all learned memories from ChromaDB + SQLite
+   */
+  static async clearLearnedMemories(): Promise<boolean> {
+    const res = await fetch(`${BACKEND_URL}/api/memories`, {
       method: 'DELETE',
     });
     return res.ok;
@@ -267,4 +282,3 @@ export class BackendService {
     return null;
   }
 }
-

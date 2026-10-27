@@ -157,12 +157,37 @@ export const App: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
 
+  // Sync memories from Python backend when online, fallback to LocalStorage when offline
+  const refreshPersonaMemories = async () => {
+    const health = await BackendService.checkHealth();
+    setBackendHealth(health);
+    if (health) {
+      const remoteMemories = await BackendService.getMemories();
+      if (remoteMemories.length > 0) {
+        const localCanonical = new Map(
+          MemoryService.getPersona('kurisu').memories.map((m) => [m.id, m.triggerKeywords])
+        );
+        const hydrated = remoteMemories.map((m) => ({
+          ...m,
+          triggerKeywords:
+            m.triggerKeywords && m.triggerKeywords.length > 0
+              ? m.triggerKeywords
+              : localCanonical.get(m.id) || [],
+        }));
+        setPersona((prev) => ({ ...prev, memories: hydrated }));
+        return;
+      }
+    }
+    setPersona(MemoryService.getPersona('kurisu'));
+  };
+
   // Check Python backend health on mount & preload baseline sprites early
   useEffect(() => {
     preloadPrimarySprites('closeup');
     BackendService.checkHealth().then((health) => {
       setBackendHealth(health);
       if (health) {
+        refreshPersonaMemories();
         // Hydrate and merge sessions from backend SQLite with LocalStorage
         BackendService.listSessions().then((remoteSessions) => {
           if (remoteSessions && remoteSessions.length > 0) {
@@ -303,10 +328,8 @@ export const App: React.FC = () => {
   const handleSendMessage = async (text: string) => {
     if (!text.trim() || isProcessing) return;
 
-    // 1. Retrieve active memories from cognitive cortex (Local RAG)
+    // 1. Local fallback RAG matching (used when Python backend is offline)
     const matched = MemoryService.matchMemories(text, persona);
-    setRecalledMemoryIds(matched.map((m: MemoryItem) => m.id));
-    if (matched.length > 0) setMemoryPulse((p) => p + 1);
 
     SpeechService.stopSpeaking();
     setIsSpeaking(false);
@@ -331,6 +354,10 @@ export const App: React.FC = () => {
     try {
       // 2. Query Amadeus (via Python backend with ChromaDB if available, or direct browser-side)
       const result = await AIService.queryAmadeus(text, persona, matched, apiKey, nextHistory, sessionId, currentModel);
+
+      const finalRecalledIds = result.recalledMemories ?? matched.map((m: MemoryItem) => m.id);
+      setRecalledMemoryIds(finalRecalledIds);
+      if (finalRecalledIds.length > 0) setMemoryPulse((p) => p + 1);
 
       setAiStatus(result.status);
       setCurrentSubtitle(result.response);
@@ -361,16 +388,22 @@ export const App: React.FC = () => {
 
       // Check if memory was learned
       if (result.learnedMemory) {
-        MemoryService.addMemory(persona.id, {
-          category: 'user',
-          title: result.learnedMemory.title,
-          triggerKeywords: [result.learnedMemory.title.toLowerCase()],
-          content: result.learnedMemory.content,
-          emotionalWeight: result.learnedMemory.emotionalWeight || 'Factual',
-          source: 'learned',
-        });
+        if (result.learnedMemory.id) {
+          // Saved directly in Python backend (ChromaDB + SQLite)
+          await refreshPersonaMemories();
+        } else {
+          // Offline / browser-only fallback
+          MemoryService.addMemory(persona.id, {
+            category: 'user',
+            title: result.learnedMemory.title,
+            triggerKeywords: [result.learnedMemory.title.toLowerCase()],
+            content: result.learnedMemory.content,
+            emotionalWeight: result.learnedMemory.emotionalWeight || 'Factual',
+            source: 'learned',
+          });
+          setPersona(MemoryService.getPersona(persona.id));
+        }
         setLearnedNotification(`Nova memória gravada: "${result.learnedMemory.title}"`);
-        setPersona(MemoryService.getPersona(persona.id));
       }
 
       const aiMessage: ChatMessage = {
@@ -380,7 +413,7 @@ export const App: React.FC = () => {
         timestamp: Date.now(),
         emotion: result.emotion,
         pose: result.pose,
-        recalledMemories: matched.map((m: MemoryItem) => m.id),
+        recalledMemories: finalRecalledIds,
       };
 
       const updatedHistory = [...nextHistory, aiMessage];
@@ -748,7 +781,7 @@ export const App: React.FC = () => {
             onClose={() => setIsMemoryModalOpen(false)}
             persona={persona}
             recalledMemoryIds={recalledMemoryIds}
-            onMemoryAdded={() => setPersona(MemoryService.getPersona(persona.id))}
+            onMemoryAdded={refreshPersonaMemories}
           />
         )}
 
