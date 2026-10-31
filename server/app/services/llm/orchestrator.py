@@ -177,7 +177,7 @@ class LLMOrchestrator:
 
         # 2. Build Memory Context for LLM
         kurisu_memories = [m for m in semantic_matches if m.get("source") != "learned"]
-        user_memories = [m for m in semantic_matches if m.get("source") == "learned"]
+        user_memories = memory_store.get_learned_context(req.message)
 
         memory_ctx_blocks = []
         if context_summary:

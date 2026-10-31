@@ -215,6 +215,36 @@ class TestMemoryRAG(unittest.TestCase):
         self.store.update_session_context_summary(sess_id, "Operador apresentou-se como João e iniciou conversa no laboratório.")
         self.assertIn("João", self.store.get_session_context_summary(sess_id))
 
+    def test_10_get_learned_context_cross_session_recall(self):
+        self.store.clear_learned_memories()
+        sb = self.store.add_memory(
+            category="user",
+            title="Localização",
+            content="Santa Bárbara, Bahia",
+            emotional_weight="Curiosidade",
+            source="learned",
+        )
+        # Even when query is 1st-person ("onde eu moro?") with distance > 1.00,
+        # get_learned_context returns the operator profile without duplicates.
+        ctx = self.store.get_learned_context("onde eu moro?", limit=8)
+        ids = [m["id"] for m in ctx]
+        self.assertIn(sb["id"], ids)
+        self.assertEqual(len(ids), len(set(ids)))
+
+        # Verify limit cap when distinct unrelated learned facts are added afterwards
+        for title, content in [
+            ("Animal de Estimação", "Tem um gato preto chamado Schrödinger."),
+            ("Instrumento Musical", "Toca violão clássico desde criança."),
+            ("Gastronomia", "Adora comer lámen apimentado no jantar."),
+            ("Esporte", "Pratica natação todas as manhãs de sábado."),
+        ]:
+            self.store.add_memory("user", title, content, "Factual", "learned")
+
+        capped = self.store.get_learned_context("onde eu moro?", limit=3)
+        self.assertEqual(len(capped), 3)
+        self.assertNotIn(sb["id"], [m["id"] for m in capped])
+        self.store.clear_learned_memories()
+
 
 if __name__ == "__main__":
     unittest.main()

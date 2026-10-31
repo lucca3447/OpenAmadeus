@@ -313,6 +313,38 @@ class MemoryStore:
         combined.sort(key=lambda m: m["distance"])
         return combined
 
+    def get_learned_context(self, query: str, limit: int = 12) -> List[Dict[str, Any]]:
+        """
+        Operator profile: returns up to `limit` most recent learned facts from SQLite
+        plus any semantic learned matches within MEMORY_MAX_DISTANCE, deduplicated.
+        """
+        # shortcut: recência pura até limit=12 + top-2 semântico; revisar se passar de ~50 fatos aprendidos.
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, category, title, content, emotional_weight FROM memories "
+                "WHERE source = 'learned' ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        recent = [
+            {
+                "id": r["id"],
+                "title": _sanitize_field(r["title"], 80),
+                "content": _sanitize_field(r["content"], 280),
+                "emotionalWeight": _sanitize_field(r["emotional_weight"], 80) or "Factual",
+                "source": "learned",
+            }
+            for r in rows
+            if r["title"] and r["content"]
+        ]
+        seen = {m["id"] for m in recent}
+        extra = [
+            m
+            for m in self._query_memory_group(query, {"source": "learned"}, 2, MEMORY_MAX_DISTANCE)
+            if m["id"] not in seen
+        ]
+        return recent + extra
+
     def add_memory(self, category: str, title: str, content: str, emotional_weight: str = "Factual", source: str = "learned") -> Dict[str, Any]:
         """
         Adds or updates (semantic upsert for source='learned') a memory in both SQLite and ChromaDB.

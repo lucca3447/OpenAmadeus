@@ -788,9 +788,11 @@ export class AIService {
     }
   }
 
-  private static formatMemoryContext(recalledMemories: MemoryItem[]): string {
+  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile): string {
     const kurisuMemories = recalledMemories.filter((m) => m.source !== 'learned');
-    const userMemories = recalledMemories.filter((m) => m.source === 'learned');
+    const recentLearned = (persona?.memories || []).filter((m) => m.source === 'learned').slice(-12);
+    const seen = new Set(recentLearned.map((m) => m.id));
+    const userMemories = [...recentLearned, ...recalledMemories.filter((m) => m.source === 'learned' && !seen.has(m.id))];
 
     const blocks: string[] = [];
 
@@ -829,7 +831,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
@@ -956,7 +958,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
@@ -1113,7 +1115,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
 
     const body = {
       contents: this.buildContents(history, userMessage),
