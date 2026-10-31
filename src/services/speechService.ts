@@ -89,9 +89,6 @@ export function normalizeForSpeech(rawText: string): string {
   return text;
 }
 
-const WHISPER_PROMPT_BIAS =
-  'Makise Kurisu, Okabe Rintaro, Amadeus, Steins;Gate, Viktor Chondria, Daru, Mayuri, SERN, IBN 5100, Nullpo, Gero Froggy, ChromaDB, Qwen3, Python, TypeScript, GitHub';
-
 const WHISPER_HALLUCINATION_RE =
   /^(?:obrigad[oa](?:\s+por\s+assistir)?|legendas?\s+pela\s+comunidade.*|inscreva-se(?:\s+no\s+canal)?|amara\.org.*|subtitles\s+by.*|thank\s+you\s+for\s+watching.*|you|\.+|,|\?+|!+|\s*)$/i;
 
@@ -395,7 +392,6 @@ export class SpeechService {
       formData.append('model', 'whisper-large-v3-turbo');
       formData.append('language', 'pt');
       formData.append('temperature', '0');
-      formData.append('prompt', WHISPER_PROMPT_BIAS);
 
       const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',
@@ -501,6 +497,19 @@ export class SpeechService {
               this.recognition?.stop();
             } catch {}
           }
+        } else if (
+          !this.hasVocalActivity &&
+          this.usingGroqRecorder &&
+          this.micMode === 'hands_free' &&
+          this.mediaRecorder?.state === 'recording' &&
+          rms < onsetThreshold * 0.8 &&
+          now - this.recordCycleStart > 2200
+        ) {
+          // Trim dead pre-speech silence in quiet room so Whisper never receives long silent blobs
+          this.shouldTranscribeOnStop = false;
+          try {
+            this.mediaRecorder.stop();
+          } catch {}
         }
       }
 

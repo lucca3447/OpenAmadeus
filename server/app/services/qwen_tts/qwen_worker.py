@@ -33,6 +33,23 @@ RAMP_LEN = 120  # 5 ms @ 24 kHz for C0 amplitude continuity across chunk seams
 ramp_weights = np.linspace(1.0, 0.0, RAMP_LEN, dtype=np.float32)
 
 
+def _iter_stream_safe(stream_gen):
+    """Steps a Torch streaming generator with thread-local inference_mode/no_grad scoped per step (never across yield)."""
+    try:
+        while True:
+            with torch.no_grad(), torch.inference_mode():
+                item = next(stream_gen)
+            yield item
+    except StopIteration:
+        return
+    finally:
+        try:
+            with torch.no_grad(), torch.inference_mode():
+                stream_gen.close()
+        except Exception:
+            pass
+
+
 def apply_boundary_continuity(chunk: np.ndarray, prev_sample: Optional[float]) -> np.ndarray:
     """
     Applies a smooth C0 continuity ramp to the first 120 samples of the current chunk
@@ -193,12 +210,14 @@ def _load_model_worker():
             # Mandatory: Full Warm-up of Mimi Audio Decoder (eliminates cold 2.1s delay on 1st call)
             print("[Qwen3 Worker] Priming Mimi audio decoder with disposable initial utterance...")
             try:
-                for _ in loaded_model.generate_custom_voice_streaming(
-                    text="Oi.",
-                    speaker="kurisu",
-                    language="Portuguese",
-                    instruct=None,
-                    chunk_size=8,
+                for _ in _iter_stream_safe(
+                    loaded_model.generate_custom_voice_streaming(
+                        text="Oi.",
+                        speaker="kurisu",
+                        language="Portuguese",
+                        instruct=None,
+                        chunk_size=8,
+                    )
                 ):
                     break
                 print("[Qwen3 Worker] Mimi audio decoder primed and warm! First call will achieve sub-400ms TTFA.")
@@ -322,7 +341,7 @@ def synthesize_stream(req: SynthesizeRequest):
                         repetition_penalty=eff_rep,
                         max_new_tokens=eff_max_tokens,
                     )
-                    for audio_chunk, sr, _ in stream_gen:
+                    for audio_chunk, sr, _ in _iter_stream_safe(stream_gen):
                         chunk = audio_chunk.copy()
                         chunk = apply_boundary_continuity(chunk, prev_sample)
                         prev_sample = float(chunk[-1])
