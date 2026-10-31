@@ -130,6 +130,9 @@ export class SpeechService {
   private static recordedChunks: Blob[] = [];
   private static vadAnimFrame: number | null = null;
   private static hasVocalActivity = false;
+  private static shouldTranscribeOnStop = false;
+  private static isHoldingPtt = false;
+  private static pendingWebSpeechInterim = '';
   private static lastVoiceTime = 0;
   private static voiceStartTime = 0;
   private static recordCycleStart = 0;
@@ -250,13 +253,15 @@ export class SpeechService {
           }
 
           if (interim.trim()) {
-            this.onInterimCb?.(interim.trim());
-            if (this.micMode === 'hands_free' && this.isSpeakingAudio && interim.trim().length > 2) {
+            this.pendingWebSpeechInterim = interim.trim();
+            this.onInterimCb?.(this.pendingWebSpeechInterim);
+            if (this.micMode === 'hands_free' && this.isSpeakingAudio && this.pendingWebSpeechInterim.length > 2) {
               this.stopSpeaking();
             }
           }
 
           if (finalTranscript.trim()) {
+            this.pendingWebSpeechInterim = '';
             this.onInterimCb?.('');
             const cleaned = normalizeTranscriptLore(finalTranscript);
             if (cleaned) {
@@ -343,6 +348,7 @@ export class SpeechService {
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       this.recordedChunks = [];
       this.hasVocalActivity = false;
+      this.shouldTranscribeOnStop = false;
       this.recordCycleStart = Date.now();
 
       recorder.ondataavailable = (e) => {
@@ -353,11 +359,12 @@ export class SpeechService {
 
       recorder.onstop = () => {
         const chunks = this.recordedChunks;
-        const hadVoice = this.hasVocalActivity;
+        const shouldSend = this.shouldTranscribeOnStop;
         const durationMs = Date.now() - this.recordCycleStart;
         this.recordedChunks = [];
+        this.shouldTranscribeOnStop = false;
 
-        if (hadVoice && chunks.length > 0 && durationMs >= 260) {
+        if (shouldSend && chunks.length > 0 && durationMs >= 220) {
           const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
           this.transcribeWithGroq(blob);
         }
@@ -380,7 +387,7 @@ export class SpeechService {
     const key = this.getEffectiveGroqKey();
     if (!key) return;
 
-    this.onInterimCb?.('Transcrevendo fala (Whisper Turbo)...');
+    this.onInterimCb?.('⏳ Transcrevendo fala (Whisper Turbo)...');
     try {
       const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm';
       const formData = new FormData();
@@ -398,6 +405,12 @@ export class SpeechService {
 
       this.onInterimCb?.('');
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          this.groqApiKey = '';
+          try {
+            localStorage.removeItem('amadeus_groq_stt_key');
+          } catch {}
+        }
         throw new Error(`Groq Whisper HTTP ${res.status}`);
       }
 
@@ -406,17 +419,19 @@ export class SpeechService {
       if (cleaned) {
         this.onResultCb?.(cleaned);
       }
-    } catch (err) {
+    } catch (err: any) {
       this.onInterimCb?.('');
       console.warn('[SpeechService] Groq Whisper STT failed:', err);
+      this.onErrorCb?.(`Falha na transcrição de voz (${err?.message || 'erro de rede'}).`);
     }
   }
 
   private static startVadLoop(): void {
     if (this.vadAnimFrame) cancelAnimationFrame(this.vadAnimFrame);
-    const dataArray = new Uint8Array(this.micAnalyser?.frequencyBinCount || 128);
+    const timeData = new Uint8Array(this.micAnalyser?.fftSize || 256);
     this.voiceStartTime = 0;
     this.lastVoiceTime = 0;
+    let noiseFloor = 0.012;
 
     const checkVad = () => {
       if (!this.isListening || !this.micAnalyser) {
@@ -424,27 +439,41 @@ export class SpeechService {
         return;
       }
 
-      this.micAnalyser.getByteFrequencyData(dataArray);
-      let sum = 0;
-      const maxBins = Math.min(dataArray.length, 48);
-      for (let i = 2; i < maxBins; i++) {
-        sum += dataArray[i];
+      // Linear time-domain RMS amplitude (immune to logarithmic dB floor inflation from AGC)
+      this.micAnalyser.getByteTimeDomainData(timeData);
+      let sumSq = 0;
+      for (let i = 0; i < timeData.length; i++) {
+        const sample = (timeData[i] - 128) / 128;
+        sumSq += sample * sample;
       }
-      const avg = sum / (maxBins - 2);
-      const normalized = Math.min(1.0, avg / 90.0);
+      const rms = Math.sqrt(sumSq / timeData.length);
 
-      // Higher threshold while Kurisu is speaking to prevent residual speaker echo false barge-ins
-      const threshold = this.isSpeakingAudio ? 0.22 : 0.11;
+      // Adapt ambient noise floor when not actively speaking
+      if (rms < noiseFloor) {
+        noiseFloor = Math.max(0.004, noiseFloor * 0.90 + rms * 0.10);
+      } else if (!this.hasVocalActivity && rms < noiseFloor * 1.7) {
+        noiseFloor = Math.min(0.045, noiseFloor * 0.98 + rms * 0.02);
+      }
+
+      const onsetThreshold = Math.max(0.020, noiseFloor * 2.1 + 0.009);
+      const sustainThreshold = Math.max(0.015, noiseFloor * 1.6 + 0.006);
+      const baseThreshold = this.hasVocalActivity ? sustainThreshold : onsetThreshold;
+      // Higher threshold while Kurisu is speaking to prevent speaker echo false barge-ins
+      const threshold = this.isSpeakingAudio ? Math.max(onsetThreshold * 2.2, 0.075) : baseThreshold;
       const now = Date.now();
 
-      if (normalized > threshold) {
+      if (rms > threshold) {
         if (!this.voiceStartTime) this.voiceStartTime = now;
         this.lastVoiceTime = now;
 
-        // Require >= 90ms of voice in PTT or >= 180ms in Hands-Free to ignore transient clicks
-        const minHoldMs = this.micMode === 'hands_free' ? 180 : 80;
+        const minHoldMs = this.isSpeakingAudio ? 180 : 85;
         if (now - this.voiceStartTime >= minHoldMs) {
-          this.hasVocalActivity = true;
+          if (!this.hasVocalActivity) {
+            this.hasVocalActivity = true;
+            if (this.usingGroqRecorder) {
+              this.onInterimCb?.('Captando sua fala...');
+            }
+          }
           if (this.micMode === 'hands_free' && this.isSpeakingAudio) {
             // Instant acoustic Barge-In: interrupt Kurisu's speech immediately
             this.stopSpeaking();
@@ -453,16 +482,23 @@ export class SpeechService {
       } else {
         this.voiceStartTime = 0;
 
-        if (this.usingGroqRecorder && this.micMode === 'hands_free' && this.mediaRecorder?.state === 'recording') {
-          if (this.hasVocalActivity && this.lastVoiceTime > 0 && now - this.lastVoiceTime > 750) {
-            // 750ms of silence after speech: commit utterance for Whisper transcription
+        if (this.hasVocalActivity && this.lastVoiceTime > 0 && now - this.lastVoiceTime > 650) {
+          // 650ms of silence after speech: reset flags synchronously and commit utterance
+          if (this.micMode === 'ptt' && !this.isHoldingPtt) {
+            this.stopListening(false);
+            return;
+          }
+          this.hasVocalActivity = false;
+          this.lastVoiceTime = 0;
+
+          if (this.usingGroqRecorder && this.micMode === 'hands_free' && this.mediaRecorder?.state === 'recording') {
+            this.shouldTranscribeOnStop = true;
             try {
               this.mediaRecorder.stop();
             } catch {}
-          } else if (!this.hasVocalActivity && now - this.recordCycleStart > 8000) {
-            // Keep rolling silence buffer fresh (< 8s) so we never upload long dead air
+          } else if (!this.usingGroqRecorder && this.micMode === 'hands_free' && this.pendingWebSpeechInterim) {
             try {
-              this.mediaRecorder.stop();
+              this.recognition?.stop();
             } catch {}
           }
         }
@@ -507,7 +543,8 @@ export class SpeechService {
 
     if (this.recognition) {
       try {
-        this.recognition.continuous = this.micMode === 'hands_free';
+        // Use single-utterance mode with auto-restart in onend so Chrome finalizes sentences immediately on pause
+        this.recognition.continuous = false;
         this.recognition.start();
         return true;
       } catch (e) {
@@ -522,6 +559,7 @@ export class SpeechService {
   static stopListening(discard = false): void {
     const wasListening = this.isListening;
     this.isListening = false;
+    this.isHoldingPtt = false;
 
     if (this.vadAnimFrame) {
       cancelAnimationFrame(this.vadAnimFrame);
@@ -529,9 +567,8 @@ export class SpeechService {
     }
 
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      if (discard) {
-        this.hasVocalActivity = false;
-      }
+      this.shouldTranscribeOnStop = !discard && (this.micMode === 'ptt' || this.hasVocalActivity);
+      this.hasVocalActivity = false;
       try {
         this.mediaRecorder.stop();
       } catch {}
@@ -568,10 +605,12 @@ export class SpeechService {
 
   static startPushToTalk(): void {
     if (this.isListening) return;
+    this.isHoldingPtt = true;
     this.startListening();
   }
 
   static stopPushToTalk(): void {
+    this.isHoldingPtt = false;
     if (!this.isListening || this.micMode !== 'ptt') return;
     this.stopListening(false);
   }

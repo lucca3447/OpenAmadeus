@@ -93,7 +93,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         <button
           type="button"
           onClick={onToggleMic}
-          disabled={disabled}
+          disabled={disabled && !isListening}
           title={
             isListening
               ? 'Microfone Ativo (Clique para enviar/pausar)'

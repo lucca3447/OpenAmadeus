@@ -160,7 +160,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
               <button
                 type="button"
                 onClick={onToggleMic}
-                disabled={disabled}
+                disabled={disabled && !isListening}
                 title={
                   isListening
                     ? 'Parar / Enviar Reconhecimento de Voz'
