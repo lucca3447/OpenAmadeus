@@ -7,13 +7,18 @@ import {
   Zap, 
   Brain, 
   Settings, 
-  PhoneOff
+  PhoneOff,
+  Headphones
 } from 'lucide-react';
+import { MicMode } from '../types/amadeus';
 
 interface ControlBarProps {
   onSendMessage: (message: string) => void;
   isListening: boolean;
   onToggleMic: () => void;
+  micMode?: MicMode;
+  onToggleMicMode?: () => void;
+  interimTranscript?: string;
   voiceEnabled: boolean;
   onToggleVoice: () => void;
   onOpenMemory: () => void;
@@ -29,6 +34,9 @@ export const ControlBar: React.FC<ControlBarProps> = ({
   onSendMessage,
   isListening,
   onToggleMic,
+  micMode = 'ptt',
+  onToggleMicMode,
+  interimTranscript = '',
   voiceEnabled,
   onToggleVoice,
   onOpenMemory,
@@ -56,7 +64,15 @@ export const ControlBar: React.FC<ControlBarProps> = ({
           type="text"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder={isListening ? 'Escutando sua voz...' : 'Digite sua mensagem para a Kurisu...'}
+          placeholder={
+            interimTranscript
+              ? `🎙️ ${interimTranscript}`
+              : isListening
+                ? micMode === 'hands_free'
+                  ? '🎙️ Hands-Free ativo (fale a qualquer momento)...'
+                  : '🎙️ Escutando sua voz (solte Espaço ou clique p/ enviar)...'
+                : 'Digite sua mensagem ou segure [Espaço] para falar...'
+          }
           disabled={disabled}
           className="w-full h-11 pl-4 pr-12 rounded-xl bg-[#12151c]/90 border border-[#262c3a] text-sm text-[#f8fafc] placeholder-[#64748b] focus:outline-none focus:border-[#f59e0b] focus:ring-1 focus:ring-[#f59e0b]/40 font-sans transition-all backdrop-blur-md"
         />
@@ -78,7 +94,13 @@ export const ControlBar: React.FC<ControlBarProps> = ({
           type="button"
           onClick={onToggleMic}
           disabled={disabled}
-          title={isListening ? 'Microfone Ativo (Clique para pausar)' : 'Ativar Microfone (Reconhecimento de Voz)'}
+          title={
+            isListening
+              ? 'Microfone Ativo (Clique para enviar/pausar)'
+              : micMode === 'hands_free'
+                ? 'Ativar Microfone Contínuo (Hands-Free + Barge-in)'
+                : 'Ativar Microfone (Push-to-Talk ou segure [Espaço])'
+          }
           className={`h-9 w-9 rounded-lg flex items-center justify-center transition-all ${
             isListening 
               ? 'bg-[#38bdf8]/20 border border-[#38bdf8] text-[#38bdf8] shadow-[0_0_12px_rgba(56,189,248,0.4)] animate-pulse' 
@@ -87,6 +109,27 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         >
           {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
         </button>
+
+        {/* PTT vs Hands-Free VAD Toggle */}
+        {onToggleMicMode && (
+          <button
+            type="button"
+            onClick={onToggleMicMode}
+            title={
+              micMode === 'hands_free'
+                ? '🎧 Modo Hands-Free Ativo (VAD + Barge-in) — Clique para alternar para Push-to-Talk ([Espaço])'
+                : '⌨️ Modo Push-to-Talk Ativo (Seguro p/ Caixas de Som, atalho [Espaço]) — Clique para alternar para Hands-Free'
+            }
+            className={`h-9 px-2 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all ${
+              micMode === 'hands_free'
+                ? 'bg-[#0c202e] border border-[#38bdf8]/60 text-[#38bdf8] shadow-[0_0_10px_rgba(56,189,248,0.3)]'
+                : 'bg-[#181c26] border border-[#262c3a] text-[#64748b] hover:text-[#cbd5e1]'
+            }`}
+          >
+            <Headphones className="w-3.5 h-3.5" />
+            <span>{micMode === 'hands_free' ? 'VAD' : 'PTT'}</span>
+          </button>
+        )}
 
                 {/* Quick Stream vs Complete WAV Toggle */}
         {isQwen && onToggleStream && (

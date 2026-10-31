@@ -75,28 +75,33 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
       }
       ctx.stroke();
 
-      // Check for real acoustic waveform from SpeechService AnalyserNode
-      const analyser = SpeechService.getAnalyser();
+      // Check for real acoustic waveform from SpeechService AnalyserNode (TTS or Mic)
+      const activeAnalyser = isActive
+        ? SpeechService.getAnalyser()
+        : isListening
+          ? SpeechService.getMicAnalyser()
+          : null;
       let hasRealAudio = false;
       let currentSpeed = 0.05;
 
-      if (isActive && analyser) {
-        const timeData = new Uint8Array(analyser.fftSize);
-        analyser.getByteTimeDomainData(timeData);
+      if (activeAnalyser) {
+        const timeData = new Uint8Array(activeAnalyser.fftSize);
+        activeAnalyser.getByteTimeDomainData(timeData);
 
         let variance = 0;
         for (let i = 0; i < timeData.length; i++) {
           variance += Math.abs(timeData[i] - 128);
         }
 
-        if (variance > 40) {
+        if (variance > 30) {
           hasRealAudio = true;
           currentSpeed = 0.14;
+          const waveColor = isActive ? '#f59e0b' : '#38bdf8';
           ctx.beginPath();
-          ctx.strokeStyle = '#f59e0b';
+          ctx.strokeStyle = waveColor;
           ctx.lineWidth = 2.5;
           ctx.shadowBlur = 14;
-          ctx.shadowColor = '#f59e0b';
+          ctx.shadowColor = waveColor;
 
           const sliceWidth = width / timeData.length;
           let currentX = 0;

@@ -117,6 +117,7 @@ export const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
+  const [interimTranscript, setInterimTranscript] = useState<string>('');
   const [micError, setMicError] = useState<string | null>(null);
   const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
 
@@ -149,6 +150,7 @@ export const App: React.FC = () => {
       neuralVoice: 'pt-BR-FranciscaNeural',
       useRvc: true,
       rvcModel: 'KurisuRVCv147',
+      micMode: 'ptt',
     };
   });
 
@@ -299,6 +301,11 @@ export const App: React.FC = () => {
   const handleToggleStream = () => {
     const next = !voiceSettings.stream;
     handleSaveVoiceSettings({ ...voiceSettings, stream: next });
+  };
+
+  const handleToggleMicMode = () => {
+    const next = (voiceSettings.micMode || 'ptt') === 'ptt' ? 'hands_free' : 'ptt';
+    handleSaveVoiceSettings({ ...voiceSettings, micMode: next });
   };
 
   const speak = (text: string, emotion?: string) => {
@@ -501,22 +508,66 @@ export const App: React.FC = () => {
     }
   };
 
-  // Speech recognition initialization
+  // Speech recognition initialization & mic config sync
   const sendRef = useRef(handleSendMessage);
   sendRef.current = handleSendMessage;
 
   useEffect(() => {
+    SpeechService.setMicConfig({
+      mode: voiceSettings.micMode || 'ptt',
+      apiKey,
+    });
+  }, [voiceSettings.micMode, apiKey]);
+
+  useEffect(() => {
     SpeechService.initRecognition(
       (transcript) => {
+        setInterimTranscript('');
         if (transcript.trim()) sendRef.current(transcript.trim());
       },
       (listening) => {
         setIsListening(listening);
         if (listening) setMicError(null);
+        else setInterimTranscript('');
       },
-      (message) => setMicError(message)
+      (message) => setMicError(message),
+      (interim) => setInterimTranscript(interim)
     );
   }, []);
+
+  // Spacebar Push-to-Talk shortcut when focus is outside inputs and modals
+  useEffect(() => {
+    if (callState !== 'connected' || isMemoryModalOpen || isSettingsModalOpen || isLegalModalOpen) return;
+
+    const isInteractiveElement = (el: EventTarget | null): boolean => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || el.isContentEditable;
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((voiceSettings.micMode || 'ptt') !== 'ptt' || isProcessing) return;
+      if (isInteractiveElement(e.target)) return;
+      e.preventDefault();
+      SpeechService.startPushToTalk();
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      if ((voiceSettings.micMode || 'ptt') !== 'ptt') return;
+      if (isInteractiveElement(e.target)) return;
+      e.preventDefault();
+      SpeechService.stopPushToTalk();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [callState, voiceSettings.micMode, isProcessing, isMemoryModalOpen, isSettingsModalOpen, isLegalModalOpen]);
 
   const handleToggleMic = () => {
     if (!SpeechService.isRecognitionSupported()) {
@@ -553,8 +604,10 @@ export const App: React.FC = () => {
   // Disconnect Call Handler
   const handleEndCall = () => {
     SpeechService.stopSpeaking();
+    SpeechService.stopListening(true);
     setIsSpeaking(false);
     setIsListening(false);
+    setInterimTranscript('');
     setCallState('disconnected');
   };
 
@@ -681,6 +734,9 @@ export const App: React.FC = () => {
                 onSendMessage={handleSendMessage}
                 isListening={isListening}
                 onToggleMic={handleToggleMic}
+                micMode={voiceSettings.micMode || 'ptt'}
+                onToggleMicMode={handleToggleMicMode}
+                interimTranscript={interimTranscript}
                 voiceEnabled={voiceSettings.enabled}
                 onToggleVoice={() => {
                   const next = !voiceSettings.enabled;
@@ -754,6 +810,9 @@ export const App: React.FC = () => {
                 onSendMessage={handleSendMessage}
                 isListening={isListening}
                 onToggleMic={handleToggleMic}
+                micMode={voiceSettings.micMode || 'ptt'}
+                onToggleMicMode={handleToggleMicMode}
+                interimTranscript={interimTranscript}
                 voiceEnabled={voiceSettings.enabled}
                 onToggleVoice={() => {
                   const next = !voiceSettings.enabled;

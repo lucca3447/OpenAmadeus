@@ -89,9 +89,57 @@ export function normalizeForSpeech(rawText: string): string {
   return text;
 }
 
+const WHISPER_PROMPT_BIAS =
+  'Makise Kurisu, Okabe Rintaro, Amadeus, Steins;Gate, Viktor Chondria, Daru, Mayuri, SERN, IBN 5100, Nullpo, Gero Froggy, ChromaDB, Qwen3, Python, TypeScript, GitHub';
+
+const WHISPER_HALLUCINATION_RE =
+  /^(?:obrigad[oa](?:\s+por\s+assistir)?|legendas?\s+pela\s+comunidade.*|inscreva-se(?:\s+no\s+canal)?|amara\.org.*|subtitles\s+by.*|thank\s+you\s+for\s+watching.*|you|\.+|,|\?+|!+|\s*)$/i;
+
+/**
+ * Filters silence hallucinations and fixes phonetic PT-BR STT transcriptions for lore/tech terms
+ */
+export function normalizeTranscriptLore(rawText: string): string {
+  const trimmed = (rawText || '').trim();
+  if (!trimmed || WHISPER_HALLUCINATION_RE.test(trimmed.replace(/[.!?,]+$/g, '').trim())) {
+    return '';
+  }
+
+  return trimmed
+    .replace(/\b(?:makise\s+)?(?:curisso|kurisso|curisu|crisu)\b/gi, 'Kurisu')
+    .replace(/\b(?:ocabe|okabi|ocabi)\b/gi, 'Okabe')
+    .replace(/\b(?:estains?\s*gate|steins?\s*gate|stains?\s*gate|steins\s*gueite)\b/gi, 'Steins;Gate')
+    .replace(/\b(?:amadeu)\b/gi, 'Amadeus')
+    .replace(/\b(?:nulpo|nurupo|nupo)\b/gi, 'Nullpo')
+    .replace(/\b(?:v[ií]ctor\s+c[oô]ndria|viktor\s+condria)\b/gi, 'Viktor Chondria')
+    .replace(/\b(?:croma\s*d\s*b|chroma\s*d\s*b)\b/gi, 'ChromaDB')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export class SpeechService {
   private static recognition: any = null;
   private static isListening = false;
+  private static micMode: 'ptt' | 'hands_free' = 'ptt';
+  private static groqApiKey = '';
+
+  // Microphone Web Audio & MediaRecorder VAD state
+  private static micStream: MediaStream | null = null;
+  private static micSource: MediaStreamAudioSourceNode | null = null;
+  private static micAnalyser: AnalyserNode | null = null;
+  private static mediaRecorder: MediaRecorder | null = null;
+  private static recordedChunks: Blob[] = [];
+  private static vadAnimFrame: number | null = null;
+  private static hasVocalActivity = false;
+  private static lastVoiceTime = 0;
+  private static voiceStartTime = 0;
+  private static recordCycleStart = 0;
+  private static usingGroqRecorder = false;
+
+  // Callbacks stored from initRecognition
+  private static onResultCb: SpeechCallback | null = null;
+  private static onStateChangeCb: SpeechStateCallback | null = null;
+  private static onErrorCb: ((message: string) => void) | null = null;
+  private static onInterimCb: ((text: string) => void) | null = null;
 
   // Web Audio API singletons for lip-sync, compression, and oscilloscope
   private static audioCtx: AudioContext | null = null;
@@ -112,7 +160,53 @@ export class SpeechService {
   private static activeAbortController: AbortController | null = null;
 
   static isRecognitionSupported(): boolean {
-    return typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (typeof window === 'undefined') return false;
+    const hasWebSpeech = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    const hasMediaRecorder = typeof navigator?.mediaDevices?.getUserMedia === 'function' && typeof MediaRecorder !== 'undefined';
+    return hasWebSpeech || hasMediaRecorder;
+  }
+
+  /**
+   * Updates microphone mode ('ptt' | 'hands_free') and caches Groq key when available
+   */
+  static setMicConfig(config: { mode?: 'ptt' | 'hands_free'; apiKey?: string }): void {
+    const prevMode = this.micMode;
+    if (config.mode) {
+      this.micMode = config.mode;
+    }
+    if (config.apiKey !== undefined) {
+      const trimmed = config.apiKey.trim();
+      if (trimmed.startsWith('gsk_')) {
+        this.groqApiKey = trimmed;
+        try {
+          localStorage.setItem('amadeus_groq_stt_key', trimmed);
+        } catch {}
+      } else {
+        try {
+          this.groqApiKey = localStorage.getItem('amadeus_groq_stt_key') || '';
+        } catch {
+          this.groqApiKey = '';
+        }
+      }
+    }
+    if (this.isListening && prevMode !== this.micMode) {
+      this.stopListening(true);
+      this.startListening();
+    }
+  }
+
+  private static getEffectiveGroqKey(): string {
+    if (this.groqApiKey.startsWith('gsk_')) return this.groqApiKey;
+    try {
+      const cached = localStorage.getItem('amadeus_groq_stt_key') || localStorage.getItem('amadeus_gemini_key') || '';
+      return cached.trim().startsWith('gsk_') ? cached.trim() : '';
+    } catch {
+      return '';
+    }
+  }
+
+  static getMicAnalyser(): AnalyserNode | null {
+    return this.micAnalyser;
   }
 
   /**
@@ -121,58 +215,342 @@ export class SpeechService {
   static initRecognition(
     onResult: SpeechCallback,
     onStateChange: SpeechStateCallback,
-    onError?: (message: string) => void
+    onError?: (message: string) => void,
+    onInterim?: (text: string) => void
   ): boolean {
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) {
-      console.warn('Web Speech API (SpeechRecognition) is not supported in this browser.');
-      return false;
+    this.onResultCb = onResult;
+    this.onStateChangeCb = onStateChange;
+    this.onErrorCb = onError || null;
+    this.onInterimCb = onInterim || null;
+
+    const SpeechRec = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+    if (SpeechRec) {
+      try {
+        this.recognition = new SpeechRec();
+        this.recognition.lang = 'pt-BR';
+        this.recognition.interimResults = true;
+
+        this.recognition.onstart = () => {
+          if (!this.isListening) {
+            this.isListening = true;
+            this.onStateChangeCb?.(true);
+          }
+        };
+
+        this.recognition.onresult = (event: any) => {
+          let interim = '';
+          let finalTranscript = '';
+          for (let i = event.resultIndex || 0; i < event.results.length; i++) {
+            const res = event.results[i];
+            if (res.isFinal) {
+              finalTranscript += res[0].transcript;
+            } else {
+              interim += res[0].transcript;
+            }
+          }
+
+          if (interim.trim()) {
+            this.onInterimCb?.(interim.trim());
+            if (this.micMode === 'hands_free' && this.isSpeakingAudio && interim.trim().length > 2) {
+              this.stopSpeaking();
+            }
+          }
+
+          if (finalTranscript.trim()) {
+            this.onInterimCb?.('');
+            const cleaned = normalizeTranscriptLore(finalTranscript);
+            if (cleaned) {
+              this.onResultCb?.(cleaned);
+            }
+          }
+        };
+
+        this.recognition.onerror = (event: any) => {
+          if (event.error === 'no-speech' || event.error === 'aborted') return;
+          console.warn('Speech recognition error:', event.error);
+          this.stopListening(true);
+          const messages: Record<string, string> = {
+            'not-allowed': 'Microfone bloqueado. Permita o uso do microfone nas configurações do navegador.',
+            'service-not-allowed': 'Reconhecimento nativo indisponível neste navegador. Configure uma chave Groq (gsk_...) ou use Chrome/Edge.',
+            'audio-capture': 'Nenhum microfone encontrado. Verifique se ele está conectado.',
+            'network': 'O reconhecimento de voz precisa de conexão com a internet.',
+          };
+          this.onErrorCb?.(messages[event.error] ?? `Erro no microfone: ${event.error}`);
+        };
+
+        this.recognition.onend = () => {
+          if (this.isListening && !this.usingGroqRecorder && this.micMode === 'hands_free') {
+            try {
+              this.recognition.start();
+              return;
+            } catch {}
+          }
+          if (!this.usingGroqRecorder) {
+            this.stopListening(true);
+          }
+        };
+      } catch (e) {
+        console.error('Error initializing Web Speech recognition:', e);
+      }
     }
 
+    return this.isRecognitionSupported();
+  }
+
+  private static async setupMicAnalyser(): Promise<MediaStream | null> {
+    if (!navigator.mediaDevices?.getUserMedia) return null;
     try {
-      this.recognition = new SpeechRec();
-      this.recognition.continuous = false;
-      this.recognition.interimResults = false;
-      this.recognition.lang = 'pt-BR';
+      if (!this.micStream || !this.micStream.active) {
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      }
+      const { ctx } = this.ensureAudioContext();
+      if (!this.micAnalyser) {
+        this.micAnalyser = ctx.createAnalyser();
+        this.micAnalyser.fftSize = 256;
+        this.micAnalyser.smoothingTimeConstant = 0.5;
+      }
+      if (this.micSource) {
+        try {
+          this.micSource.disconnect();
+        } catch {}
+      }
+      // Connect mic stream ONLY to micAnalyser (never to destination, preventing speaker feedback)
+      this.micSource = ctx.createMediaStreamSource(this.micStream);
+      this.micSource.connect(this.micAnalyser);
+      return this.micStream;
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        this.onErrorCb?.('Microfone bloqueado. Clique no cadeado da barra de endereços e permita o acesso ao Microfone.');
+      }
+      return null;
+    }
+  }
 
-      this.recognition.onstart = () => {
-        this.isListening = true;
-        onStateChange(true);
-      };
+  private static startRecorderCycle(stream: MediaStream): void {
+    if (typeof MediaRecorder === 'undefined') return;
+    try {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      this.recordedChunks = [];
+      this.hasVocalActivity = false;
+      this.recordCycleStart = Date.now();
 
-      this.recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        if (transcript) {
-          onResult(transcript);
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          this.recordedChunks.push(e.data);
         }
       };
 
-      this.recognition.onerror = (event: any) => {
-        this.isListening = false;
-        onStateChange(false);
+      recorder.onstop = () => {
+        const chunks = this.recordedChunks;
+        const hadVoice = this.hasVocalActivity;
+        const durationMs = Date.now() - this.recordCycleStart;
+        this.recordedChunks = [];
 
-        // Silence or user cancel are not real failures
-        if (event.error === 'no-speech' || event.error === 'aborted') return;
+        if (hadVoice && chunks.length > 0 && durationMs >= 260) {
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+          this.transcribeWithGroq(blob);
+        }
 
-        console.warn('Speech recognition error:', event.error);
-        const messages: Record<string, string> = {
-          'not-allowed': 'Microfone bloqueado. Clique no cadeado ao lado do endereço (localhost:5173), permita o Microfone e recarregue a página.',
-          'service-not-allowed': 'O navegador não permite reconhecimento de voz aqui. Use Chrome ou Edge.',
-          'audio-capture': 'Nenhum microfone encontrado. Verifique se ele está conectado.',
-          'network': 'O reconhecimento de voz precisa de internet (o navegador usa um serviço online).',
-        };
-        onError?.(messages[event.error] ?? `Erro no microfone: ${event.error}`);
+        // If still listening in Hands-Free mode, immediately open next cycle so onset is never clipped
+        if (this.isListening && this.usingGroqRecorder && this.micMode === 'hands_free' && this.micStream?.active) {
+          this.startRecorderCycle(this.micStream);
+        }
       };
 
-      this.recognition.onend = () => {
-        this.isListening = false;
-        onStateChange(false);
-      };
+      this.mediaRecorder = recorder;
+      recorder.start(100);
+    } catch (err) {
+      console.warn('[SpeechService] MediaRecorder start failed, falling back to Web Speech:', err);
+      this.usingGroqRecorder = false;
+    }
+  }
 
-      return true;
-    } catch (e) {
-      console.error('Error initializing speech recognition:', e);
+  private static async transcribeWithGroq(audioBlob: Blob): Promise<void> {
+    const key = this.getEffectiveGroqKey();
+    if (!key) return;
+
+    this.onInterimCb?.('Transcrevendo fala (Whisper Turbo)...');
+    try {
+      const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm';
+      const formData = new FormData();
+      formData.append('file', audioBlob, `speech.${ext}`);
+      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('language', 'pt');
+      formData.append('temperature', '0');
+      formData.append('prompt', WHISPER_PROMPT_BIAS);
+
+      const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}` },
+        body: formData,
+      });
+
+      this.onInterimCb?.('');
+      if (!res.ok) {
+        throw new Error(`Groq Whisper HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const cleaned = normalizeTranscriptLore(data?.text || '');
+      if (cleaned) {
+        this.onResultCb?.(cleaned);
+      }
+    } catch (err) {
+      this.onInterimCb?.('');
+      console.warn('[SpeechService] Groq Whisper STT failed:', err);
+    }
+  }
+
+  private static startVadLoop(): void {
+    if (this.vadAnimFrame) cancelAnimationFrame(this.vadAnimFrame);
+    const dataArray = new Uint8Array(this.micAnalyser?.frequencyBinCount || 128);
+    this.voiceStartTime = 0;
+    this.lastVoiceTime = 0;
+
+    const checkVad = () => {
+      if (!this.isListening || !this.micAnalyser) {
+        this.vadAnimFrame = null;
+        return;
+      }
+
+      this.micAnalyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      const maxBins = Math.min(dataArray.length, 48);
+      for (let i = 2; i < maxBins; i++) {
+        sum += dataArray[i];
+      }
+      const avg = sum / (maxBins - 2);
+      const normalized = Math.min(1.0, avg / 90.0);
+
+      // Higher threshold while Kurisu is speaking to prevent residual speaker echo false barge-ins
+      const threshold = this.isSpeakingAudio ? 0.22 : 0.11;
+      const now = Date.now();
+
+      if (normalized > threshold) {
+        if (!this.voiceStartTime) this.voiceStartTime = now;
+        this.lastVoiceTime = now;
+
+        // Require >= 90ms of voice in PTT or >= 180ms in Hands-Free to ignore transient clicks
+        const minHoldMs = this.micMode === 'hands_free' ? 180 : 80;
+        if (now - this.voiceStartTime >= minHoldMs) {
+          this.hasVocalActivity = true;
+          if (this.micMode === 'hands_free' && this.isSpeakingAudio) {
+            // Instant acoustic Barge-In: interrupt Kurisu's speech immediately
+            this.stopSpeaking();
+          }
+        }
+      } else {
+        this.voiceStartTime = 0;
+
+        if (this.usingGroqRecorder && this.micMode === 'hands_free' && this.mediaRecorder?.state === 'recording') {
+          if (this.hasVocalActivity && this.lastVoiceTime > 0 && now - this.lastVoiceTime > 750) {
+            // 750ms of silence after speech: commit utterance for Whisper transcription
+            try {
+              this.mediaRecorder.stop();
+            } catch {}
+          } else if (!this.hasVocalActivity && now - this.recordCycleStart > 8000) {
+            // Keep rolling silence buffer fresh (< 8s) so we never upload long dead air
+            try {
+              this.mediaRecorder.stop();
+            } catch {}
+          }
+        }
+      }
+
+      this.vadAnimFrame = requestAnimationFrame(checkVad);
+    };
+
+    this.vadAnimFrame = requestAnimationFrame(checkVad);
+  }
+
+  static async startListening(): Promise<boolean> {
+    if (this.isListening) return true;
+
+    if (this.micMode === 'ptt' && this.isSpeakingAudio) {
+      this.stopSpeaking();
+    }
+
+    const groqKey = this.getEffectiveGroqKey();
+    const canUseGroq = Boolean(groqKey && typeof MediaRecorder !== 'undefined' && typeof navigator?.mediaDevices?.getUserMedia === 'function');
+
+    const stream = await this.setupMicAnalyser();
+    if (!stream && !this.recognition) {
+      this.onErrorCb?.('Microfone indisponível neste navegador.');
       return false;
+    }
+
+    this.isListening = true;
+    this.onStateChangeCb?.(true);
+
+    if (canUseGroq && stream) {
+      this.usingGroqRecorder = true;
+      this.startRecorderCycle(stream);
+      this.startVadLoop();
+      return true;
+    }
+
+    this.usingGroqRecorder = false;
+    if (stream) {
+      this.startVadLoop();
+    }
+
+    if (this.recognition) {
+      try {
+        this.recognition.continuous = this.micMode === 'hands_free';
+        this.recognition.start();
+        return true;
+      } catch (e) {
+        console.error('Failed to start Web Speech recognition:', e);
+      }
+    }
+
+    this.stopListening(true);
+    return false;
+  }
+
+  static stopListening(discard = false): void {
+    const wasListening = this.isListening;
+    this.isListening = false;
+
+    if (this.vadAnimFrame) {
+      cancelAnimationFrame(this.vadAnimFrame);
+      this.vadAnimFrame = null;
+    }
+
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      if (discard) {
+        this.hasVocalActivity = false;
+      }
+      try {
+        this.mediaRecorder.stop();
+      } catch {}
+    }
+    this.mediaRecorder = null;
+
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+      } catch {}
+    }
+
+    if (this.micStream) {
+      this.micStream.getTracks().forEach((t) => t.stop());
+      this.micStream = null;
+    }
+
+    if (wasListening) {
+      this.onStateChangeCb?.(false);
     }
   }
 
@@ -180,25 +558,22 @@ export class SpeechService {
    * Toggles listening on/off
    */
   static toggleListening(): boolean {
-    if (!this.recognition) return false;
-
     if (this.isListening) {
-      try {
-        this.recognition.stop();
-      } catch (e) {
-        console.error(e);
-      }
-      this.isListening = false;
+      this.stopListening(false);
       return false;
     }
+    this.startListening();
+    return true;
+  }
 
-    try {
-      this.recognition.start();
-      return true;
-    } catch (e) {
-      console.error('Failed to start speech recognition:', e);
-      return false;
-    }
+  static startPushToTalk(): void {
+    if (this.isListening) return;
+    this.startListening();
+  }
+
+  static stopPushToTalk(): void {
+    if (!this.isListening || this.micMode !== 'ptt') return;
+    this.stopListening(false);
   }
 
   /**

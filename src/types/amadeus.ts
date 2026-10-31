@@ -31,6 +31,7 @@ export type CameraFraming = 'closeup' | 'medium' | 'full';
 export type CameraMode = 'auto' | CameraFraming;
 
 export type MouthState = 'closed' | 'half' | 'open';
+export type MicMode = 'ptt' | 'hands_free';
 
 export interface SpriteExpressionFrames {
   mouthClosed: string; // 00: mouth closed / idle
@@ -103,6 +104,7 @@ export interface VoiceSettings {
   rvcModel?: string;
   rvcPitch?: number;
   rvcIndexRate?: number;
+  micMode?: MicMode;
 }
 
 export interface QwenWorkerStatus {
