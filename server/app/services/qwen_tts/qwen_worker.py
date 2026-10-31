@@ -31,23 +31,27 @@ _gpu_lock = threading.Lock()
 
 RAMP_LEN = 120  # 5 ms @ 24 kHz for C0 amplitude continuity across chunk seams
 ramp_weights = np.linspace(1.0, 0.0, RAMP_LEN, dtype=np.float32)
+_stream_seq = 0
 
 
-def _iter_stream_safe(stream_gen):
-    """Steps a Torch streaming generator with thread-local inference_mode/no_grad scoped per step (never across yield)."""
-    try:
-        while True:
-            with torch.no_grad(), torch.inference_mode():
-                item = next(stream_gen)
-            yield item
-    except StopIteration:
+def _step_stream(stream_gen, req_seq: int):
+    """Steps a Torch streaming generator with _gpu_lock + inference_mode/no_grad scoped strictly inside next() (never across yield)."""
+    if req_seq != _stream_seq:
+        return None
+    with _gpu_lock, torch.no_grad(), torch.inference_mode():
+        if req_seq != _stream_seq:
+            return None
+        return next(stream_gen, None)
+
+
+def _close_stream(stream_gen):
+    if stream_gen is None:
         return
-    finally:
-        try:
-            with torch.no_grad(), torch.inference_mode():
-                stream_gen.close()
-        except Exception:
-            pass
+    try:
+        with _gpu_lock, torch.no_grad(), torch.inference_mode():
+            stream_gen.close()
+    except Exception:
+        pass
 
 
 def apply_boundary_continuity(chunk: np.ndarray, prev_sample: Optional[float]) -> np.ndarray:
@@ -210,16 +214,16 @@ def _load_model_worker():
             # Mandatory: Full Warm-up of Mimi Audio Decoder (eliminates cold 2.1s delay on 1st call)
             print("[Qwen3 Worker] Priming Mimi audio decoder with disposable initial utterance...")
             try:
-                for _ in _iter_stream_safe(
-                    loaded_model.generate_custom_voice_streaming(
+                with _gpu_lock, torch.no_grad(), torch.inference_mode():
+                    warmup_gen = loaded_model.generate_custom_voice_streaming(
                         text="Oi.",
                         speaker="kurisu",
                         language="Portuguese",
                         instruct=None,
                         chunk_size=8,
                     )
-                ):
-                    break
+                    next(warmup_gen, None)
+                    warmup_gen.close()
                 print("[Qwen3 Worker] Mimi audio decoder primed and warm! First call will achieve sub-400ms TTFA.")
             except Exception as dec_err:
                 print(f"[Qwen3 Worker] Mimi audio decoder priming note: {dec_err}")
@@ -303,13 +307,16 @@ def synthesize_stream(req: SynthesizeRequest):
     Uses CUDA Graphs when active_backend == 'faster' and applies C0 continuity DSP
     at chunk boundaries to eliminate micro-clicks.
     """
-    global model
+    global model, _stream_seq
     if model is None:
         raise HTTPException(status_code=503, detail="Qwen3-TTS Worker is still initializing.")
 
     segments = prepare_worker_segments(req.text or "")
     if not segments:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
+
+    _stream_seq += 1
+    req_seq = _stream_seq
 
     effective_instruct = _resolve_effective_instruct(req.instruct)
     eff_temp = min(req.temperature if req.temperature is not None else 0.65, 0.65)
@@ -318,55 +325,67 @@ def synthesize_stream(req: SynthesizeRequest):
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
     def pcm_generator():
-        with _gpu_lock:
-            prev_sample = None
+        prev_sample = None
 
-            for seg_idx, seg_text in enumerate(segments):
-                if seg_idx > 0:
-                    pause_chunk = np.zeros(int(24000 * 0.18), dtype=np.float32)
-                    pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
-                    prev_sample = float(pause_chunk[-1])
-                    yield (np.clip(pause_chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+        for seg_idx, seg_text in enumerate(segments):
+            if req_seq != _stream_seq:
+                break
+            if seg_idx > 0:
+                pause_chunk = np.zeros(int(24000 * 0.18), dtype=np.float32)
+                pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
+                prev_sample = float(pause_chunk[-1])
+                yield (np.clip(pause_chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 
-                if active_backend == "faster":
-                    stream_gen = model.generate_custom_voice_streaming(
-                        text=seg_text,
-                        speaker="kurisu",
-                        language=req.language or "Portuguese",
-                        instruct=effective_instruct,
-                        chunk_size=8,
-                        non_streaming_mode=True,
-                        temperature=eff_temp,
-                        top_p=eff_top_p,
-                        repetition_penalty=eff_rep,
-                        max_new_tokens=eff_max_tokens,
-                    )
-                    for audio_chunk, sr, _ in _iter_stream_safe(stream_gen):
-                        chunk = audio_chunk.copy()
-                        chunk = apply_boundary_continuity(chunk, prev_sample)
-                        prev_sample = float(chunk[-1])
-                        pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-                        yield pcm16
-                else:
-                    with torch.inference_mode():
-                        wavs, sr = model.generate_custom_voice(
+            if active_backend == "faster":
+                stream_gen = None
+                try:
+                    with _gpu_lock, torch.no_grad(), torch.inference_mode():
+                        stream_gen = model.generate_custom_voice_streaming(
                             text=seg_text,
                             speaker="kurisu",
                             language=req.language or "Portuguese",
                             instruct=effective_instruct,
+                            chunk_size=8,
+                            non_streaming_mode=True,
                             temperature=eff_temp,
                             top_p=eff_top_p,
                             repetition_penalty=eff_rep,
                             max_new_tokens=eff_max_tokens,
                         )
-                    full_audio = wavs[0]
-                    chunk_len = int(sr * 0.64)
-                    for i in range(0, len(full_audio), chunk_len):
-                        chunk = full_audio[i:i + chunk_len].copy()
+                    while req_seq == _stream_seq:
+                        item = _step_stream(stream_gen, req_seq)
+                        if item is None:
+                            break
+                        audio_chunk, sr, _ = item
+                        chunk = audio_chunk.copy()
                         chunk = apply_boundary_continuity(chunk, prev_sample)
                         prev_sample = float(chunk[-1])
                         pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
                         yield pcm16
+                finally:
+                    _close_stream(stream_gen)
+            else:
+                with _gpu_lock, torch.no_grad(), torch.inference_mode():
+                    wavs, sr = model.generate_custom_voice(
+                        text=seg_text,
+                        speaker="kurisu",
+                        language=req.language or "Portuguese",
+                        instruct=effective_instruct,
+                        temperature=eff_temp,
+                        top_p=eff_top_p,
+                        repetition_penalty=eff_rep,
+                        max_new_tokens=eff_max_tokens,
+                    )
+                full_audio = wavs[0]
+                chunk_len = int(sr * 0.64)
+                for i in range(0, len(full_audio), chunk_len):
+                    if req_seq != _stream_seq:
+                        break
+                    chunk = full_audio[i:i + chunk_len].copy()
+                    chunk = apply_boundary_continuity(chunk, prev_sample)
+                    prev_sample = float(chunk[-1])
+                    pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                    yield pcm16
 
     return StreamingResponse(
         pcm_generator(),
