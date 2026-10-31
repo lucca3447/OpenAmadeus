@@ -1310,11 +1310,11 @@ export class AIService {
     // 2. Extract directives from all comment tags <!-- ... -->
     // Handles isolated tags (<!--emotion:happy--> <!--pose:crossed_arms--> <!--camera:medium-->)
     // and composite tags (<!--emotion:tsundere,pose:crossed_arms,camera:medium-->)
-    const commentMatches = cleanText.match(/<!--([\s\S]*?)-->/g);
+    const commentMatches = cleanText.match(/<!--([\s\S]*?)(?:-->|-+>|>+|$)/g);
     if (commentMatches) {
       for (const comment of commentMatches) {
         const inner = comment.replace(/^<!--|-->$/g, '').trim();
-        if (/^remember\s*:/i.test(inner)) continue;
+        if (/^remember(?:\s*:|\s)/i.test(inner)) continue;
 
         // Emotion
         const emoMatch = inner.match(/(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)/i);
@@ -1350,7 +1350,7 @@ export class AIService {
     }
 
     // 3. Single-pass removal of all comment tags so zero metadata leaks into speech
-    cleanText = cleanText.replace(/<!--[\s\S]*?-->/g, '').trim();
+    cleanText = cleanText.replace(/<!--[\s\S]*?(?:-->|-+>|>+|$)/g, '').trim();
 
     // 4. Extract stage directions from asterisks before stripping (*sorri*, *cruza os braços*)
     const asterisks = cleanText.match(/\*([^*]+)\*/g);

@@ -195,6 +195,20 @@ class TestMemoryRAG(unittest.TestCase):
         _, _, l4 = parse_tags("Olá! <!--remember: título curto | fato memorizado | sentimento-->")
         self.assertIsNone(l4)
 
+        # 5. Malformed tag without colon and closed with >> is stripped from dialogue and meta-testing noise is rejected
+        clean5, _, l5 = parse_tags(
+            "O que exatamente você espera que eu lembre? <!--remember operador testou a capacidade de memória em sessões diferentes|testou a capacidade de memória persistente|Curiosidade>>"
+        )
+        self.assertNotIn("<!--", clean5)
+        self.assertNotIn(">>", clean5)
+        self.assertIsNone(l5)
+
+        # 6. Malformed tag without colon + >> but with a valid personal fact still parses and strips cleanly
+        clean6, _, l6 = parse_tags("Anotado! <!--remember Cidade do Operador|O operador mora em Santa Bárbara, Bahia|Curiosidade>>")
+        self.assertEqual(clean6, "Anotado!")
+        self.assertIsNotNone(l6)
+        self.assertEqual(l6.title, "Cidade do Operador")
+
     def test_09_rolling_context_summary_and_db_history_resolution(self):
         from app.services.llm.orchestrator import LLMOrchestrator
 

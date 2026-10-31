@@ -194,7 +194,7 @@ export class MemoryService {
    * 2 or 3+ pipe-separated fields, and rejecting template placeholders.
    */
   static parseRememberTag(rawText: string): { title: string; content: string; emotionalWeight: string } | null {
-    const match = rawText.match(/<!--\s*remember\s*:\s*([\s\S]*?)\s*-->/i);
+    const match = rawText.match(/<!--\s*remember(?:\s*:\s*|\s+)([\s\S]*?)\s*(?:-->|-+>|>+|$)/i);
     if (!match) return null;
     const parts = match[1].split('|').map((s) => s.trim());
     if (parts.length < 2) return null;
@@ -202,7 +202,8 @@ export class MemoryService {
     const content = parts.length === 2 ? parts[1] : parts.slice(1, -1).join(' | ').trim();
     const emotionalWeight = (parts.length >= 3 ? parts[parts.length - 1] : '') || 'Factual';
     const placeholderRe = /^(t[íi]tulo curto|fato memorizado|sentimento)$/i;
-    if (!title || !content || placeholderRe.test(title) || placeholderRe.test(content)) {
+    const noiseRe = /\b(testou a capacidade|testando.*rea[çc][õo]es|teste de debugging|neurocientista kurisu|amadeus kurisu)\b/i;
+    if (!title || !content || placeholderRe.test(title) || placeholderRe.test(content) || noiseRe.test(`${title} ${content}`)) {
       return null;
     }
     return { title, content, emotionalWeight };

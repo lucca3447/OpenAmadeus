@@ -105,8 +105,8 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
     if not clean or is_scratchpad_or_reasoning(clean):
         return "", "neutral", None
 
-    # 1. Parse remember tag (supports variable spaces, 2 or 3+ pipe-separated fields)
-    remember_raw = re.search(r"<!--\s*remember\s*:\s*([\s\S]*?)\s*-->", clean, re.IGNORECASE)
+    # 1. Parse remember tag (supports variable spaces, missing colon, 2 or 3+ pipe-separated fields, and malformed closers like >>)
+    remember_raw = re.search(r"<!--\s*remember(?:\s*:\s*|\s+)([\s\S]*?)\s*(?:-->|-+>|>+|$)", clean, re.IGNORECASE)
     if remember_raw:
         parts = [p.strip() for p in remember_raw.group(1).split("|")]
         if len(parts) >= 2:
@@ -114,16 +114,23 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
             content = parts[1] if len(parts) == 2 else " | ".join(parts[1:-1]).strip()
             emo_w = (parts[-1] if len(parts) >= 3 else "") or "Factual"
             placeholder_re = r"(?i)^(t[íi]tulo curto|fato memorizado|sentimento)$"
-            if title and content and not re.match(placeholder_re, title) and not re.match(placeholder_re, content):
+            noise_re = r"(?i)\b(testou a capacidade|testando.*rea[çc][õo]es|teste de debugging|neurocientista kurisu|amadeus kurisu)\b"
+            if (
+                title
+                and content
+                and not re.match(placeholder_re, title)
+                and not re.match(placeholder_re, content)
+                and not re.search(noise_re, f"{title} {content}")
+            ):
                 learned_info = LearnedMemoryInfo(title=title, content=content, emotionalWeight=emo_w)
-        clean = re.sub(r"<!--\s*remember\s*:[\s\S]*?-->", "", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"<!--\s*remember(?:\s*:|\s)[\s\S]*?(?:-->|-+>|>+|$)", "", clean, flags=re.IGNORECASE)
 
     # 2. Parse emotion tag (isolated <!--emotion:...--> or composite <!--emotion:tsundere,pose:...-->)
     emotion = "neutral"
     emotion_match = None
-    comment_matches = re.findall(r"<!--([\s\S]*?)-->", clean, re.IGNORECASE)
+    comment_matches = re.findall(r"<!--([\s\S]*?)(?:-->|-+>|>+|$)", clean, re.IGNORECASE)
     for c in comment_matches:
-        if re.match(r"(?i)^remember\s*:", c.strip()):
+        if re.match(r"(?i)^remember(?:\s*:|\s)", c.strip()):
             continue
         emo_m = re.search(r"(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)", c, re.IGNORECASE)
         if emo_m:
@@ -135,8 +142,8 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
                     emotion_match = emo_m
                     break
 
-    # Infallible removal of all comment tags so zero metadata leaks into speech
-    clean = re.sub(r"<!--[\s\S]*?-->", "", clean)
+    # Infallible removal of all comment tags (including malformed >> or unclosed trailing <!--) so zero metadata leaks into speech
+    clean = re.sub(r"<!--[\s\S]*?(?:-->|-+>|>+|$)", "", clean)
 
     # 3. Detect actions from asterisks stage directions before stripping (e.g. *sorri*, *fica pensativa*)
     asterisk_matches = re.findall(r"\*([^*]+)\*", clean)
