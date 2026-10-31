@@ -26,6 +26,7 @@ class MemoryStore:
     def __init__(self, sqlite_path: Path = SQLITE_PATH, chroma_dir: Path = CHROMA_DIR):
         self.sqlite_path = sqlite_path
         self.chroma_dir = chroma_dir
+        self._canonical_keywords: Dict[str, List[str]] = {}
         self._init_sqlite()
         self._init_chroma()
 
@@ -40,14 +41,22 @@ class MemoryStore:
     def _init_sqlite(self):
         with self._conn() as conn:
             cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
                     started_at REAL,
                     ended_at REAL,
-                    summary TEXT
+                    summary TEXT,
+                    context_summary TEXT
                 )
             """)
+            # Ensure context_summary column exists on pre-existing databases
+            cursor.execute("PRAGMA table_info(sessions)")
+            cols = {row[1] for row in cursor.fetchall()}
+            if "context_summary" not in cols:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN context_summary TEXT")
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
@@ -160,17 +169,68 @@ class MemoryStore:
                     })
         return matched
 
+    def rebuild_index(self, canonical_memories: Optional[List[Dict[str, Any]]] = None) -> int:
+        """
+        Rebuilds the ChromaDB memory collection from SQLite (canonical, learned, and custom).
+        """
+        if canonical_memories:
+            for mem in canonical_memories:
+                if mem.get("id") and mem.get("triggerKeywords"):
+                    self._canonical_keywords[mem["id"]] = mem["triggerKeywords"]
+
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, category, title, content, emotional_weight, source FROM memories")
+            rows = cursor.fetchall()
+
+        existing_ids = (self.collection.get(include=[]) or {}).get("ids") or []
+        if existing_ids:
+            self.collection.delete(ids=existing_ids)
+
+        if not rows:
+            return 0
+
+        ids = []
+        documents = []
+        metadatas = []
+        for row in rows:
+            mem_id = row["id"]
+            title = row["title"]
+            content = row["content"]
+            doc_text = f"{title}: {content}"
+            kw_list = self._canonical_keywords.get(mem_id, [])
+            keywords = " ".join(kw_list)
+            full_text = f"{doc_text} (keywords: {keywords})" if keywords else doc_text
+
+            ids.append(mem_id)
+            documents.append(full_text)
+            metadatas.append({
+                "title": title,
+                "category": row["category"] or "biography",
+                "emotional_weight": row["emotional_weight"] or "Factual",
+                "source": row["source"] or "canonical",
+                "raw_content": content
+            })
+
+        self.collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+        return len(ids)
+
     def seed_canonical_memories(self, memories: List[Dict[str, Any]]):
         """
-        Seeds canonical memories into ChromaDB and SQLite if not already present.
+        Seeds canonical memories into SQLite if missing, and synchronizes ChromaDB
+        via rebuild_index() whenever vector count diverges from SQLite count.
         """
+        for mem in memories:
+            if mem.get("id") and mem.get("triggerKeywords"):
+                self._canonical_keywords[mem["id"]] = mem["triggerKeywords"]
+
         with self._conn() as conn:
             cursor = conn.cursor()
             for mem in memories:
                 mem_id = mem["id"]
                 cursor.execute("SELECT id FROM memories WHERE id = ?", (mem_id,))
                 if not cursor.fetchone():
-                    # Insert in SQLite
                     cursor.execute(
                         "INSERT INTO memories (id, category, title, content, emotional_weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (
@@ -183,23 +243,12 @@ class MemoryStore:
                             time.time()
                         )
                     )
-                    # Insert in ChromaDB
-                    doc_text = f"{mem['title']}: {mem['content']}"
-                    keywords = " ".join(mem.get("triggerKeywords", []))
-                    full_text = f"{doc_text} (keywords: {keywords})" if keywords else doc_text
-
-                    self.collection.upsert(
-                        ids=[mem_id],
-                        documents=[full_text],
-                        metadatas=[{
-                            "title": mem["title"],
-                            "category": mem.get("category", "biography"),
-                            "emotional_weight": mem.get("emotionalWeight", "Factual"),
-                            "source": mem.get("source", "canonical"),
-                            "raw_content": mem["content"]
-                        }]
-                    )
             conn.commit()
+            cursor.execute("SELECT COUNT(*) FROM memories")
+            sqlite_count = cursor.fetchone()[0]
+
+        if self.collection.count() != sqlite_count:
+            self.rebuild_index(memories)
 
     def _query_memory_group(self, query: str, where_filter: Dict[str, Any], group_limit: int, max_distance: float) -> List[Dict[str, Any]]:
         if group_limit <= 0:
@@ -263,6 +312,38 @@ class MemoryStore:
         combined = kurisu_matches + learned_matches
         combined.sort(key=lambda m: m["distance"])
         return combined
+
+    def get_learned_context(self, query: str, limit: int = 12) -> List[Dict[str, Any]]:
+        """
+        Operator profile: returns up to `limit` most recent learned facts from SQLite
+        plus any semantic learned matches within MEMORY_MAX_DISTANCE, deduplicated.
+        """
+        # shortcut: recência pura até limit=12 + top-2 semântico; revisar se passar de ~50 fatos aprendidos.
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, category, title, content, emotional_weight FROM memories "
+                "WHERE source = 'learned' ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        recent = [
+            {
+                "id": r["id"],
+                "title": _sanitize_field(r["title"], 80),
+                "content": _sanitize_field(r["content"], 280),
+                "emotionalWeight": _sanitize_field(r["emotional_weight"], 80) or "Factual",
+                "source": "learned",
+            }
+            for r in rows
+            if r["title"] and r["content"]
+        ]
+        seen = {m["id"] for m in recent}
+        extra = [
+            m
+            for m in self._query_memory_group(query, {"source": "learned"}, 2, MEMORY_MAX_DISTANCE)
+            if m["id"] not in seen
+        ]
+        return recent + extra
 
     def add_memory(self, category: str, title: str, content: str, emotional_weight: str = "Factual", source: str = "learned") -> Dict[str, Any]:
         """
@@ -402,6 +483,22 @@ class MemoryStore:
             conn.commit()
         return session_id
 
+    def get_session_context_summary(self, session_id: str) -> str:
+        with self._conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT context_summary FROM sessions WHERE id = ?", (session_id,))
+            row = cursor.fetchone()
+            return (row[0] or "") if row else ""
+
+    def update_session_context_summary(self, session_id: str, context_summary: str) -> None:
+        clean = _sanitize_field(context_summary, 600)
+        if not clean:
+            return
+        with self._conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE sessions SET context_summary = ? WHERE id = ?", (clean, session_id))
+            conn.commit()
+
     def save_message(self, session_id: str, sender: str, content: str, emotion: Optional[str] = None, recalled: Optional[List[str]] = None) -> str:
         msg_id = f"msg_{int(time.time() * 1000)}_{os.urandom(2).hex()}"
         with self._conn() as conn:
@@ -456,7 +553,7 @@ class MemoryStore:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT s.id, s.started_at, s.ended_at, s.summary, COUNT(m.id) as message_count
+                SELECT s.id, s.started_at, s.ended_at, s.summary, s.context_summary, COUNT(m.id) as message_count
                 FROM sessions s
                 LEFT JOIN messages m ON s.id = m.session_id
                 GROUP BY s.id
@@ -469,6 +566,7 @@ class MemoryStore:
                     "startedAt": int(row["started_at"] * 1000) if row["started_at"] else 0,
                     "endedAt": int(row["ended_at"] * 1000) if row["ended_at"] else None,
                     "summary": row["summary"],
+                    "contextSummary": row["context_summary"],
                     "messageCount": row["message_count"]
                 }
                 for row in rows

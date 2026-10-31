@@ -1,5 +1,6 @@
 import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
 import { BackendService } from './backendService';
+import { MemoryService } from './memoryService';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -787,9 +788,11 @@ export class AIService {
     }
   }
 
-  private static formatMemoryContext(recalledMemories: MemoryItem[]): string {
+  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile): string {
     const kurisuMemories = recalledMemories.filter((m) => m.source !== 'learned');
-    const userMemories = recalledMemories.filter((m) => m.source === 'learned');
+    const recentLearned = (persona?.memories || []).filter((m) => m.source === 'learned').slice(-12);
+    const seen = new Set(recentLearned.map((m) => m.id));
+    const userMemories = [...recentLearned, ...recalledMemories.filter((m) => m.source === 'learned' && !seen.has(m.id))];
 
     const blocks: string[] = [];
 
@@ -828,7 +831,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
@@ -955,7 +958,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
@@ -1112,7 +1115,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
 
     const body = {
       contents: this.buildContents(history, userMessage),
@@ -1291,7 +1294,8 @@ export class AIService {
     }
 
     // 1. Extract remember tag: <!--remember:title|content|emotion-->
-    const remMatch = cleanText.match(/<!--\s*remember:\s*(.*?)\|(.*?)\|(.*?)\s*-->/i);
+    const parsedRem = MemoryService.parseRememberTag(cleanText);
+    const remMatch = parsedRem ? ['', parsedRem.title, parsedRem.content, parsedRem.emotionalWeight] : null;
     if (remMatch) {
       const title = remMatch[1].trim();
       if (!/^(t[íi]tulo curto|fato memorizado|sentimento)$/i.test(title)) {
@@ -1306,11 +1310,11 @@ export class AIService {
     // 2. Extract directives from all comment tags <!-- ... -->
     // Handles isolated tags (<!--emotion:happy--> <!--pose:crossed_arms--> <!--camera:medium-->)
     // and composite tags (<!--emotion:tsundere,pose:crossed_arms,camera:medium-->)
-    const commentMatches = cleanText.match(/<!--([\s\S]*?)-->/g);
+    const commentMatches = cleanText.match(/<!--([\s\S]*?)(?:-->|-+>|>+|$)/g);
     if (commentMatches) {
       for (const comment of commentMatches) {
         const inner = comment.replace(/^<!--|-->$/g, '').trim();
-        if (/^remember:/i.test(inner)) continue;
+        if (/^remember(?:\s*:|\s)/i.test(inner)) continue;
 
         // Emotion
         const emoMatch = inner.match(/(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)/i);
@@ -1346,7 +1350,7 @@ export class AIService {
     }
 
     // 3. Single-pass removal of all comment tags so zero metadata leaks into speech
-    cleanText = cleanText.replace(/<!--[\s\S]*?-->/g, '').trim();
+    cleanText = cleanText.replace(/<!--[\s\S]*?(?:-->|-+>|>+|$)/g, '').trim();
 
     // 4. Extract stage directions from asterisks before stripping (*sorri*, *cruza os braços*)
     const asterisks = cleanText.match(/\*([^*]+)\*/g);

@@ -28,7 +28,7 @@ def check_edge_tts_available() -> bool:
 
 
 def clean_speech_text(text: str) -> str:
-    clean_text = re.sub(r"<!--\s*emotion:[^>]*-->", "", text, flags=re.IGNORECASE)
+    clean_text = re.sub(r"<!--[\s\S]*?(?:-->|-+>|>+|$)", "", text, flags=re.IGNORECASE)
     clean_text = re.sub(r"<!--\s*remember:[^>]*-->", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"<!--\s*pose:[^>]*-->", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"\*[^*]+\*", "", clean_text)
