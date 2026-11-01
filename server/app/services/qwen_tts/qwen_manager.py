@@ -342,11 +342,7 @@ class QwenTTSManager:
 
         print(f"[Qwen3 Manager] Selected streaming target: {target_url} (mode: {'remote' if is_remote else 'local'})")
 
-        if is_remote:
-            is_healthy = await cls.is_worker_healthy(target_url)
-            if not is_healthy:
-                raise RuntimeError(f"Remote Qwen3 worker at {target_url} is unreachable or not ready.")
-        else:
+        if not is_remote:
             is_healthy = await cls.ensure_worker(max_wait_sec=150.0, target_url=target_url)
             if not is_healthy:
                 raise RuntimeError("Local Qwen3 worker offline or initialization timed out.")
@@ -354,31 +350,38 @@ class QwenTTSManager:
         instruct = resolve_acoustic_instruct(emotion=emotion, custom_instruct=custom_instruct)
         client = cls.get_client()
 
-        async def _stream_generator() -> AsyncGenerator[bytes, None]:
-            req = client.build_request(
-                "POST",
-                f"{target_url}/synthesize_stream",
-                json={
-                    "text": text,
-                    "language": language or "Portuguese",
-                    "instruct": instruct,
-                    "temperature": 0.65,
-                    "top_p": 0.90,
-                    "repetition_penalty": 1.05,
-                    "max_new_tokens": 2048,
-                },
-                timeout=httpx.Timeout(90.0, connect=5.0, read=90.0),
-            )
-            res = await client.send(req, stream=True)
-            if res.status_code != 200:
-                body = await res.aread()
-                await res.aclose()
-                raise RuntimeError(f"Worker streaming error {res.status_code}: {body.decode('utf-8', errors='ignore')}")
+        req = client.build_request(
+            "POST",
+            f"{target_url}/synthesize_stream",
+            json={
+                "text": text,
+                "language": language or "Portuguese",
+                "instruct": instruct,
+                "temperature": 0.65,
+                "top_p": 0.90,
+                "repetition_penalty": 1.05,
+                "max_new_tokens": 2048,
+            },
+            timeout=httpx.Timeout(90.0, connect=8.0, read=90.0),
+        )
 
+        try:
+            res = await client.send(req, stream=True)
+        except Exception as conn_err:
+            raise RuntimeError(f"Qwen3 worker ({target_url}) stream handshake failed: {conn_err}") from conn_err
+
+        if res.status_code != 200:
+            body = await res.aread()
+            await res.aclose()
+            raise RuntimeError(f"Worker streaming error {res.status_code}: {body.decode('utf-8', errors='ignore')}")
+
+        async def _stream_generator() -> AsyncGenerator[bytes, None]:
             try:
                 async for chunk in res.aiter_bytes():
                     if chunk:
                         yield chunk
+            except Exception as stream_err:
+                print(f"[Qwen3 Manager] In-flight stream interrupted: {stream_err}")
             finally:
                 await res.aclose()
 

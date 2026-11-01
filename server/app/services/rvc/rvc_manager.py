@@ -12,6 +12,7 @@ WORKER_SCRIPT = os.path.join(CURRENT_DIR, "rvc_worker.py")
 WORKER_URL = "http://127.0.0.1:8001"
 
 _worker_process: Optional[subprocess.Popen] = None
+_spawn_lock = asyncio.Lock()
 
 
 class RVCManager:
@@ -58,19 +59,24 @@ class RVCManager:
         if await cls.is_worker_healthy():
             return True
 
-        if not cls.start_worker_process():
-            return False
-
-        # Poll until worker is ready or timeout expires
-        start_time = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start_time < max_wait_sec:
-            await asyncio.sleep(0.5)
+        async with _spawn_lock:
+            # Re-check under lock in case another coroutine just started the worker
             if await cls.is_worker_healthy():
-                print("[RVC Manager] RVC Worker is online and healthy!")
                 return True
 
-        print("[RVC Manager] Worker did not report ready within timeout.")
-        return False
+            if not cls.start_worker_process():
+                return False
+
+            # Poll until worker is ready or timeout expires
+            start_time = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start_time < max_wait_sec:
+                await asyncio.sleep(0.5)
+                if await cls.is_worker_healthy():
+                    print("[RVC Manager] RVC Worker is online and healthy!")
+                    return True
+
+            print("[RVC Manager] Worker did not report ready within timeout.")
+            return False
 
     @classmethod
     def list_available_models(cls) -> list[str]:

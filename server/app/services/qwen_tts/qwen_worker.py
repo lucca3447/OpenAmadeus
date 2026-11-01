@@ -346,7 +346,6 @@ def synthesize_stream(req: SynthesizeRequest):
                             language=req.language or "Portuguese",
                             instruct=effective_instruct,
                             chunk_size=8,
-                            non_streaming_mode=True,
                             temperature=eff_temp,
                             top_p=eff_top_p,
                             repetition_penalty=eff_rep,
