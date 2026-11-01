@@ -27,22 +27,28 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
   personaName,
 }) => {
   return (
-    <div className="hidden lg:flex w-80 xl:w-96 border-l border-[#222836] bg-[#0e1117] flex-col items-center justify-between p-4 relative shrink-0 select-none font-mono">
-      {/* Header Info */}
-      <div className="w-full flex items-center justify-between text-[11px] text-[#717d96] border-b border-[#202532] pb-2">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#f59e0b] animate-pulse" />
-          <span className="text-[#f59e0b] font-bold tracking-wider text-glow-nixie">
-            {personaName.toUpperCase()}
+    <div className="hidden lg:flex w-80 xl:w-96 border-l border-orange-500/30 chalkboard-grid bg-[#0a090b]/95 flex-col items-center justify-between p-4 relative shrink-0 select-none font-mono">
+      {/* Subtle Top Radial Spotlight */}
+      <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(ellipse_at_50%_0%,rgba(249,115,22,0.12),transparent_70%)] pointer-events-none" />
+
+      {/* Top Header Plate + Horizontal Power Bus */}
+      <div className="relative z-10 w-full space-y-1.5">
+        <div className="w-full flex items-center justify-between">
+          <div className="copper-capsule px-3.5 py-1 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_8px_#fb923c] animate-pulse" />
+            <span className="engraved-serif text-amber-100 font-bold text-xs tracking-widest">
+              {personaName.toUpperCase()}
+            </span>
+          </div>
+          <span className="text-[10px] px-2.5 py-0.5 bg-black/80 border border-amber-900/60 text-orange-400 font-bold tracking-wider">
+            SINCRONIA ATIVA
           </span>
         </div>
-        <span className="text-[10px] px-2 py-0.5 rounded bg-[#161a22] border border-[#2d3546] text-[#cbd5e1]">
-          CONEXÃO ATIVA
-        </span>
+        <div className="bus-line-horizontal w-full" />
       </div>
 
-      {/* Center Sprite Stage */}
-      <div className="relative flex-1 w-full flex items-center justify-center overflow-hidden my-2">
+      {/* Center Precision Optical Stage Frame (Centered Sprite + Top Position Controls) */}
+      <div className="relative flex-1 w-full flex items-center justify-center overflow-hidden my-3 border border-amber-900/55 bg-gradient-to-b from-[#120e0b]/90 via-[#080706]/95 to-[#050403] shadow-[inset_0_0_45px_rgba(0,0,0,0.95)]">
         <AmadeusSpriteView
           emotion={emotion}
           pose={pose}
@@ -52,23 +58,37 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
           isProcessing={isProcessing}
           memoryPulse={memoryPulse}
           scanlines={scanlines}
-          className="h-full"
+          className="w-full h-full"
         />
       </div>
 
-      {/* Bottom: Voice Oscilloscope & Mood Badge */}
-      <div className="w-full space-y-2">
+      {/* Bottom Acoustic Oscilloscope & Engraved Telemetry Readout */}
+      <div className="relative z-10 w-full space-y-2.5">
         <AudioOscilloscope
           isActive={isSpeaking}
           isListening={isListening}
           className="h-14 w-full"
         />
 
-        <div className="flex items-center justify-between text-[11px] px-1 font-mono text-[#8892a4]">
-          <span>HUMOR:</span>
-          <span className="text-[#f59e0b] font-bold uppercase tracking-wider">
-            {emotion.replace('_', ' ')}
-          </span>
+        <div className="widescreen-steel-deck px-3 py-2 space-y-1">
+          <div className="flex items-baseline text-[11px]">
+            <span className="engraved-serif text-[10px] text-zinc-300 font-bold tracking-wider">
+              ESTADO EMOCIONAL
+            </span>
+            <div className="dotted-leader" />
+            <span className="text-orange-400 font-bold uppercase tracking-wider text-[11px]">
+              {emotion.replace(/_/g, ' ')}
+            </span>
+          </div>
+          <div className="flex items-baseline text-[10px]">
+            <span className="engraved-serif text-[9px] text-zinc-400 font-bold tracking-wider">
+              POSTURA / PALCO
+            </span>
+            <div className="dotted-leader" />
+            <span className="text-amber-200/80 uppercase tracking-wider">
+              {pose.replace(/_/g, ' ')}
+            </span>
+          </div>
         </div>
       </div>
     </div>

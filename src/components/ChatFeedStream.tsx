@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { 
-  Volume2, 
-  Copy, 
-  Check, 
+import {
+  Volume2,
+  Copy,
+  Check,
   Cpu,
   AlertCircle,
   AlertTriangle,
-  X
+  X,
+  Terminal,
 } from 'lucide-react';
 import { ChatMessage } from '../types/amadeus';
 import { KURISU_AVATAR_DEFAULT } from '../services/spriteCatalog';
@@ -38,7 +39,6 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
 
-  // Auto-scroll to latest message or error
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isProcessing, errorNotice, modelNotice]);
@@ -61,9 +61,7 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
     return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   };
 
-  // Helper to parse inline styles: bold, italic, inline code
   const renderInlineFormatted = (text: string): React.ReactNode => {
-    // Split by inline code `...`
     const parts = text.split(/(`[^`]+`)/g);
 
     return parts.map((part, pIdx) => {
@@ -71,21 +69,20 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
         return (
           <code
             key={pIdx}
-            className="px-1.5 py-0.5 mx-0.5 rounded bg-[#161a22] border border-[#2d3546] text-[#f59e0b] font-mono text-[12px]"
+            className="px-1.5 py-0.5 mx-0.5 bg-black/80 border border-amber-900/60 text-amber-300 font-mono text-[12px]"
           >
             {part.slice(1, -1)}
           </code>
         );
       }
 
-      // Parse **bold** inside text
       const boldParts = part.split(/(\*\*[^*]+\*\*)/g);
       return (
         <span key={pIdx}>
           {boldParts.map((bPart, bIdx) => {
             if (bPart.startsWith('**') && bPart.endsWith('**') && bPart.length > 4) {
               return (
-                <strong key={bIdx} className="font-bold text-[#fbbf24]">
+                <strong key={bIdx} className="font-bold text-amber-200">
                   {bPart.slice(2, -2)}
                 </strong>
               );
@@ -97,9 +94,7 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
     });
   };
 
-  // Comprehensive renderer: code blocks, tables, lists, inline markdown
   const renderFormattedContent = (content: string, messageId: string) => {
-    // 1. Check for fenced code blocks
     if (content.includes('```')) {
       const segments: React.ReactNode[] = [];
       const codeRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
@@ -126,30 +121,33 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
         segments.push(
           <div
             key={codeKey}
-            className="my-3 rounded-xl border border-[#283042] bg-[#0c0e13] overflow-hidden text-xs font-mono shadow-md"
+            className="my-3 border border-amber-900/60 bg-[#080706] overflow-hidden text-xs font-mono shadow-lg"
           >
-            <div className="flex items-center justify-between px-3 py-1.5 bg-[#141720] border-b border-[#232a3a] text-[#8894a8]">
-              <span className="text-[11px] font-semibold text-[#f59e0b] uppercase tracking-wider">{lang}</span>
+            <div className="flex items-center justify-between px-3 py-1.5 bg-[#120e0b] border-b border-amber-900/50 text-zinc-400">
+              <span className="text-[11px] font-bold text-orange-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Terminal className="w-3 h-3" />
+                <span>{lang}</span>
+              </span>
               <button
                 type="button"
                 onClick={() => handleCopyCode(codeKey, codeText)}
-                className="flex items-center gap-1 text-[11px] hover:text-white transition-colors"
+                className="flex items-center gap-1 text-[11px] hover:text-amber-200 transition-colors"
                 title="Copiar código"
               >
                 {copiedCodeId === codeKey ? (
                   <>
-                    <Check className="w-3.5 h-3.5 text-[#4ade80]" />
-                    <span className="text-[#4ade80]">Copiado</span>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">Copiado</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-3.5 h-3.5" />
-                    <span>Copiar código</span>
+                    <span>Copiar</span>
                   </>
                 )}
               </button>
             </div>
-            <pre className="p-3 overflow-x-auto text-[#e2e8f0] leading-relaxed">
+            <pre className="p-3 overflow-x-auto text-amber-100/90 leading-relaxed">
               <code>{codeText}</code>
             </pre>
           </div>
@@ -173,7 +171,6 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
       return <div className="space-y-2">{segments}</div>;
     }
 
-    // 2. Check for markdown tables
     const lines = content.split('\n');
     const firstTableIdx = lines.findIndex((l) => l.trim().startsWith('|') && l.trim().endsWith('|'));
 
@@ -196,23 +193,23 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
           {textBefore && (
             <div className="leading-relaxed whitespace-pre-wrap">{renderInlineFormatted(textBefore)}</div>
           )}
-          <div className="overflow-x-auto my-2 rounded-lg border border-[#252b3a] bg-[#0f1218]">
+          <div className="overflow-x-auto my-2 border border-amber-900/60 bg-[#080706]">
             <table className="w-full text-xs font-sans text-left">
-              <thead className="bg-[#181c26] text-[#f59e0b] font-mono border-b border-[#252b3a]">
+              <thead className="bg-[#14100d] text-orange-400 font-mono border-b border-amber-900/50">
                 <tr>
                   {tableLines[0]
                     ?.split('|')
                     .filter((c) => c.trim().length > 0)
                     .map((header, idx) => (
-                      <th key={idx} className="p-2.5 font-bold">
+                      <th key={idx} className="p-2.5 font-bold uppercase tracking-wider">
                         {header.trim()}
                       </th>
                     ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#232836] text-[#cbd5e1]">
+              <tbody className="divide-y divide-amber-900/30 text-zinc-200">
                 {tableLines.slice(2).map((row, rowIdx) => (
-                  <tr key={rowIdx} className="hover:bg-[#181c26]/60 transition-colors">
+                  <tr key={rowIdx} className="hover:bg-orange-500/5 transition-colors">
                     {row
                       .split('|')
                       .filter((c) => c.trim().length > 0)
@@ -233,7 +230,6 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
       );
     }
 
-    // 3. Default rich text rendering with bullet lists and paragraphs
     return (
       <div className="leading-relaxed whitespace-pre-wrap font-sans text-sm">
         {renderInlineFormatted(content)}
@@ -242,18 +238,28 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 chalkboard-grid">
       {messages.length === 0 ? (
-        <div className="h-full flex flex-col items-center justify-center text-center p-8 text-[#717d96] space-y-3 select-none">
-          <div className="w-14 h-14 rounded-2xl border border-[#f59e0b]/40 bg-[#1a140d] flex items-center justify-center text-[#f59e0b] text-xl font-bold font-mono box-glow-nixie">
-            A
+        <div className="h-full flex flex-col items-center justify-center text-center p-8 text-zinc-400 space-y-4 select-none">
+          {/* Clockwork Orbital Gear Emblem */}
+          <div className="relative w-20 h-20 flex items-center justify-center">
+            <svg className="w-20 h-20 spin-cw-slow" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="44" fill="none" stroke="#f97316" strokeWidth="1.5" strokeDasharray="6 4" opacity="0.7" />
+              <circle cx="50" cy="50" r="34" fill="none" stroke="#fbbf24" strokeWidth="1" opacity="0.4" />
+              <path d="M50 2 L50 12 M50 88 L50 98 M2 50 L12 50 M88 50 L98 50" stroke="#f97316" strokeWidth="2" />
+            </svg>
+            <span className="absolute engraved-serif font-bold text-orange-400 text-lg tracking-widest">
+              OA
+            </span>
           </div>
-          <div className="space-y-1">
-            <h2 className="text-base font-bold text-[#f8fafc] font-mono tracking-wider">
-              TERMINAL DO AMADEUS ONLINE
+
+          <div className="space-y-1.5 max-w-md">
+            <h2 className="engraved-heading text-base md:text-lg font-bold tracking-widest">
+              BANCADA NEURAL OPENAMADEUS SINCRONIZADA
             </h2>
-            <p className="text-xs text-[#94a3b8] max-w-md font-sans">
-              A inteligência artificial de Makise Kurisu está sincronizada. Envie uma mensagem pelo prompt abaixo ou inicie pelos tópicos recomendados.
+            <div className="bus-line-horizontal w-48 mx-auto my-1" />
+            <p className="text-xs text-zinc-400 font-sans leading-relaxed">
+              O córtex de diálogo e a memória vetorial estão ativos. Transmita um comando abaixo ou selecione um tópico de investigação.
             </p>
           </div>
         </div>
@@ -264,42 +270,57 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
           return (
             <div
               key={msg.id}
-              className={`flex gap-3 max-w-4xl ${isUser ? 'ml-auto justify-end' : 'mr-auto justify-start'}`}
+              className={`flex gap-3.5 max-w-4xl ${
+                isUser ? 'ml-auto justify-end' : 'mr-auto justify-start'
+              }`}
             >
-              {/* Kurisu Avatar */}
+              {/* Kurisu Astrolabe Avatar */}
               {!isUser && (
-                <div className="w-9 h-9 rounded-full border border-[#f59e0b]/60 overflow-hidden shrink-0 bg-[#161922] flex items-center justify-center p-0.5 box-glow-nixie select-none">
-                  <img
-                    src={personaAvatarUrl}
-                    alt={personaName}
-                    className="w-full h-full object-cover object-top scale-125"
-                  />
+                <div className="relative w-10 h-10 shrink-0 flex items-center justify-center select-none mt-1">
+                  <svg className="absolute inset-0 w-10 h-10 spin-cw-slow pointer-events-none" viewBox="0 0 48 48">
+                    <circle cx="24" cy="24" r="22" fill="none" stroke="#f97316" strokeWidth="1.2" strokeDasharray="4 3" opacity="0.75" />
+                  </svg>
+                  <div className="w-8 h-8 rounded-full border border-orange-400 overflow-hidden bg-[#120e0b] p-0.5 shadow-[0_0_12px_rgba(249,115,22,0.35)]">
+                    <img
+                      src={personaAvatarUrl}
+                      alt={personaName}
+                      className="w-full h-full object-cover object-top scale-125"
+                    />
+                  </div>
                 </div>
               )}
 
               {/* Message Content Container */}
               <div className={`space-y-1.5 ${isUser ? 'text-right max-w-2xl' : 'text-left max-w-3xl flex-1'}`}>
                 {/* Message Header Tag */}
-                <div className="flex items-center gap-2 font-mono text-[11px] select-none">
-                  <span className={`font-bold ${isUser ? 'text-[#cbd5e1]' : 'text-[#f59e0b] text-glow-nixie'}`}>
-                    {isUser ? 'VOCÊ' : personaName.toUpperCase()}
+                <div
+                  className={`flex items-center gap-2 font-mono text-[11px] select-none ${
+                    isUser ? 'justify-end' : 'justify-start'
+                  }`}
+                >
+                  <span
+                    className={`engraved-serif font-bold tracking-widest ${
+                      isUser ? 'text-amber-200/90' : 'text-orange-400'
+                    }`}
+                  >
+                    {isUser ? 'OPERADOR' : personaName.toUpperCase()}
                   </span>
                   {msg.timestamp && (
-                    <span className="text-[10px] text-[#64748b]">{formatTime(msg.timestamp)}</span>
+                    <span className="text-[10px] text-zinc-500">{formatTime(msg.timestamp)}</span>
                   )}
                   {msg.emotion && !isUser && (
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#181c26] border border-[#2d3546] text-[#cbd5e1]">
-                      {msg.emotion.toUpperCase()}
+                    <span className="text-[9px] px-2 py-0.2 bg-black/80 border border-amber-900/60 text-amber-300 uppercase tracking-wider">
+                      {msg.emotion}
                     </span>
                   )}
                 </div>
 
-                {/* Message Bubble Card */}
+                {/* Message Deck Plate */}
                 <div
-                  className={`p-4 rounded-2xl shadow-lg border text-sm leading-relaxed ${
+                  className={`p-4 text-sm leading-relaxed relative ${
                     isUser
-                      ? 'bg-[#1e2330] border-[#2f374a] text-[#f8fafc] rounded-tr-none'
-                      : 'bg-[#151821] border-[#262c3b] text-[#f1f5f9] rounded-tl-none'
+                      ? 'bg-gradient-to-b from-[#1c140e] to-[#0e0a08] border border-amber-700/60 text-amber-50 shadow-[0_6px_20px_rgba(0,0,0,0.8)]'
+                      : 'widescreen-steel-deck text-zinc-100'
                   }`}
                 >
                   {renderFormattedContent(msg.content, msg.id)}
@@ -307,30 +328,34 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
 
                 {/* Action Toolbar for AI message */}
                 {!isUser && (
-                  <div className="flex items-center gap-3 text-[11px] font-mono text-[#718096] pt-0.5 select-none">
+                  <div className="flex items-center gap-3 text-[11px] font-mono text-zinc-400 pt-0.5 select-none">
                     <button
                       onClick={() => onReplayAudio(msg.content, msg.emotion)}
-                      className="hover:text-[#f59e0b] flex items-center gap-1 transition-colors"
-                      title="Ouvir Resposta por Voz (TTS)"
+                      className="hover:text-amber-200 flex items-center gap-1 transition-colors"
+                      title="Vocalizar Resposta (TTS)"
                     >
-                      <Volume2 className="w-3.5 h-3.5 text-[#f59e0b]" />
-                      <span>Ouvir</span>
+                      <Volume2 className="w-3.5 h-3.5 text-orange-400" />
+                      <span className="engraved-serif text-[10px] font-bold tracking-wider">
+                        VOCALIZAR
+                      </span>
                     </button>
-                    <span>•</span>
+                    <span className="text-amber-900">•</span>
                     <button
                       onClick={() => handleCopy(msg.id, msg.content)}
-                      className="hover:text-white flex items-center gap-1 transition-colors"
-                      title="Copiar Texto"
+                      className="hover:text-amber-200 flex items-center gap-1 transition-colors"
+                      title="Copiar Registro"
                     >
                       {copiedId === msg.id ? (
                         <>
-                          <Check className="w-3.5 h-3.5 text-[#4ade80]" />
-                          <span className="text-[#4ade80]">Copiado</span>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-emerald-400 text-[10px] font-bold">COPIADO</span>
                         </>
                       ) : (
                         <>
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>Copiar</span>
+                          <Copy className="w-3.5 h-3.5 text-orange-400/80" />
+                          <span className="engraved-serif text-[10px] font-bold tracking-wider">
+                            COPIAR
+                          </span>
                         </>
                       )}
                     </button>
@@ -338,10 +363,10 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
                 )}
               </div>
 
-              {/* User Avatar */}
+              {/* Operator Badge */}
               {isUser && (
-                <div className="w-9 h-9 rounded-full border border-[#f59e0b]/50 bg-[#1a140d] text-[#f59e0b] flex items-center justify-center font-mono font-bold text-xs shrink-0 select-none">
-                  U
+                <div className="w-9 h-9 rounded-full border border-amber-700/70 bg-[#18110c] text-amber-300 flex items-center justify-center engraved-serif font-bold text-xs shrink-0 select-none mt-1 shadow-[0_0_10px_rgba(249,115,22,0.2)]">
+                  OP
                 </div>
               )}
             </div>
@@ -352,25 +377,25 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
       {/* Processing / Generating Indicator */}
       {isProcessing && (
         <div className="flex gap-3 max-w-3xl mr-auto items-center">
-          <div className="w-9 h-9 rounded-full border border-[#f59e0b]/40 overflow-hidden shrink-0 bg-[#161922] flex items-center justify-center p-0.5">
-            <Cpu className="w-4 h-4 text-[#f59e0b] animate-spin" />
+          <div className="w-9 h-9 rounded-full border border-orange-500/50 shrink-0 bg-[#120e0b] flex items-center justify-center">
+            <Cpu className="w-4 h-4 text-orange-400 animate-spin" />
           </div>
-          <div className="p-3.5 rounded-2xl rounded-tl-none bg-[#151821] border border-[#262c3b] text-xs font-mono text-[#f59e0b] flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[#f59e0b] animate-ping" />
-            <span>Kurisu está formulando resposta e recuperando memórias...</span>
+          <div className="widescreen-steel-deck px-4 py-3 text-xs font-mono text-amber-200 flex items-center gap-2.5">
+            <span className="w-2 h-2 rounded-full bg-orange-400 animate-ping" />
+            <span>Processando tensores de diálogo e consultando memória vetorial...</span>
           </div>
         </div>
       )}
 
       {/* Transient Error Notice Banner */}
       {errorNotice && (
-        <div className="flex gap-3 max-w-3xl mr-auto items-center p-3 rounded-xl border border-[#ef4444]/60 bg-[#260e0e]/95 text-xs font-mono text-[#fca5a5] shadow-lg animate-fadeIn">
-          <AlertCircle className="w-4 h-4 text-[#ef4444] shrink-0" />
+        <div className="flex gap-3 max-w-3xl mr-auto items-center p-3.5 border border-rose-500/70 bg-rose-950/40 text-xs font-mono text-rose-200 shadow-lg animate-fadeIn">
+          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
           <div className="flex-1 font-sans">{errorNotice}</div>
           {onDismissError && (
             <button
               onClick={onDismissError}
-              className="text-[#94a3b8] hover:text-white p-1 rounded"
+              className="text-rose-300 hover:text-white p-1"
               title="Fechar aviso"
             >
               <X className="w-3.5 h-3.5" />
@@ -381,13 +406,13 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
 
       {/* Informative Decommission / Migration Notice Banner */}
       {modelNotice && (
-        <div className="flex gap-3 max-w-3xl mr-auto items-center p-3 rounded-xl border border-[#f59e0b]/60 bg-[#271d0e]/95 text-xs font-mono text-[#fde68a] shadow-lg animate-fadeIn">
-          <AlertTriangle className="w-4 h-4 text-[#f59e0b] shrink-0" />
+        <div className="flex gap-3 max-w-3xl mr-auto items-center p-3.5 border border-orange-500/70 bg-amber-950/40 text-xs font-mono text-amber-200 shadow-lg animate-fadeIn">
+          <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" />
           <div className="flex-1 font-sans">{modelNotice}</div>
           {onDismissModelNotice && (
             <button
               onClick={onDismissModelNotice}
-              className="text-[#fde68a]/70 hover:text-white p-1 rounded transition-colors"
+              className="text-amber-300 hover:text-white p-1 transition-colors"
               title="Fechar aviso de modelo"
             >
               <X className="w-3.5 h-3.5" />
