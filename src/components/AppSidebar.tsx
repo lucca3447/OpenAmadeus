@@ -152,7 +152,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                     </p>
                     <div className="flex items-center gap-2 text-[10px] text-zinc-500 mt-0.5 font-mono">
                       <span className={isActive ? 'text-amber-300/80' : ''}>
-                        {formatDate(session.startedAt)}
+                        {formatDate(session.endedAt || session.startedAt)}
                       </span>
                       <span>•</span>
                       <span>{session.messageCount} blocos</span>

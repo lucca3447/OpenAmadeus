@@ -242,7 +242,7 @@ export const App: React.FC = () => {
             remoteSessions.forEach((s) => mergedMap.set(s.id, s));
             localLogs.forEach((s) => mergedMap.set(s.id, s));
             const merged = Array.from(mergedMap.values()).sort(
-              (a, b) => (b.startedAt || 0) - (a.startedAt || 0)
+              (a, b) => (b.endedAt || b.startedAt || 0) - (a.endedAt || a.startedAt || 0)
             );
             localStorage.setItem('amadeus_sessions_log', JSON.stringify(merged.slice(0, 30)));
             setSessions(merged.slice(0, 30));
@@ -512,7 +512,7 @@ export const App: React.FC = () => {
     setIsSpeaking(false);
     setErrorNotice(null);
     if (history.length > 0) {
-      MemoryService.saveActiveSession(sessionId, history);
+      MemoryService.saveActiveSession(sessionId, history, false);
     }
     const newSessionId = MemoryService.archiveAndStartNewSession(history);
     setSessionId(newSessionId);
@@ -531,25 +531,26 @@ export const App: React.FC = () => {
     setCurrentSubtitle(INITIAL_GREETING);
     setCurrentEmotion('neutral');
     setCurrentPose('default');
-    MemoryService.saveActiveSession(newSessionId, initialMsgs);
+    MemoryService.saveActiveSession(newSessionId, initialMsgs, true);
     setSessions(MemoryService.getSessionLogs());
   };
 
-  // Switch to a previous session from the sidebar
+  // Switch to a previous session from the sidebar (without altering list order)
   const handleSelectSession = async (selectedId: string) => {
+    if (selectedId === sessionId) return;
     SpeechService.stopSpeaking();
     setIsSpeaking(false);
     setErrorNotice(null);
 
     if (history.length > 0) {
-      MemoryService.saveActiveSession(sessionId, history);
+      MemoryService.saveActiveSession(sessionId, history, false);
     }
 
     let loaded = MemoryService.loadSession(selectedId);
     if (!loaded || loaded.length === 0) {
       loaded = await BackendService.getSessionMessages(selectedId);
       if (loaded && loaded.length > 0) {
-        MemoryService.saveActiveSession(selectedId, loaded);
+        MemoryService.saveActiveSession(selectedId, loaded, false);
       }
     }
 
