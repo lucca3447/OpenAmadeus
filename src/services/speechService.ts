@@ -30,8 +30,11 @@ export interface SpeakOptions {
   rvcModel?: string;
   rvcPitch?: number;
   rvcIndexRate?: number;
+  allowTtsFallback?: boolean;
+  allowedTtsFallbacks?: string[];
   onStart?: () => void;
   onEnd?: () => void;
+  onError?: (errMessage: string) => void;
 }
 
 /**
@@ -118,6 +121,10 @@ export class SpeechService {
   private static isListening = false;
   private static micMode: 'ptt' | 'hands_free' = 'ptt';
   private static groqApiKey = '';
+  private static sttKeyMode: 'unified' | 'separate' = 'unified';
+  private static separateGroqSttKey = '';
+  private static allowSttWebSpeechFallback = true;
+  private static vadSensitivity = 1.0;
 
   // Microphone Web Audio & MediaRecorder VAD state
   private static micStream: MediaStream | null = null;
@@ -167,27 +174,44 @@ export class SpeechService {
   }
 
   /**
-   * Updates microphone mode ('ptt' | 'hands_free') and caches Groq key when available
+   * Updates microphone mode, Whisper key policy, WebSpeech fallback policy and VAD sensitivity
    */
-  static setMicConfig(config: { mode?: 'ptt' | 'hands_free'; apiKey?: string }): void {
+  static setMicConfig(config: {
+    mode?: 'ptt' | 'hands_free';
+    apiKey?: string;
+    sttKeyMode?: 'unified' | 'separate';
+    separateGroqSttKey?: string;
+    allowSttWebSpeechFallback?: boolean;
+    vadSensitivity?: number;
+  }): void {
     const prevMode = this.micMode;
     if (config.mode) {
       this.micMode = config.mode;
     }
+    if (config.sttKeyMode) {
+      this.sttKeyMode = config.sttKeyMode;
+    }
+    if (config.separateGroqSttKey !== undefined) {
+      const sep = config.separateGroqSttKey.trim();
+      this.separateGroqSttKey = sep;
+      try {
+        if (sep) localStorage.setItem('amadeus_groq_stt_key', sep);
+        else localStorage.removeItem('amadeus_groq_stt_key');
+      } catch {}
+    } else if (!this.separateGroqSttKey) {
+      try {
+        this.separateGroqSttKey = (localStorage.getItem('amadeus_groq_stt_key') || '').trim();
+      } catch {}
+    }
+    if (config.allowSttWebSpeechFallback !== undefined) {
+      this.allowSttWebSpeechFallback = config.allowSttWebSpeechFallback;
+    }
+    if (typeof config.vadSensitivity === 'number' && !Number.isNaN(config.vadSensitivity)) {
+      this.vadSensitivity = Math.max(0.5, Math.min(2.0, config.vadSensitivity));
+    }
     if (config.apiKey !== undefined) {
       const trimmed = config.apiKey.trim();
-      if (trimmed.startsWith('gsk_')) {
-        this.groqApiKey = trimmed;
-        try {
-          localStorage.setItem('amadeus_groq_stt_key', trimmed);
-        } catch {}
-      } else {
-        try {
-          this.groqApiKey = localStorage.getItem('amadeus_groq_stt_key') || '';
-        } catch {
-          this.groqApiKey = '';
-        }
-      }
+      this.groqApiKey = trimmed.startsWith('gsk_') ? trimmed : '';
     }
     if (this.isListening && prevMode !== this.micMode) {
       this.stopListening(true);
@@ -195,11 +219,22 @@ export class SpeechService {
     }
   }
 
-  private static getEffectiveGroqKey(): string {
+  static getEffectiveGroqKey(): string {
+    if (this.sttKeyMode === 'separate') {
+      const sep = this.separateGroqSttKey || (() => {
+        try {
+          return (localStorage.getItem('amadeus_groq_stt_key') || '').trim();
+        } catch {
+          return '';
+        }
+      })();
+      return sep.startsWith('gsk_') ? sep : '';
+    }
+    // Unified mode: use main LLM key if it is a Groq key (gsk_...)
     if (this.groqApiKey.startsWith('gsk_')) return this.groqApiKey;
     try {
-      const cached = localStorage.getItem('amadeus_groq_stt_key') || localStorage.getItem('amadeus_gemini_key') || '';
-      return cached.trim().startsWith('gsk_') ? cached.trim() : '';
+      const mainKey = (localStorage.getItem('amadeus_gemini_key') || '').trim();
+      return mainKey.startsWith('gsk_') ? mainKey : '';
     } catch {
       return '';
     }
@@ -384,7 +419,7 @@ export class SpeechService {
     const key = this.getEffectiveGroqKey();
     if (!key) return;
 
-    this.onInterimCb?.('⏳ Transcrevendo fala (Whisper Turbo)...');
+    this.onInterimCb?.('Transcrevendo fala (Whisper Turbo)...');
     try {
       const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm';
       const formData = new FormData();
@@ -451,11 +486,13 @@ export class SpeechService {
         noiseFloor = Math.min(0.045, noiseFloor * 0.98 + rms * 0.02);
       }
 
-      const onsetThreshold = Math.max(0.020, noiseFloor * 2.1 + 0.009);
-      const sustainThreshold = Math.max(0.015, noiseFloor * 1.6 + 0.006);
+      // Apply user VAD sensitivity (higher vadSensitivity = lower threshold = easier to trigger)
+      const sensScale = 1 / Math.max(0.5, Math.min(2.0, this.vadSensitivity || 1.0));
+      const onsetThreshold = Math.max(0.012, (noiseFloor * 2.1 + 0.009) * sensScale);
+      const sustainThreshold = Math.max(0.009, (noiseFloor * 1.6 + 0.006) * sensScale);
       const baseThreshold = this.hasVocalActivity ? sustainThreshold : onsetThreshold;
       // Higher threshold while Kurisu is speaking to prevent speaker echo false barge-ins
-      const threshold = this.isSpeakingAudio ? Math.max(onsetThreshold * 2.2, 0.075) : baseThreshold;
+      const threshold = this.isSpeakingAudio ? Math.max(onsetThreshold * 2.2, 0.065 * sensScale) : baseThreshold;
       const now = Date.now();
 
       if (rms > threshold) {
@@ -546,6 +583,14 @@ export class SpeechService {
     }
 
     this.usingGroqRecorder = false;
+    if (!this.allowSttWebSpeechFallback) {
+      this.stopListening(true);
+      this.onErrorCb?.(
+        '[MODO ESTRITO STT] Nenhuma chave Groq (gsk_...) ativa para o Whisper e o fallback para reconhecimento do navegador está desativado.'
+      );
+      return false;
+    }
+
     if (stream) {
       this.startVadLoop();
     }
@@ -769,29 +814,38 @@ export class SpeechService {
 
     this.stopSpeaking();
 
-    // Check if neural TTS should be used (default true if backend online and edge-tts available)
-    const health = await BackendService.checkHealth().catch(() => null);
-    const useNeural = options.useNeural !== false && Boolean(health && health.edgeTtsAvailable !== false);
+    const allowFallback = options.allowTtsFallback !== false;
+    const allowedFallbacks = options.allowedTtsFallbacks || ['qwen_local', 'kokoro', 'edge_rvc'];
+    const canFallbackWebSpeech = allowFallback && allowedFallbacks.includes('web_speech');
 
-    if (useNeural || options.engine === 'qwen3') {
+    const health = await BackendService.checkHealth().catch(() => null);
+    const useNeural = options.useNeural !== false && Boolean(health);
+
+    if (useNeural || options.engine === 'qwen3' || options.engine === 'kokoro') {
       try {
         await this.speakNeural(cleanText, options);
         return;
       } catch (err: any) {
-        // If aborted or interrupted cleanly, do not fall back to robotic browser voice
         if (err?.name === 'AbortError' || String(err?.message || '').includes('interrupted')) {
           return;
         }
         console.warn('[SpeechService] Neural TTS playback failed:', err);
-        // Only fall back to browser Web Speech if user specifically enabled browser voice
-        if (options.engine !== 'qwen3' && options.useNeural === false) {
+        if (canFallbackWebSpeech) {
           this.speakWebSpeech(cleanText, options);
+          return;
         }
+        options.onEnd?.();
+        options.onError?.(err?.message || '[MODO ESTRITO DE VOZ] Falha ao sintetizar áudio neural.');
         return;
       }
     }
 
-    // Fallback to browser Web Speech API only if explicitly configured
+    if (!allowFallback && options.useNeural !== false) {
+      options.onEnd?.();
+      options.onError?.('[MODO ESTRITO DE VOZ] Servidor de síntese offline e fallback para navegador bloqueado.');
+      return;
+    }
+
     this.speakWebSpeech(cleanText, options);
   }
 
@@ -832,6 +886,8 @@ export class SpeechService {
           rvcModel: options.rvcModel || 'KurisuRVCv147',
           rvcPitch: options.rvcPitch ?? 0,
           rvcIndexRate: options.rvcIndexRate ?? 0.75,
+          allowTtsFallback: options.allowTtsFallback !== false,
+          allowedTtsFallbacks: options.allowedTtsFallbacks || ['qwen_local', 'kokoro', 'edge_rvc'],
         }),
       });
     } catch (err: any) {
@@ -842,7 +898,9 @@ export class SpeechService {
     }
 
     if (!res.ok) {
-      throw new Error(`TTS endpoint returned ${res.status}`);
+      const errJson = await res.json().catch(() => null);
+      const detail = errJson?.detail || `Erro HTTP ${res.status} no servidor de síntese vocal.`;
+      throw new Error(detail);
     }
 
     const contentType = res.headers.get('content-type') || '';

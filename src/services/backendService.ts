@@ -74,13 +74,16 @@ export class BackendService {
   }
 
   /**
-   * Queries Amadeus via the Python backend (with ChromaDB semantic retrieval & SQLite persistence)
+   * Queries OpenAmadeus via the Python backend (with ChromaDB semantic retrieval & SQLite persistence)
    */
   static async queryChat(
     message: string,
     sessionId: string | null,
     apiKey: string,
-    history: ChatMessage[]
+    history: ChatMessage[],
+    selectedModel?: string,
+    allowModelFallback: boolean = true,
+    allowOfflineSimulatorFallback: boolean = true
   ): Promise<BackendChatResponse> {
     const formattedHistory = history.slice(-20).map((msg) => ({
       role: msg.sender === 'user' ? 'user' : 'model',
@@ -99,6 +102,9 @@ export class BackendService {
         personaId: 'kurisu',
         apiKey: apiKey || null,
         history: formattedHistory,
+        selectedModel: selectedModel || null,
+        allowModelFallback,
+        allowOfflineSimulatorFallback,
       }),
     });
 
@@ -204,7 +210,7 @@ export class BackendService {
   }
 
   /**
-   * Fetches real-time Worldline Divergence from Divergence Meter
+   * Fetches system telemetry for the Nixie tube rack
    */
   static async getDivergence(): Promise<{
     divergence: string;
@@ -221,9 +227,9 @@ export class BackendService {
       // Fallback
     }
     return {
-      divergence: '1.048596',
-      worldline: 'Steins Gate (Linha Prometida)',
-      source: 'canonical_fallback',
+      divergence: '24.000',
+      worldline: 'PCM16 Neural Audio Bus',
+      source: 'local_telemetry',
       timestamp: Date.now() / 1000,
     };
   }
