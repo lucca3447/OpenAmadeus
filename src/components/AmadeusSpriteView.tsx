@@ -8,7 +8,7 @@ import {
   resolveKurisuSprite,
 } from '../services/spriteCatalog';
 import { SpeechService } from '../services/speechService';
-import { Camera } from 'lucide-react';
+import { Camera, User } from 'lucide-react';
 
 interface AmadeusSpriteViewProps {
   emotion: Emotion;
@@ -24,9 +24,17 @@ interface AmadeusSpriteViewProps {
 
 const CAMERA_CYCLE: CameraMode[] = ['auto', 'closeup', 'medium', 'full'];
 const CAMERA_LABELS: Record<CameraFraming, string> = {
-  closeup: 'JL',
-  medium: 'JM',
-  full: 'JS',
+  closeup: 'CLOSE-UP (JL)',
+  medium: 'MÉDIO (JM)',
+  full: 'INTEIRO (JS)',
+};
+
+const POSE_CYCLE: Array<'auto' | CharacterPose> = ['auto', 'default', 'crossed_arms', 'backview'];
+const POSE_LABELS: Record<'auto' | CharacterPose, string> = {
+  auto: 'POSE: AUTO',
+  default: 'POSE: FRONTAL',
+  crossed_arms: 'POSE: BRAÇOS CRUZADOS',
+  backview: 'POSE: COSTAS',
 };
 
 export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
@@ -50,6 +58,11 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     return saved === 'closeup' || saved === 'medium' || saved === 'full' ? saved : 'auto';
   });
 
+  const [poseOverride, setPoseOverride] = useState<'auto' | CharacterPose>(() => {
+    const saved = localStorage.getItem('amadeus_pose_override');
+    return saved === 'default' || saved === 'crossed_arms' || saved === 'backview' ? saved : 'auto';
+  });
+
   // Parallax state (-1..1 normalized mouse coords)
   const mouseRafRef = useRef<number | null>(null);
   const [parallax, setParallax] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -63,29 +76,28 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
   const effectiveEmotion = idleGazeOverride || emotion;
   const canonicalEmotion = normalizeEmotion(effectiveEmotion);
-  const effectivePose: CharacterPose =
+  const basePose: CharacterPose =
     pose === 'backview'
       ? 'backview'
       : pose === 'crossed_arms'
-      ? 'crossed_arms'
-      : 'default';
+        ? 'crossed_arms'
+        : 'default';
+
+  const effectivePose: CharacterPose = poseOverride !== 'auto' ? poseOverride : basePose;
 
   const activeCamera: CameraFraming =
     cameraMode !== 'auto'
       ? cameraMode
       : camera || inferCameraFraming(effectiveEmotion, effectivePose);
 
-  // Preload sprites whenever active camera changes
   useEffect(() => {
     preloadPrimarySprites(activeCamera);
   }, [activeCamera]);
 
-  // Preload mouth flap sequence when target emotion/pose/camera updates
   useEffect(() => {
     preloadEmotionSprites(effectiveEmotion, effectivePose, activeCamera);
   }, [effectiveEmotion, effectivePose, activeCamera]);
 
-  // Cycle camera mode on button click
   const handleCycleCamera = () => {
     const nextIdx = (CAMERA_CYCLE.indexOf(cameraMode) + 1) % CAMERA_CYCLE.length;
     const nextMode = CAMERA_CYCLE[nextIdx];
@@ -93,7 +105,13 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     localStorage.setItem('amadeus_camera_mode', nextMode);
   };
 
-  // Track canonical emotion in ref for the autonomous blink loop
+  const handleCyclePose = () => {
+    const nextIdx = (POSE_CYCLE.indexOf(poseOverride) + 1) % POSE_CYCLE.length;
+    const nextPose = POSE_CYCLE[nextIdx];
+    setPoseOverride(nextPose);
+    localStorage.setItem('amadeus_pose_override', nextPose);
+  };
+
   const emotionRef = useRef(canonicalEmotion);
   emotionRef.current = canonicalEmotion;
 
@@ -102,9 +120,8 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     const timers: number[] = [];
 
     const scheduleNextBlink = () => {
-      const delay = Math.floor(Math.random() * 2400) + 3200; // 3.2s - 5.6s
+      const delay = Math.floor(Math.random() * 2400) + 3200;
       const t1 = window.setTimeout(() => {
-        // Skip blink if character already has eyes closed or is actively winking
         if (emotionRef.current === 'eyes_closed' || emotionRef.current === 'wink') {
           scheduleNextBlink();
           return;
@@ -112,7 +129,6 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
         setIsBlinking(true);
         const t2 = window.setTimeout(() => {
           setIsBlinking(false);
-          // 22% chance of a quick double-blink
           if (Math.random() < 0.22) {
             const t3 = window.setTimeout(() => {
               setIsBlinking(true);
@@ -136,7 +152,7 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  // Autonomous Idle Saccades (look_side glance every ~12s of neutral silence)
+  // Autonomous Idle Saccades
   useEffect(() => {
     setIdleGazeOverride(null);
 
@@ -190,7 +206,6 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
       }
     });
 
-    // Fallback lip-flap animator for browser TTS when no Web Audio stream is active
     let flapStep = 0;
     lipFlapIntervalRef.current = window.setInterval(() => {
       if (!isSpeaking) return;
@@ -214,7 +229,6 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     };
   }, [isSpeaking]);
 
-  // Determine current image frame
   const activeBlinking = isBlinking && !isSpeaking;
   const currentFrameUrl = resolveKurisuSprite(
     effectiveEmotion,
@@ -224,7 +238,6 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     activeCamera
   );
 
-  // Detect Pose or Camera shifts for Double-Buffer Crossfade and Spring Bounce
   const lastPoseRef = useRef<CharacterPose>(effectivePose);
   const lastCameraRef = useRef<CameraFraming>(activeCamera);
   const lastDisplayedUrlRef = useRef<string>(currentFrameUrl);
@@ -251,7 +264,6 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     lastDisplayedUrlRef.current = currentFrameUrl;
   }, [effectivePose, activeCamera, currentFrameUrl]);
 
-  // Trigger 130ms Cognitive Glitch when memories are recalled
   useEffect(() => {
     if (!memoryPulse) return;
     setIsGlitching(true);
@@ -274,11 +286,11 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
   const breatheClass = isAgitated ? 'animate-amadeus-breathe-fast' : 'animate-amadeus-breathe';
   const voiceBounceY = isSpeaking ? -Math.round(voiceAmplitude * 2.5) : isListening ? -1 : 0;
-  const glowAlpha = (0.22 + voiceAmplitude * 0.36).toFixed(2);
+  const glowAlpha = (0.24 + voiceAmplitude * 0.38).toFixed(2);
 
   return (
     <div
-      className={`relative w-full h-full flex items-center justify-center overflow-hidden select-none ${className}`}
+      className={`relative w-full h-full flex flex-col items-center justify-center overflow-hidden select-none ${className}`}
       onMouseMove={(e) => {
         if (mouseRafRef.current) return;
         const rect = e.currentTarget.getBoundingClientRect();
@@ -297,60 +309,87 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
         setParallax({ x: 0, y: 0 });
       }}
     >
-      {/* Subtle 2.5D Background Telemetry Ring (moves opposite to cursor) */}
+      {/* Corner Optical Reticles (+) */}
+      <div className="absolute top-2.5 left-2.5 w-3 h-3 border-t border-l border-orange-500/50 pointer-events-none z-20" />
+      <div className="absolute top-2.5 right-2.5 w-3 h-3 border-t border-r border-orange-500/50 pointer-events-none z-20" />
+      <div className="absolute bottom-2.5 left-2.5 w-3 h-3 border-b border-l border-orange-500/50 pointer-events-none z-20" />
+      <div className="absolute bottom-2.5 right-2.5 w-3 h-3 border-b border-r border-orange-500/50 pointer-events-none z-20" />
+
+      {/* Top Centered Position & Camera Control Bar */}
+      <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleCyclePose}
+          title="Alternar posição/postura da Kurisu (Auto / Frontal / Braços Cruzados / Costas)"
+          className="copper-capsule flex items-center gap-1.5 px-3 py-1 text-[10px] font-mono text-amber-200 hover:text-white whitespace-nowrap"
+        >
+          <User className="w-3 h-3 text-orange-400 shrink-0" />
+          <span className="engraved-serif font-bold tracking-wider">
+            {POSE_LABELS[poseOverride]}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleCycleCamera}
+          title="Alternar distância/enquadramento (Auto / Close-up JL / Meio-Corpo JM / Corpo Inteiro JS)"
+          className="copper-capsule flex items-center gap-1.5 px-3 py-1 text-[10px] font-mono text-amber-200 hover:text-white whitespace-nowrap"
+        >
+          <Camera className="w-3 h-3 text-orange-400 shrink-0" />
+          <span className="engraved-serif font-bold tracking-wider">
+            {cameraMode === 'auto'
+              ? `AUTO · ${CAMERA_LABELS[activeCamera]}`
+              : CAMERA_LABELS[activeCamera]}
+          </span>
+        </button>
+      </div>
+
+      {/* Concentric Clockwork Astrolabe Rings behind Kurisu (centered) */}
       <div
-        className="absolute w-72 h-72 rounded-full border border-[#f59e0b]/10 pointer-events-none transition-transform duration-300 ease-out"
+        className="absolute inset-0 flex items-center justify-center pointer-events-none transition-transform duration-300 ease-out"
         style={{
-          transform: `translate3d(${(-parallax.x * 5).toFixed(1)}px, ${(-parallax.y * 5).toFixed(1)}px, 0)`,
+          transform: `translate3d(${(-parallax.x * 6).toFixed(1)}px, ${(-parallax.y * 6).toFixed(1)}px, 0)`,
         }}
-      />
-
-      {/* Discreet Camera Framing Button (Auto / JL / JM / JS) */}
-      <button
-        type="button"
-        onClick={handleCycleCamera}
-        title="Alternar enquadramento de câmera (Auto / Meio-Corpo JM / Close-up JL / Corpo Inteiro JS)"
-        className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#121620]/80 hover:bg-[#1c2232] border border-[#2a3246] text-[10px] font-mono text-[#94a3b8] hover:text-[#f59e0b] transition-colors shadow-sm"
       >
-        <Camera className="w-3 h-3 text-[#f59e0b]" />
-        <span>
-          {cameraMode === 'auto'
-            ? `AUTO·${CAMERA_LABELS[activeCamera]}`
-            : CAMERA_LABELS[activeCamera]}
-        </span>
-      </button>
+        <svg className="w-72 h-72 md:w-80 md:h-80 spin-cw-slow opacity-25" viewBox="0 0 260 260">
+          <circle cx="130" cy="130" r="120" fill="none" stroke="#f97316" strokeWidth="1" strokeDasharray="8 4" />
+          <circle cx="130" cy="130" r="102" fill="none" stroke="#fbbf24" strokeWidth="0.75" />
+          <path d="M130 4 L130 18 M130 242 L130 256 M4 130 L18 130 M242 130 L256 130" stroke="#f97316" strokeWidth="1.5" />
+        </svg>
+        <svg className="absolute w-56 h-56 md:w-64 md:h-64 spin-ccw-med opacity-20" viewBox="0 0 200 200">
+          <circle cx="100" cy="100" r="90" fill="none" stroke="#f97316" strokeWidth="1.2" strokeDasharray="18 10" />
+        </svg>
+      </div>
 
-      {/* Character Sprite Stage with 2.5D Foreground Parallax & Voice Micro-Bounce */}
+      {/* Centered Character Sprite Stage */}
       <div
-        className="relative z-10 w-full h-full flex items-end justify-center pointer-events-none pt-4 pb-1 transition-transform duration-150 ease-out"
+        className="relative z-10 w-full h-full flex items-center justify-center pointer-events-none pt-11 pb-2 px-2 transition-transform duration-150 ease-out"
         style={{
           transform: `translate3d(${(parallax.x * 3.5).toFixed(1)}px, ${(parallax.y * 2 + voiceBounceY).toFixed(1)}px, 0)`,
         }}
       >
         {!imageError ? (
           <div
-            className={`relative h-full max-h-full flex items-end justify-center ${breatheClass} ${
+            className={`relative w-full h-full flex items-center justify-center ${breatheClass} ${
               isPoseShifting ? 'animate-amadeus-pose-shift' : ''
             } ${isGlitching ? 'animate-amadeus-glitch' : ''}`}
           >
-            {/* Previous Frame Crossfade Layer during Pose/Camera Shifts */}
             {prevFrameUrl && prevFrameUrl !== currentFrameUrl && (
               <img
                 src={prevFrameUrl}
                 alt=""
                 aria-hidden="true"
-                className="absolute bottom-0 h-full max-h-full w-auto object-contain object-bottom animate-fadeOutQuick pointer-events-none"
+                className="absolute inset-0 m-auto max-h-full max-w-full w-auto h-auto object-contain object-center animate-fadeOutQuick pointer-events-none"
                 draggable={false}
               />
             )}
 
-            {/* Primary Active Sprite */}
             <img
               src={currentFrameUrl}
               alt="OpenAmadeus Companion Sprite"
-              className="h-full max-h-full w-auto object-contain object-bottom transition-opacity duration-150"
+              className="mx-auto my-auto max-h-full max-w-full w-auto h-auto object-contain object-center transition-opacity duration-150"
               style={{
-                filter: `drop-shadow(0 0 ${Math.round(28 + voiceAmplitude * 18)}px rgba(245, 158, 11, ${glowAlpha}))`,
+                filter: `drop-shadow(0 0 ${Math.round(28 + voiceAmplitude * 18)}px rgba(249, 115, 22, ${glowAlpha}))`,
               }}
               draggable={false}
               onError={() => setImageError(true)}
@@ -358,24 +397,18 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
             />
           </div>
         ) : (
-          /* Holographic Silhouette Fallback (Zero Copyright / Modular Avatar Mode) */
+          /* Holographic Silhouette Fallback */
           <div className="relative w-full h-full flex flex-col items-center justify-center p-6 text-center select-none animate-fadeIn">
             <div className="relative flex items-center justify-center mb-4">
               <div
-                className={`absolute w-36 h-36 rounded-full border border-[#f59e0b]/40 transition-all duration-300 ${
+                className={`absolute w-36 h-36 rounded-full border border-orange-500/40 transition-all duration-300 ${
                   isSpeaking ? 'scale-125 opacity-80 animate-ping' : 'scale-100 opacity-20'
                 }`}
               />
-              <div
-                className={`absolute w-44 h-44 rounded-full border border-[#38bdf8]/30 transition-all duration-500 ${
-                  isSpeaking ? 'scale-110 opacity-60' : 'scale-90 opacity-10'
-                }`}
-              />
-
-              <div className="relative w-28 h-28 rounded-full bg-gradient-to-b from-[#1c2230] to-[#0c0e14] border-2 border-[#f59e0b] shadow-[0_0_35px_rgba(245,158,11,0.35)] flex items-center justify-center overflow-hidden">
+              <div className="relative w-28 h-28 rounded-full bg-gradient-to-b from-[#1c140e] to-[#090706] border-2 border-orange-400 shadow-[0_0_35px_rgba(249,115,22,0.35)] flex items-center justify-center overflow-hidden">
                 <svg
                   viewBox="0 0 100 100"
-                  className={`w-20 h-20 text-[#f59e0b] transition-transform duration-300 ${
+                  className={`w-20 h-20 text-orange-400 transition-transform duration-300 ${
                     isSpeaking ? 'scale-105' : 'scale-100'
                   }`}
                   fill="currentColor"
@@ -387,18 +420,16 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
                   <path d="M30 38 Q25 50 28 65 Q33 55 35 48 Z" opacity="0.6" />
                   <path d="M70 38 Q75 50 72 65 Q67 55 65 48 Z" opacity="0.6" />
                 </svg>
-
-                <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#f59e0b]/15 to-transparent animate-pulse pointer-events-none" />
               </div>
             </div>
 
             <div className="space-y-1.5 max-w-xs">
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#161b26] border border-[#2d374d] text-[#f59e0b] tracking-wider font-semibold">
-                MODO SILHUETA HOLOGRÁFICA
+              <span className="engraved-serif text-[10px] px-2.5 py-0.5 bg-black/80 border border-amber-900/60 text-orange-400 tracking-widest font-bold">
+                SILHUETA VETORIAL ATIVA
               </span>
-              <p className="text-[11px] text-[#8892a4] font-mono leading-relaxed">
-                Assets visuais da persona não encontrados. Para usar sprites de anime, execute{' '}
-                <code className="text-[#38bdf8] bg-[#121620] px-1 py-0.5 rounded">
+              <p className="text-[11px] text-zinc-400 font-mono leading-relaxed">
+                Sprites locais não detectados. Para vincular os sprites, execute{' '}
+                <code className="text-amber-300 bg-black/80 px-1 py-0.5 border border-amber-900/50">
                   python scripts/setup_sprites.py
                 </code>
               </p>
@@ -409,14 +440,14 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
       {/* Neural Processing Scan Beam when LLM is thinking */}
       {isProcessing && (
-        <div className="absolute inset-x-0 h-16 bg-gradient-to-b from-transparent via-[#f59e0b]/10 to-transparent animate-pulse pointer-events-none z-20" />
+        <div className="absolute inset-x-0 h-16 bg-gradient-to-b from-transparent via-orange-500/15 to-transparent animate-pulse pointer-events-none z-20" />
       )}
 
-      {/* Local Scanline Overlay if enabled specifically */}
+      {/* Local Scanline Overlay if enabled */}
       {scanlines && <div className="absolute inset-0 crt-scanlines pointer-events-none z-20" />}
 
       {/* Subtle Depth Vignette */}
-      <div className="absolute inset-0 pointer-events-none z-20 shadow-[inset_0_0_90px_rgba(0,0,0,0.85)]" />
+      <div className="absolute inset-0 pointer-events-none z-20 shadow-[inset_0_0_85px_rgba(0,0,0,0.88)]" />
     </div>
   );
 };

@@ -32,6 +32,14 @@ export type CameraMode = 'auto' | CameraFraming;
 
 export type MouthState = 'closed' | 'half' | 'open';
 export type MicMode = 'ptt' | 'hands_free';
+export type SttKeyMode = 'unified' | 'separate';
+export type TtsFallbackEngine = 'qwen_local' | 'kokoro' | 'edge_rvc' | 'web_speech';
+export type SettingsSectionId = 'cortex' | 'voice' | 'whisper' | 'display' | 'system';
+
+export interface LLMFallbackSettings {
+  allowModelFallback: boolean;
+  allowOfflineSimulatorFallback: boolean;
+}
 
 export interface SpriteExpressionFrames {
   mouthClosed: string; // 00: mouth closed / idle
@@ -105,6 +113,13 @@ export interface VoiceSettings {
   rvcPitch?: number;
   rvcIndexRate?: number;
   micMode?: MicMode;
+  sttKeyMode?: SttKeyMode;
+  separateGroqSttKey?: string;
+  allowSttWebSpeechFallback?: boolean;
+  vadSensitivity?: number;
+  allowTtsFallback?: boolean;
+  allowedTtsFallbacks?: TtsFallbackEngine[];
+  defaultCameraMode?: CameraMode;
 }
 
 export interface QwenWorkerStatus {

@@ -18,6 +18,11 @@ class TTSRequest(BaseModel):
     rvc_pitch: Optional[int] = Field(0, alias="rvcPitch")
     rvc_index_rate: Optional[float] = Field(0.75, alias="rvcIndexRate")
     stream: Optional[bool] = False
+    allow_fallback: Optional[bool] = Field(True, alias="allowTtsFallback")
+    allowed_fallbacks: Optional[List[str]] = Field(
+        default_factory=lambda: ["qwen_local", "kokoro", "edge_rvc"],
+        alias="allowedTtsFallbacks",
+    )
 
 
 class QwenPingRequest(BaseModel):
@@ -42,6 +47,3 @@ class VoiceEngineStatus(BaseModel):
     rvc_available: bool
     rvc_models: List[str]
     active_engine: str
-
-
-

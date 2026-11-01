@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Settings,
   Key,
   Volume2,
-  Monitor,
-  HelpCircle,
   X,
   Check,
   Zap,
@@ -14,14 +11,21 @@ import {
   ExternalLink,
   Cpu,
   Database,
-  Heart,
   Layers,
   Radio,
-  Wifi,
   Globe,
   Activity,
+  Mic,
+  Sliders,
+  Shield,
 } from 'lucide-react';
-import { VoiceSettings, QwenWorkerStatus } from '../types/amadeus';
+import {
+  VoiceSettings,
+  QwenWorkerStatus,
+  SettingsSectionId,
+  LLMFallbackSettings,
+  TtsFallbackEngine,
+} from '../types/amadeus';
 import { SpeechService } from '../services/speechService';
 import { AIService } from '../services/aiService';
 import { BackendService } from '../services/backendService';
@@ -29,39 +33,140 @@ import { BackendService } from '../services/backendService';
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialSection?: SettingsSectionId;
   apiKey: string;
   onSaveApiKey: (key: string) => void;
   voiceSettings: VoiceSettings;
   onSaveVoiceSettings: (settings: VoiceSettings) => void;
+  llmSettings?: LLMFallbackSettings;
+  onSaveLlmSettings?: (settings: LLMFallbackSettings) => void;
   scanlines: boolean;
   onToggleScanlines: (enabled: boolean) => void;
+  defaultCamera?: 'auto' | 'closeup' | 'medium' | 'full';
+  onSaveDefaultCamera?: (camera: 'auto' | 'closeup' | 'medium' | 'full') => void;
 }
+
+const CAPSULE_SECTIONS: { id: SettingsSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
+  { id: 'cortex', label: 'CÓRTEX', icon: Cpu },
+  { id: 'voice', label: 'VOICE', icon: Volume2 },
+  { id: 'whisper', label: 'WHISPER', icon: Mic },
+  { id: 'display', label: 'DISPLAY', icon: Sliders },
+  { id: 'system', label: 'SYSTEM', icon: Shield },
+];
+
+const DEFAULT_FALLBACK_ENGINES: { id: TtsFallbackEngine; label: string }[] = [
+  { id: 'qwen_local', label: 'Qwen3 Local (:8005)' },
+  { id: 'kokoro', label: 'Kokoro-TTS 82M' },
+  { id: 'edge_rvc', label: 'Edge-TTS + RVC v2' },
+  { id: 'web_speech', label: 'Web Speech Nativo' },
+];
+
+interface PlasmaMeterProps {
+  label: string;
+  displayValue: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (val: number) => void;
+}
+
+const PlasmaMeter: React.FC<PlasmaMeterProps> = ({
+  label,
+  displayValue,
+  min,
+  max,
+  step,
+  value,
+  onChange,
+}) => {
+  const clamped = Math.max(min, Math.min(max, value));
+  const pct = Math.round(((clamped - min) / (max - min || 1)) * 100);
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between">
+        <span className="engraved-label">{label}</span>
+        <span className="font-mono text-xs text-amber-300">{displayValue}</span>
+      </div>
+      <div className="bg-black/90 border border-zinc-800 p-1 relative">
+        <div className="flex items-center justify-between px-2 py-0.5 text-[10px] font-mono text-zinc-300 tracking-widest uppercase">
+          <span>MIN</span>
+          <div className="flex-1 mx-3 h-[1px] bg-zinc-700 relative">
+            <div className="absolute -top-1 left-1/2 w-[1px] h-2 bg-zinc-500" />
+          </div>
+          <span>MAX</span>
+        </div>
+        <div className="plasma-meter-track">
+          <div className="plasma-meter-fill transition-all duration-75" style={{ width: `${pct}%` }} />
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            aria-label={label}
+            onChange={(e) => onChange(parseFloat(e.target.value))}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
+  initialSection = 'cortex',
   apiKey,
   onSaveApiKey,
   voiceSettings,
   onSaveVoiceSettings,
+  llmSettings = { allowModelFallback: true, allowOfflineSimulatorFallback: true },
+  onSaveLlmSettings,
   scanlines,
   onToggleScanlines,
+  defaultCamera = 'auto',
+  onSaveDefaultCamera,
 }) => {
-  const [activeTab, setActiveTab] = useState<'settings' | 'credits'>('settings');
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
   const [tempApiKey, setTempApiKey] = useState(apiKey);
+  const [tempSttKey, setTempSttKey] = useState<string>(
+    () => voiceSettings.separateGroqSttKey || localStorage.getItem('amadeus_groq_stt_key') || ''
+  );
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isTestingVoice, setIsTestingVoice] = useState(false);
-  const [showRvcAdvanced, setShowRvcAdvanced] = useState(false);
+  const [voiceTestError, setVoiceTestError] = useState<string | null>(null);
   const [qwenPingStatus, setQwenPingStatus] = useState<QwenWorkerStatus | null>(null);
   const [isPinging, setIsPinging] = useState(false);
   const [availableRvcModels, setAvailableRvcModels] = useState<string[]>(['KurisuRVCv147']);
 
+  useEffect(() => {
+    if (isOpen && initialSection) {
+      setActiveSection(initialSection);
+    }
+  }, [isOpen, initialSection]);
+
+  useEffect(() => {
+    setTempApiKey(apiKey);
+  }, [apiKey]);
+
+  useEffect(() => {
+    setTempSttKey(voiceSettings.separateGroqSttKey || localStorage.getItem('amadeus_groq_stt_key') || '');
+  }, [voiceSettings.separateGroqSttKey]);
+
   const handlePingWorker = async (targetUrl?: string) => {
     setIsPinging(true);
-    const url = targetUrl !== undefined ? targetUrl : (voiceSettings.qwenMode === 'local' ? 'http://127.0.0.1:8005' : voiceSettings.qwenRemoteUrl);
+    const url =
+      targetUrl !== undefined
+        ? targetUrl
+        : voiceSettings.qwenMode === 'local'
+          ? 'http://127.0.0.1:8005'
+          : voiceSettings.qwenRemoteUrl;
     const res = await BackendService.pingQwenWorker(url);
     setQwenPingStatus(res);
     setIsPinging(false);
@@ -74,54 +179,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           setAvailableRvcModels(data.rvc_models);
         }
       });
-      if (voiceSettings.engine === 'qwen3') {
+      if ((voiceSettings.engine || 'qwen3') === 'qwen3') {
         handlePingWorker();
       }
     }
   }, [isOpen, voiceSettings.engine, voiceSettings.qwenMode]);
-
-  const handleTestVoice = async () => {
-    setIsTestingVoice(true);
-    const sampleText = voiceSettings.engine === 'qwen3'
-      ? 'Não precisa me envergonhar assim! Seu idiota!'
-      : voiceSettings.engine === 'kokoro'
-        ? 'Olá, este é o motor neural Kokoro ultrarrápido em português!'
-        : voiceSettings.neuralVoice?.startsWith('ja-JP')
-          ? 'こんにちは！アマデウス紅莉栖です。神経接続完了！'
-          : voiceSettings.useRvc
-            ? 'Olá! Conexão neural RVC estabelecida. Este é o timbre digitalizado de Makise Kurisu!'
-            : 'Olá! Conexão Amadeus estabelecida. Teste de voz e sincronia labial em cem por cento!';
-    await SpeechService.speak(sampleText, {
-      voiceURI: voiceSettings.voiceURI,
-      rate: voiceSettings.rate,
-      pitch: voiceSettings.pitch,
-      volume: voiceSettings.volume,
-      engine: voiceSettings.engine || 'qwen3',
-      qwenMode: voiceSettings.qwenMode || 'remote',
-      qwenRemoteUrl: voiceSettings.qwenRemoteUrl,
-      emotion: 'tsundere',
-      stream: voiceSettings.engine === 'qwen3' ? Boolean(voiceSettings.stream) : false,
-      useNeural: voiceSettings.useNeural !== false,
-      neuralVoice: voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural',
-      useRvc: Boolean(voiceSettings.useRvc),
-      rvcModel: voiceSettings.rvcModel || 'KurisuRVCv147',
-      rvcPitch: voiceSettings.rvcPitch ?? 0,
-      rvcIndexRate: voiceSettings.rvcIndexRate ?? 0.75,
-      onEnd: () => setIsTestingVoice(false),
-    });
-  };
-
-  const handleTest = async () => {
-    setIsTesting(true);
-    setTestResult(null);
-    const result = await AIService.testConnection(tempApiKey);
-    setTestResult(result);
-    setIsTesting(false);
-  };
-
-  useEffect(() => {
-    setTempApiKey(apiKey);
-  }, [apiKey]);
 
   useEffect(() => {
     SpeechService.getAvailableVoices().then((voices) => {
@@ -131,808 +193,1182 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    onSaveApiKey(tempApiKey.trim());
+  const commitKeys = () => {
+    const trimmedMain = tempApiKey.trim();
+    const trimmedStt = tempSttKey.trim();
+    if (trimmedMain !== apiKey) {
+      onSaveApiKey(trimmedMain);
+    }
+    localStorage.setItem('amadeus_groq_stt_key', trimmedStt);
+    if (trimmedStt !== (voiceSettings.separateGroqSttKey || '')) {
+      onSaveVoiceSettings({ ...voiceSettings, separateGroqSttKey: trimmedStt });
+    }
+  };
+
+  const handleApplyAndClose = () => {
+    commitKeys();
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
       onClose();
-    }, 600);
+    }, 350);
   };
 
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    const result = await AIService.testConnection(tempApiKey);
+    setTestResult(result);
+    if (result.ok) {
+      onSaveApiKey(tempApiKey.trim());
+    }
+    setIsTesting(false);
+  };
+
+  const handleTestVoice = async () => {
+    setIsTestingVoice(true);
+    setVoiceTestError(null);
+    const sampleText =
+      (voiceSettings.engine || 'qwen3') === 'qwen3'
+        ? 'Teste de calibração acústica do motor Qwen3 concluído. Sincronia neural ativa.'
+        : voiceSettings.engine === 'kokoro'
+          ? 'Olá, este é o motor neural Kokoro operando localmente com baixa latência.'
+          : voiceSettings.neuralVoice?.startsWith('ja-JP')
+            ? 'こんにちは！神経接続および音声合成テスト完了。'
+            : 'Conexão estabelecida. Teste de síntese vocal e sincronia labial concluído.';
+
+    await SpeechService.speak(sampleText, {
+      voiceURI: voiceSettings.voiceURI,
+      rate: voiceSettings.rate,
+      pitch: voiceSettings.pitch,
+      volume: voiceSettings.volume,
+      engine: voiceSettings.engine || 'qwen3',
+      qwenMode: voiceSettings.qwenMode || 'remote',
+      qwenRemoteUrl: voiceSettings.qwenRemoteUrl,
+      emotion: 'neutral',
+      stream: (voiceSettings.engine || 'qwen3') === 'qwen3' ? Boolean(voiceSettings.stream) : false,
+      useNeural: voiceSettings.useNeural !== false,
+      neuralVoice: voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural',
+      useRvc: Boolean(voiceSettings.useRvc),
+      rvcModel: voiceSettings.rvcModel || 'KurisuRVCv147',
+      rvcPitch: voiceSettings.rvcPitch ?? 0,
+      rvcIndexRate: voiceSettings.rvcIndexRate ?? 0.75,
+      allowTtsFallback: voiceSettings.allowTtsFallback !== false,
+      allowedTtsFallbacks: voiceSettings.allowedTtsFallbacks || ['qwen_local', 'kokoro', 'edge_rvc', 'web_speech'],
+      onEnd: () => setIsTestingVoice(false),
+      onError: (err) => {
+        setIsTestingVoice(false);
+        setVoiceTestError(err);
+      },
+    });
+  };
+
+  const toggleFallbackEngine = (engineId: TtsFallbackEngine) => {
+    const current = voiceSettings.allowedTtsFallbacks || ['qwen_local', 'kokoro', 'edge_rvc', 'web_speech'];
+    const exists = current.includes(engineId);
+    const next = exists ? current.filter((item) => item !== engineId) : [...current, engineId];
+    onSaveVoiceSettings({ ...voiceSettings, allowedTtsFallbacks: next });
+  };
+
+  const handleCapsuleKeyDown = (e: React.KeyboardEvent, idx: number) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const next = CAPSULE_SECTIONS[(idx + 1) % CAPSULE_SECTIONS.length];
+      setActiveSection(next.id);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const prev = CAPSULE_SECTIONS[(idx - 1 + CAPSULE_SECTIONS.length) % CAPSULE_SECTIONS.length];
+      setActiveSection(prev.id);
+    }
+  };
+
+  const isMainKeyGroq = tempApiKey.trim().startsWith('gsk_');
+  const sttMode = voiceSettings.sttKeyMode || 'unified';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="relative w-full max-w-lg rounded-xl bg-amadeus-panel border border-amadeus-border shadow-[0_0_40px_rgba(0,0,0,0.9)] overflow-hidden font-mono text-sm">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-amadeus-border bg-amadeus-card">
-          <div className="flex items-center gap-2.5">
-            <Settings className="w-4 h-4 text-amadeus-accent" />
-            <h2 className="text-sm font-bold text-amadeus-accent tracking-wider text-glow-nixie">
-              CONFIGURAÇÕES DO SISTEMA // AMADEUS
-            </h2>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-fadeIn select-none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="amadeus-setup-title"
+    >
+      {/* Main Technical Workbench Frame */}
+      <div className="relative w-full max-w-5xl max-h-[90vh] flex flex-col md:flex-row chalkboard-grid border border-orange-500/40 shadow-[0_0_50px_rgba(0,0,0,0.95)] overflow-hidden">
+        {/* Subtle Radial Amber Spotlight */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_60%_25%,rgba(234,88,12,0.09),transparent_65%)] pointer-events-none" />
+
+        {/* ================= LEFT COLUMN: COPPER PCB CAPSULES + VERTICAL POWER BUS ================= */}
+        <aside className="relative md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-amber-900/40 bg-black/45 p-4 flex flex-col justify-between z-10">
+          {/* Vertical Glowing Conductor Line */}
+          <div className="hidden md:block absolute left-9 top-6 bottom-16 bus-line-vertical z-0" />
+
+          {/* Capsule Tab List */}
+          <div
+            role="tablist"
+            aria-label="Seções de Configuração"
+            className="relative z-10 flex md:flex-col gap-2.5 overflow-x-auto md:overflow-visible pb-1 md:pb-0"
+          >
+            {CAPSULE_SECTIONS.map((sec, idx) => {
+              const Icon = sec.icon;
+              const selected = activeSection === sec.id;
+              return (
+                <button
+                  key={sec.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  tabIndex={selected ? 0 : -1}
+                  data-selected={selected}
+                  onClick={() => setActiveSection(sec.id)}
+                  onKeyDown={(e) => handleCapsuleKeyDown(e, idx)}
+                  className="copper-capsule px-4 py-2.5 flex items-center gap-3 text-left shrink-0 md:w-full"
+                >
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full shrink-0 transition-all ${
+                      selected
+                        ? 'bg-orange-400 shadow-[0_0_8px_#fb923c]'
+                        : 'bg-amber-900/70'
+                    }`}
+                  />
+                  <Icon className={`w-4 h-4 shrink-0 ${selected ? 'text-orange-400' : 'text-amber-200/70'}`} />
+                  <span
+                    className={`engraved-serif font-bold text-xs md:text-sm tracking-widest ${
+                      selected ? 'text-amber-100' : 'text-amber-200/70'
+                    }`}
+                  >
+                    {sec.label}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded flex items-center justify-center text-amadeus-muted hover:text-white hover:bg-amadeus-border/60 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex border-b border-amadeus-border bg-amadeus-card/60 text-xs">
-          <button
-            type="button"
-            onClick={() => setActiveTab('settings')}
-            className={`flex-1 py-2.5 px-4 font-bold flex items-center justify-center gap-2 border-b-2 transition-all ${
-              activeTab === 'settings'
-                ? 'border-amadeus-accent text-amadeus-accent bg-amadeus-accent/10'
-                : 'border-transparent text-amadeus-muted hover:text-white'
-            }`}
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span>CONFIGURAÇÃO</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('credits')}
-            className={`flex-1 py-2.5 px-4 font-bold flex items-center justify-center gap-2 border-b-2 transition-all ${
-              activeTab === 'credits'
-                ? 'border-amadeus-accent text-amadeus-accent bg-amadeus-accent/10'
-                : 'border-transparent text-amadeus-muted hover:text-white'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>CRÉDITOS & MODELOS</span>
-          </button>
-        </div>
+          {/* Bottom SETUP MENU Rectangular Plate + Horizontal Bus Line */}
+          <div className="hidden md:block relative z-10 pt-6">
+            <div className="bg-black/95 border border-orange-500/60 px-3 py-2 shadow-[0_0_20px_rgba(249,115,22,0.2)]">
+              <div className="engraved-serif text-sm font-bold tracking-widest text-amber-100">
+                SETUP MENU
+              </div>
+              <div className="text-[9px] font-mono text-orange-400/80 tracking-widest uppercase">
+                OPENAMADEUS WORKBENCH
+              </div>
+            </div>
+            <div className="bus-line-horizontal w-full mt-1" />
+          </div>
+        </aside>
 
-        {activeTab === 'settings' ? (
-          /* Content */
-          <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
-          {/* Section: Groq, Gemini & OpenRouter API Key */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-white">
-              <Key className="w-3.5 h-3.5 text-amadeus-accent" />
-              <span>CHAVE DE API (GROQ, GEMINI OU OPENROUTER)</span>
+        {/* ================= RIGHT COLUMN: ENGRAVED TECHNICAL WORKSPACE ================= */}
+        <div className="relative z-10 flex-1 flex flex-col min-h-0">
+          {/* Top Section Header Bar */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-amber-900/40 bg-black/50">
+            <div>
+              <h2 id="amadeus-setup-title" className="engraved-heading text-lg md:text-xl font-bold uppercase">
+                {activeSection === 'cortex' && 'Córtex LLM & Credenciais'}
+                {activeSection === 'voice' && 'Síntese Vocal & Prosódia Neural'}
+                {activeSection === 'whisper' && 'Whisper STT & Detecção de Voz (VAD)'}
+                {activeSection === 'display' && 'Calibração Óptica & Enquadramento'}
+                {activeSection === 'system' && 'Arquitetura Neural & Modelos Open-Source'}
+              </h2>
+              <p className="text-[11px] font-mono text-orange-400/80 tracking-wider uppercase mt-0.5">
+                {activeSection === 'cortex' && 'Chave Primária e Controle Estrito de Modelos'}
+                {activeSection === 'voice' && 'Motores Qwen3 1.7B, Kokoro 82M, Edge+RVC e Cascata TTS'}
+                {activeSection === 'whisper' && 'Credencial Groq Dedicada, Gate Acústico e Fallback STT'}
+                {activeSection === 'display' && 'Varredura CRT e Geometria de Palco'}
+                {activeSection === 'system' && 'Infraestrutura Local e Pesos Neurais'}
+              </p>
             </div>
-            <p className="text-[11px] text-amadeus-muted leading-relaxed font-sans">
-              Recomendado: <strong>Groq Cloud</strong> (<code className="text-amadeus-accent">gsk_...</code> com LPU ultra-rápida e Llama 3.3 70B), <strong>Google Gemini</strong> (<code className="text-amadeus-accent">AIzaSy...</code>) ou <strong>OpenRouter</strong> (<code className="text-amadeus-accent">sk-or-...</code>).
-            </p>
-            <div className="flex items-center gap-2">
-              <input
-                type="password"
-                placeholder="Cole sua API Key aqui (gsk_... / AIzaSy... / sk-or-...)"
-                value={tempApiKey}
-                onChange={(e) => {
-                  setTempApiKey(e.target.value);
-                  setTestResult(null);
-                }}
-                className="flex-1 h-9 px-3 rounded bg-amadeus-card border border-amadeus-border text-xs text-white placeholder-amadeus-muted/50 focus:outline-none focus:border-amadeus-accent"
-              />
-              <button
-                type="button"
-                onClick={handleTest}
-                disabled={isTesting || !tempApiKey.trim()}
-                className="h-9 px-3 rounded border border-amadeus-accent/60 text-amadeus-accent text-xs flex items-center gap-1.5 hover:bg-amadeus-accent hover:text-black transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-amadeus-accent shrink-0"
-              >
-                {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                <span>{isTesting ? 'Testando...' : 'Testar Conexão'}</span>
-              </button>
-            </div>
-            {testResult && (
-              <div
-                className={`flex items-start gap-1.5 text-[11px] p-2 rounded border font-sans ${
-                  testResult.ok
-                    ? 'text-amadeus-accent border-amadeus-accent/40 bg-amadeus-accent/10'
-                    : 'text-amadeus-red border-amadeus-red/40 bg-amadeus-red/10'
-                }`}
-              >
-                {testResult.ok ? <Check className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
-                <span>
-                  {testResult.message}
-                  {testResult.ok && ' — clique em "Salvar Alterações" para usar.'}
-                </span>
+
+            <button
+              type="button"
+              onClick={handleApplyAndClose}
+              title="Aplicar e Fechar (Esc)"
+              className="w-8 h-8 rounded-full border border-amber-900/60 bg-black/60 flex items-center justify-center text-zinc-400 hover:text-amber-200 hover:border-orange-400 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Scrollable Section Body */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 font-mono text-xs">
+            {/* ==================== SECTION 1: CÓRTEX LLM ==================== */}
+            {activeSection === 'cortex' && (
+              <div className="space-y-6">
+                {/* Main API Key Input */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="engraved-label flex items-center gap-2">
+                      <Key className="w-4 h-4 text-orange-400" />
+                      <span>Chave Primária do Córtex (Groq / Gemini / OpenRouter)</span>
+                    </span>
+                    <span className="text-[10px] font-mono text-orange-400 uppercase">
+                      {tempApiKey.trim().startsWith('gsk_')
+                        ? 'GROQ CLOUD LPU'
+                        : tempApiKey.trim().startsWith('AIza')
+                          ? 'GOOGLE GEMINI'
+                          : tempApiKey.trim().startsWith('sk-or-')
+                            ? 'OPENROUTER'
+                            : 'MODO OFFLINE'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
+                    Suporta chaves <strong>Groq Cloud</strong> (<code className="text-amber-300">gsk_...</code>),{' '}
+                    <strong>Google Gemini</strong> (<code className="text-amber-300">AIzaSy...</code>) ou{' '}
+                    <strong>OpenRouter</strong> (<code className="text-amber-300">sk-or-...</code>).
+                  </p>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                    <input
+                      type="password"
+                      placeholder="Insira sua chave (gsk_... / AIzaSy... / sk-or-...)"
+                      value={tempApiKey}
+                      onChange={(e) => {
+                        setTempApiKey(e.target.value);
+                        setTestResult(null);
+                      }}
+                      onBlur={commitKeys}
+                      className="flex-1 h-9 bg-black/85 border border-amber-900/60 focus:border-orange-400 px-3 text-amber-100 font-mono text-xs outline-none shadow-inner"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={isTesting || !tempApiKey.trim()}
+                      className="copper-capsule h-9 px-4 flex items-center justify-center gap-1.5 text-amber-200 hover:text-white disabled:opacity-40 shrink-0"
+                    >
+                      {isTesting ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" />
+                      ) : (
+                        <Zap className="w-3.5 h-3.5 text-orange-400" />
+                      )}
+                      <span className="engraved-serif text-[11px] font-bold tracking-wider">
+                        {isTesting ? 'TESTANDO...' : 'TESTAR CONEXÃO'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {testResult && (
+                    <div
+                      className={`flex items-start gap-2 text-[11px] p-2.5 border font-sans ${
+                        testResult.ok
+                          ? 'text-emerald-300 border-emerald-500/40 bg-emerald-950/30'
+                          : 'text-rose-300 border-rose-500/40 bg-rose-950/30'
+                      }`}
+                    >
+                      {testResult.ok ? (
+                        <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                      )}
+                      <span>{testResult.message}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Engraved Toggle 1: Strict Model Lock */}
+                <div className="space-y-1.5 pt-3 border-t border-amber-900/30">
+                  <div className="flex items-baseline">
+                    <span className="engraved-label">Travar Modelo Selecionado (Sem Cascata LLM)</span>
+                    <div className="dotted-leader" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={llmSettings.allowModelFallback === false}
+                        onClick={() =>
+                          onSaveLlmSettings?.({ ...llmSettings, allowModelFallback: false })
+                        }
+                      >
+                        ON
+                      </button>
+                      <span className="text-zinc-600 font-serif">/</span>
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={llmSettings.allowModelFallback !== false}
+                        onClick={() =>
+                          onSaveLlmSettings?.({ ...llmSettings, allowModelFallback: true })
+                        }
+                      >
+                        OFF
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Quando <strong>ON</strong>, impede que erros de cota (HTTP 429/503) troquem silenciosamente seu modelo por outro da fila, exibindo o erro real do provedor.
+                  </p>
+                </div>
+
+                {/* Engraved Toggle 2: Block Silent Offline Simulator */}
+                <div className="space-y-1.5 pt-2">
+                  <div className="flex items-baseline">
+                    <span className="engraved-label">Bloquear Simulador Offline em Falhas de Rede</span>
+                    <div className="dotted-leader" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={llmSettings.allowOfflineSimulatorFallback === false}
+                        onClick={() =>
+                          onSaveLlmSettings?.({
+                            ...llmSettings,
+                            allowOfflineSimulatorFallback: false,
+                          })
+                        }
+                      >
+                        ON
+                      </button>
+                      <span className="text-zinc-600 font-serif">/</span>
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={llmSettings.allowOfflineSimulatorFallback !== false}
+                        onClick={() =>
+                          onSaveLlmSettings?.({
+                            ...llmSettings,
+                            allowOfflineSimulatorFallback: true,
+                          })
+                        }
+                      >
+                        OFF
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Quando <strong>ON</strong>, nunca responde com frases pré-programadas do simulador caso a API falhe.
+                  </p>
+                </div>
               </div>
             )}
-            <div className="flex flex-col gap-1 text-[10px] text-amadeus-muted pt-1">
-              <div className="flex items-center gap-1.5">
-                <HelpCircle className="w-3 h-3 text-amadeus-accent shrink-0" />
-                <span>Pegar chave grátis: <strong>Groq Cloud</strong> (console.groq.com), <strong>Google AI Studio</strong> (aistudio.google.com) ou <strong>OpenRouter</strong> (openrouter.ai).</span>
-              </div>
-              <span className="text-[10px] text-amadeus-muted/80 pl-4">Deixe em branco para usar o <strong>Simulador Offline Autônomo</strong>.</span>
-            </div>
-          </div>
 
-          {/* Section: Voice & Speech Settings */}
-          <div className="space-y-3 pt-3 border-t border-amadeus-border/60">
-            <div className="flex items-center gap-2 text-xs font-bold text-white">
-              <Volume2 className="w-3.5 h-3.5 text-amadeus-accent" />
-              <span>CONFIGURAÇÃO DE VOZ (SPEECH SYNTHESIS)</span>
-            </div>
-
-            {/* Engine Selection: Qwen3-TTS vs Kokoro-TTS vs Edge-TTS + RVC */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-amadeus-muted block">Motor de Síntese Vocal:</label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => onSaveVoiceSettings({ ...voiceSettings, engine: 'qwen3' })}
-                  className={`p-2 rounded-lg border text-left transition-all ${
-                    (voiceSettings.engine || 'qwen3') === 'qwen3'
-                      ? 'border-amadeus-accent bg-amadeus-accent/15 text-white shadow-sm shadow-amadeus-accent/20'
-                      : 'border-amadeus-border bg-amadeus-card/60 text-amadeus-muted hover:border-amadeus-muted'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-amadeus-accent">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Kurisu Qwen3</span>
-                  </div>
-                  <p className="text-[9px] mt-0.5 text-amadeus-muted line-clamp-2">
-                    Neural 1.7B (Colab ou GPU | Emoções)
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => onSaveVoiceSettings({ ...voiceSettings, engine: 'kokoro' })}
-                  className={`p-2 rounded-lg border text-left transition-all ${
-                    voiceSettings.engine === 'kokoro'
-                      ? 'border-amadeus-accent bg-amadeus-accent/15 text-white shadow-sm shadow-amadeus-accent/20'
-                      : 'border-amadeus-border bg-amadeus-card/60 text-amadeus-muted hover:border-amadeus-muted'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-amadeus-accent">
-                    <Zap className="w-3.5 h-3.5" />
-                    <span>Kokoro-TTS</span>
-                  </div>
-                  <p className="text-[9px] mt-0.5 text-amadeus-muted line-clamp-2">
-                    Motor Leve 82M (100% Offline & ~100ms)
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => onSaveVoiceSettings({ ...voiceSettings, engine: 'edge_rvc' })}
-                  className={`p-2 rounded-lg border text-left transition-all ${
-                    voiceSettings.engine === 'edge_rvc'
-                      ? 'border-amadeus-accent bg-amadeus-accent/15 text-white shadow-sm shadow-amadeus-accent/20'
-                      : 'border-amadeus-border bg-amadeus-card/60 text-amadeus-muted hover:border-amadeus-muted'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-amadeus-accent">
-                    <Volume2 className="w-3.5 h-3.5" />
-                    <span>Edge-TTS + RVC</span>
-                  </div>
-                  <p className="text-[9px] mt-0.5 text-amadeus-muted line-clamp-2">
-                    Nuvem Gratuita + Timbre RVC
-                  </p>
-                </button>
-              </div>
-            </div>
-
-            {/* ENGINE 1: QWEN3-TTS KURISU (REMOTE / LOCAL) */}
-            {(voiceSettings.engine || 'qwen3') === 'qwen3' && (
-              <div className="p-3 rounded-lg border border-amadeus-accent/30 bg-amadeus-card/90 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-amadeus-accent">
-                    <Sparkles className="w-3.5 h-3.5 text-amadeus-accent" />
-                    <span>KURISU QWEN3-TTS 1.7B (PROSÓDIA & EMOÇÕES)</span>
-                  </div>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amadeus-accent/10 border border-amadeus-accent/30 text-amadeus-accent">
-                    {(voiceSettings.qwenMode || 'remote') === 'remote' ? 'Colab / Cloudflare' : 'Local CUDA BF16'}
-                  </span>
-                </div>
-
-                {/* Sub-mode Toggle: Remote vs Local */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] text-amadeus-muted block font-medium">Modo de Execução do Modelo:</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onSaveVoiceSettings({ ...voiceSettings, qwenMode: 'remote' });
-                        handlePingWorker(voiceSettings.qwenRemoteUrl);
-                      }}
-                      className={`h-7 px-2 rounded text-[11px] font-medium border flex items-center justify-center gap-1.5 transition-all ${
-                        (voiceSettings.qwenMode || 'remote') === 'remote'
-                          ? 'border-amadeus-accent bg-amadeus-accent/20 text-white'
-                          : 'border-amadeus-border bg-black/40 text-amadeus-muted hover:text-white'
-                      }`}
-                    >
-                      <Globe className="w-3 h-3 text-amadeus-accent" />
-                      <span>Remoto (Google Colab Pro)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onSaveVoiceSettings({ ...voiceSettings, qwenMode: 'local' });
-                        handlePingWorker('http://127.0.0.1:8005');
-                      }}
-                      className={`h-7 px-2 rounded text-[11px] font-medium border flex items-center justify-center gap-1.5 transition-all ${
-                        voiceSettings.qwenMode === 'local'
-                          ? 'border-amadeus-accent bg-amadeus-accent/20 text-white'
-                          : 'border-amadeus-border bg-black/40 text-amadeus-muted hover:text-white'
-                      }`}
-                    >
-                      <Cpu className="w-3 h-3 text-amadeus-accent" />
-                      <span>Local (GPU 8GB+ VRAM)</span>
-                    </button>
+            {/* ==================== SECTION 2: VOICE (TTS) ==================== */}
+            {activeSection === 'voice' && (
+              <div className="space-y-6">
+                {/* Primary Engine Row */}
+                <div className="space-y-2">
+                  <span className="engraved-label block">Motor Primário de Síntese Vocal</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {[
+                      {
+                        id: 'qwen3' as const,
+                        title: 'QWEN3-TTS 1.7B',
+                        sub: 'Prosódia & Emoções (Colab / CUDA)',
+                      },
+                      {
+                        id: 'kokoro' as const,
+                        title: 'KOKORO-TTS 82M',
+                        sub: 'Motor Local Ultrarrápido (~100ms)',
+                      },
+                      {
+                        id: 'edge_rvc' as const,
+                        title: 'EDGE-TTS + RVC',
+                        sub: 'Voz Neural Cloud + Timbre RVC v2',
+                      },
+                    ].map((eng) => {
+                      const active = (voiceSettings.engine || 'qwen3') === eng.id;
+                      return (
+                        <button
+                          key={eng.id}
+                          type="button"
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, engine: eng.id })}
+                          className={`p-3 border text-left transition-all ${
+                            active
+                              ? 'border-orange-400 bg-orange-500/15 text-amber-100 shadow-[0_0_16px_rgba(249,115,22,0.25)]'
+                              : 'border-amber-900/40 bg-black/50 text-zinc-400 hover:border-orange-500/50 hover:text-zinc-200'
+                          }`}
+                        >
+                          <div className="engraved-serif font-bold text-xs text-orange-400 tracking-wider">
+                            {eng.title}
+                          </div>
+                          <div className="text-[10px] text-zinc-400 font-sans mt-1">{eng.sub}</div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                                {/* Sub-mode Toggle: Delivery Mode (Streaming vs WAV) */}
-                <div className="space-y-1.5 pt-1 border-t border-amadeus-border/40">
-                  <label className="text-[10px] text-amadeus-muted block font-medium">Modo de Entrega de Áudio:</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: true })}
-                      className={`h-7 px-2 rounded text-[11px] font-medium border flex items-center justify-center gap-1.5 transition-all ${
-                        voiceSettings.stream
-                          ? 'border-amadeus-accent bg-amadeus-accent/20 text-white'
-                          : 'border-amadeus-border bg-black/40 text-amadeus-muted hover:text-white'
-                      }`}
-                    >
-                      <Zap className="w-3 h-3 text-amadeus-accent" />
-                      <span>⚡ Streaming Real (~500ms)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: false })}
-                      className={`h-7 px-2 rounded text-[11px] font-medium border flex items-center justify-center gap-1.5 transition-all ${
-                        !voiceSettings.stream
-                          ? 'border-amadeus-accent bg-amadeus-accent/20 text-white'
-                          : 'border-amadeus-border bg-black/40 text-amadeus-muted hover:text-white'
-                      }`}
-                    >
-                      <Radio className="w-3 h-3 text-amadeus-accent" />
-                      <span>🛡️ WAV Completo (Estável)</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Remote URL Configuration */}
-                {(voiceSettings.qwenMode || 'remote') === 'remote' ? (
-                  <div className="space-y-2 pt-1 border-t border-amadeus-border/40">
-                    <label className="text-[10px] text-amadeus-muted block">
-                      URL Pública do Colab (Cloudflare Tunnel):
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="url"
-                        placeholder="https://seu-tunel.trycloudflare.com"
-                        value={voiceSettings.qwenRemoteUrl || ''}
-                        onChange={(e) =>
-                          onSaveVoiceSettings({ ...voiceSettings, qwenRemoteUrl: e.target.value.trim() })
-                        }
-                        className="flex-1 h-8 px-2.5 rounded bg-amadeus-bg border border-amadeus-border text-xs text-white placeholder-amadeus-muted/50 focus:outline-none focus:border-amadeus-accent"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handlePingWorker(voiceSettings.qwenRemoteUrl)}
-                        disabled={isPinging}
-                        className="h-8 px-3 rounded border border-amadeus-accent/50 bg-amadeus-accent/15 hover:bg-amadeus-accent/30 text-amadeus-accent text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                      >
-                        {isPinging ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
-                        <span>Testar Ping</span>
-                      </button>
+                {/* QWEN3-TTS SPECIFIC WORKBENCH */}
+                {(voiceSettings.engine || 'qwen3') === 'qwen3' && (
+                  <div className="p-4 border border-amber-900/50 bg-black/55 space-y-4">
+                    {/* Execution Mode: Remote vs Local */}
+                    <div className="flex items-baseline">
+                      <span className="engraved-label">Topologia de Execução Qwen3</span>
+                      <div className="dotted-leader" />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={(voiceSettings.qwenMode || 'remote') === 'remote'}
+                          onClick={() => {
+                            onSaveVoiceSettings({ ...voiceSettings, qwenMode: 'remote' });
+                            handlePingWorker(voiceSettings.qwenRemoteUrl);
+                          }}
+                        >
+                          COLAB REMOTO
+                        </button>
+                        <span className="text-zinc-600 font-serif">/</span>
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={voiceSettings.qwenMode === 'local'}
+                          onClick={() => {
+                            onSaveVoiceSettings({ ...voiceSettings, qwenMode: 'local' });
+                            handlePingWorker('http://127.0.0.1:8005');
+                          }}
+                        >
+                          CUDA LOCAL
+                        </button>
+                      </div>
                     </div>
 
-                    {/* Status Badge */}
-                    <div className="flex items-center justify-between text-[10px] px-2 py-1 rounded bg-black/40 border border-amadeus-border/40">
-                      <span className="text-amadeus-muted">Status do Worker Remoto:</span>
-                      {qwenPingStatus ? (
-                        <div className="flex items-center gap-1.5">
-                          {qwenPingStatus.status === 'ready' ? (
-                            <span className="text-emerald-400 font-medium flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                              Online • {qwenPingStatus.device || 'GPU'} ({qwenPingStatus.ping_ms}ms)
-                            </span>
-                          ) : qwenPingStatus.status === 'initializing' ? (
-                            <span className="text-amber-400 font-medium flex items-center gap-1">
-                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              Carregando Pesos na GPU... ({qwenPingStatus.ping_ms}ms)
-                            </span>
-                          ) : (
-                            <span className="text-rose-400 font-medium">
-                              Offline ({qwenPingStatus.error ? 'Inacessível' : 'Desconectado'})
-                            </span>
-                          )}
+                    {/* Audio Delivery: Streaming vs Complete WAV */}
+                    <div className="flex items-baseline">
+                      <span className="engraved-label">Protocolo de Entrega Acústica</span>
+                      <div className="dotted-leader" />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={Boolean(voiceSettings.stream)}
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: true })}
+                        >
+                          STREAM (~500MS)
+                        </button>
+                        <span className="text-zinc-600 font-serif">/</span>
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={!voiceSettings.stream}
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: false })}
+                        >
+                          WAV COMPLETO
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Remote Cloudflare Tunnel URL or Local Loopback */}
+                    {(voiceSettings.qwenMode || 'remote') === 'remote' ? (
+                      <div className="space-y-2 pt-2 border-t border-amber-900/30">
+                        <label className="text-[11px] text-amber-200/90 flex items-center gap-1.5">
+                          <Globe className="w-3.5 h-3.5 text-orange-400" />
+                          <span>Endpoint Público do Worker (Cloudflare Tunnel):</span>
+                        </label>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="url"
+                            placeholder="https://seu-tunel.trycloudflare.com"
+                            value={voiceSettings.qwenRemoteUrl || ''}
+                            onChange={(e) =>
+                              onSaveVoiceSettings({
+                                ...voiceSettings,
+                                qwenRemoteUrl: e.target.value.trim(),
+                              })
+                            }
+                            className="flex-1 h-9 px-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-amber-100 font-mono text-xs outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handlePingWorker(voiceSettings.qwenRemoteUrl)}
+                            disabled={isPinging}
+                            className="copper-capsule h-9 px-4 flex items-center justify-center gap-1.5 text-amber-200 hover:text-white disabled:opacity-50 shrink-0"
+                          >
+                            {isPinging ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" />
+                            ) : (
+                              <Activity className="w-3.5 h-3.5 text-orange-400" />
+                            )}
+                            <span className="engraved-serif text-[11px] font-bold">TESTAR PING</span>
+                          </button>
                         </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between pt-2 border-t border-amber-900/30 text-[11px]">
+                        <span className="text-zinc-400">Loopback Local Qwen3: <code className="text-amber-300">http://127.0.0.1:8005</code></span>
+                        <button
+                          type="button"
+                          onClick={() => handlePingWorker('http://127.0.0.1:8005')}
+                          className="text-orange-400 hover:underline flex items-center gap-1"
+                        >
+                          <Activity className="w-3.5 h-3.5" />
+                          <span>Verificar Worker Local</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Live Worker Telemetry Bar */}
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-black/80 border border-zinc-800 text-[11px]">
+                      <span className="text-zinc-400">Telemetria do Worker Qwen3:</span>
+                      {qwenPingStatus ? (
+                        qwenPingStatus.status === 'ready' ? (
+                          <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                            ONLINE • {qwenPingStatus.device || 'GPU'} ({qwenPingStatus.ping_ms}ms)
+                          </span>
+                        ) : qwenPingStatus.status === 'initializing' ? (
+                          <span className="text-amber-400 font-bold flex items-center gap-1.5">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            CARREGANDO PESOS ({qwenPingStatus.ping_ms}ms)
+                          </span>
+                        ) : (
+                          <span className="text-rose-400 font-bold">
+                            OFFLINE ({qwenPingStatus.error ? 'Inacessível' : 'Desconectado'})
+                          </span>
+                        )
                       ) : (
-                        <span className="text-amadeus-muted">Não verificado</span>
+                        <span className="text-zinc-500">Não verificado</span>
                       )}
                     </div>
-
-                    {/* Pro Plan Colab Guidance */}
-                    <div className="p-2 rounded bg-amadeus-accent/5 border border-amadeus-accent/20 text-[10px] text-amadeus-muted leading-relaxed">
-                      💡 <strong>Dica Google AI Pro:</strong> Você possui o <strong>Colab Pro com 200 compute units/mês</strong>! Execute o notebook <code className="text-amadeus-accent font-mono px-1 py-0.5 bg-black/40 rounded">notebooks/Amadeus_Qwen3_TTS_Colab.ipynb</code> no Colab, copie a URL gerada e cole aqui. Zero consumo de VRAM local e máxima fidelidade!
-                    </div>
                   </div>
-                ) : (
-                  /* Local Execution Notice */
-                  <div className="space-y-2 pt-1 border-t border-amadeus-border/40">
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-amadeus-muted">Endpoint Loopback:</span>
-                      <code className="text-white font-mono bg-black/40 px-1.5 py-0.5 rounded">http://127.0.0.1:8005</code>
+                )}
+
+                {/* KOKORO-TTS SPECIFIC WORKBENCH */}
+                {voiceSettings.engine === 'kokoro' && (
+                  <div className="p-4 border border-amber-900/50 bg-black/55 space-y-4">
+                    <div className="flex items-baseline">
+                      <span className="engraved-label">Conversão de Timbre RVC sobre Kokoro</span>
+                      <div className="dotted-leader" />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={Boolean(voiceSettings.useRvc)}
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, useRvc: true })}
+                        >
+                          ON
+                        </button>
+                        <span className="text-zinc-600 font-serif">/</span>
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={!voiceSettings.useRvc}
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, useRvc: false })}
+                        >
+                          OFF
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between text-[10px] px-2 py-1 rounded bg-black/40 border border-amadeus-border/40">
-                      <span className="text-amadeus-muted">Status do Worker Local:</span>
+
+                    {voiceSettings.useRvc && (
+                      <div className="flex items-center justify-between gap-4 pt-2 border-t border-amber-900/30">
+                        <span className="text-zinc-300">Modelo RVC (.pth):</span>
+                        <select
+                          value={voiceSettings.rvcModel || 'KurisuRVCv147'}
+                          onChange={(e) =>
+                            onSaveVoiceSettings({ ...voiceSettings, rvcModel: e.target.value })
+                          }
+                          className="h-8 px-3 bg-black border border-amber-900/60 text-amber-100 text-xs outline-none focus:border-orange-400"
+                        >
+                          {availableRvcModels.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* EDGE-TTS + RVC SPECIFIC WORKBENCH */}
+                {voiceSettings.engine === 'edge_rvc' && (
+                  <div className="p-4 border border-amber-900/50 bg-black/55 space-y-4">
+                    <div className="flex items-baseline">
+                      <span className="engraved-label">Fonte Vocal Base</span>
+                      <div className="dotted-leader" />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={voiceSettings.useNeural !== false}
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, useNeural: true })}
+                        >
+                          EDGE NEURAL
+                        </button>
+                        <span className="text-zinc-600 font-serif">/</span>
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={voiceSettings.useNeural === false}
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, useNeural: false })}
+                        >
+                          NAVEGADOR
+                        </button>
+                      </div>
+                    </div>
+
+                    {voiceSettings.useNeural !== false ? (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="text-zinc-300">Timbre Neural Base:</span>
+                        <select
+                          value={voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural'}
+                          onChange={(e) =>
+                            onSaveVoiceSettings({ ...voiceSettings, neuralVoice: e.target.value })
+                          }
+                          className="h-8 px-3 bg-black border border-amber-900/60 text-amber-100 text-xs outline-none focus:border-orange-400"
+                        >
+                          <option value="pt-BR-FranciscaNeural">Francisca Neural (pt-BR - Expressiva)</option>
+                          <option value="pt-BR-ThalitaNeural">Thalita Neural (pt-BR - Ágil)</option>
+                          <option value="pt-BR-ElzaNeural">Elza Neural (pt-BR - Analítica)</option>
+                          <option value="ja-JP-NanamiNeural">Nanami Neural (ja-JP - Nativa)</option>
+                          <option value="ja-JP-AoiNeural">Aoi Neural (ja-JP - Suave)</option>
+                          <option value="en-US-JennyNeural">Jenny Neural (en-US - Estúdio)</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="text-zinc-300">Voz do Sistema Operacional:</span>
+                        <select
+                          value={voiceSettings.voiceURI || ''}
+                          onChange={(e) =>
+                            onSaveVoiceSettings({ ...voiceSettings, voiceURI: e.target.value })
+                          }
+                          className="h-8 px-3 bg-black border border-amber-900/60 text-amber-100 text-xs outline-none focus:border-orange-400"
+                        >
+                          <option value="">Padrão do Sistema</option>
+                          {availableVoices.map((v) => (
+                            <option key={v.voiceURI} value={v.voiceURI}>
+                              {v.name} ({v.lang})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* RVC Toggle */}
+                    <div className="flex items-baseline pt-2 border-t border-amber-900/30">
+                      <span className="engraved-label">Clonagem Acústica RVC v2 (CUDA FP16)</span>
+                      <div className="dotted-leader" />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={Boolean(voiceSettings.useRvc)}
+                          onClick={() =>
+                            onSaveVoiceSettings({ ...voiceSettings, useRvc: true, useNeural: true })
+                          }
+                        >
+                          ON
+                        </button>
+                        <span className="text-zinc-600 font-serif">/</span>
+                        <button
+                          type="button"
+                          className="engraved-toggle"
+                          data-active={!voiceSettings.useRvc}
+                          onClick={() => onSaveVoiceSettings({ ...voiceSettings, useRvc: false })}
+                        >
+                          OFF
+                        </button>
+                      </div>
+                    </div>
+
+                    {voiceSettings.useRvc && (
+                      <div className="space-y-4 pt-2">
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="text-zinc-300">Modelo RVC (.pth):</span>
+                          <select
+                            value={voiceSettings.rvcModel || 'KurisuRVCv147'}
+                            onChange={(e) =>
+                              onSaveVoiceSettings({ ...voiceSettings, rvcModel: e.target.value })
+                            }
+                            className="h-8 px-3 bg-black border border-amber-900/60 text-amber-100 text-xs outline-none focus:border-orange-400"
+                          >
+                            {availableRvcModels.map((m) => (
+                              <option key={m} value={m}>
+                                {m}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <PlasmaMeter
+                            label="Transposição Harmônica RVC"
+                            displayValue={`${voiceSettings.rvcPitch ?? 0} st`}
+                            min={-6}
+                            max={6}
+                            step={1}
+                            value={voiceSettings.rvcPitch ?? 0}
+                            onChange={(val) =>
+                              onSaveVoiceSettings({ ...voiceSettings, rvcPitch: Math.round(val) })
+                            }
+                          />
+                          <PlasmaMeter
+                            label="Fidelidade de Índice RVC"
+                            displayValue={`${Math.round((voiceSettings.rvcIndexRate ?? 0.75) * 100)}%`}
+                            min={0.2}
+                            max={1.0}
+                            step={0.05}
+                            value={voiceSettings.rvcIndexRate ?? 0.75}
+                            onChange={(val) =>
+                              onSaveVoiceSettings({ ...voiceSettings, rvcIndexRate: val })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* STRICT TTS FALLBACK CONTROL */}
+                <div className="space-y-3 pt-3 border-t border-amber-900/40">
+                  <div className="flex items-baseline">
+                    <span className="engraved-label">Modo Estrito de Voz (Bloquear Cascata TTS)</span>
+                    <div className="dotted-leader" />
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
-                        onClick={() => handlePingWorker('http://127.0.0.1:8005')}
-                        className="text-amadeus-accent hover:underline flex items-center gap-1 text-[10px]"
+                        className="engraved-toggle"
+                        data-active={voiceSettings.allowTtsFallback === false}
+                        onClick={() =>
+                          onSaveVoiceSettings({ ...voiceSettings, allowTtsFallback: false })
+                        }
                       >
-                        {isPinging ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
-                        <span>{qwenPingStatus?.status === 'ready' ? '🟢 Online' : '🔴 Offline / Verificar'}</span>
+                        ON
+                      </button>
+                      <span className="text-zinc-600 font-serif">/</span>
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={voiceSettings.allowTtsFallback !== false}
+                        onClick={() =>
+                          onSaveVoiceSettings({ ...voiceSettings, allowTtsFallback: true })
+                        }
+                      >
+                        OFF
                       </button>
                     </div>
-                    <div className="p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-200/90 leading-relaxed">
-                      ⚠️ <strong>Aviso de Hardware:</strong> O Qwen3-TTS 1.7B consome ~5.4GB de VRAM. Em GPUs com 6GB ou menos (ex: RTX 3050 Laptop), pode causar paginação e lentidão do Windows. Se notar lentidão, use o modo Remoto via Colab Pro!
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Quando <strong>ON</strong>, se o motor primário selecionado estiver offline, o sistema <strong>não</strong> troca para vozes genéricas e exibe o erro imediatamente.
+                  </p>
+
+                  {/* Allowed Fallback Queue when Cascade is permitted */}
+                  {voiceSettings.allowTtsFallback !== false && (
+                    <div className="p-3 bg-black/50 border border-zinc-800 space-y-2">
+                      <span className="text-[10px] font-mono text-orange-400 uppercase tracking-wider block">
+                        Motores Autorizados na Fila de Contingência:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {DEFAULT_FALLBACK_ENGINES.map((item) => {
+                          const currentList = voiceSettings.allowedTtsFallbacks || [
+                            'qwen_local',
+                            'kokoro',
+                            'edge_rvc',
+                            'web_speech',
+                          ];
+                          const isAllowed = currentList.includes(item.id);
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => toggleFallbackEngine(item.id)}
+                              className={`px-3 py-1.5 border text-left flex items-center justify-between transition-colors ${
+                                isAllowed
+                                  ? 'border-orange-500/50 bg-orange-500/10 text-amber-100'
+                                  : 'border-zinc-800 bg-black/40 text-zinc-500'
+                              }`}
+                            >
+                              <span>{item.label}</span>
+                              <span className="font-bold text-[10px]">
+                                {isAllowed ? 'ATIVO' : 'BLOQUEADO'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Auto-Speak Engraved Toggle */}
+                <div className="flex items-baseline pt-2 border-t border-amber-900/30">
+                  <span className="engraved-label">Vocalizar Respostas Automaticamente</span>
+                  <div className="dotted-leader" />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      className="engraved-toggle"
+                      data-active={voiceSettings.autoSpeak}
+                      onClick={() => onSaveVoiceSettings({ ...voiceSettings, autoSpeak: true })}
+                    >
+                      ON
+                    </button>
+                    <span className="text-zinc-600 font-serif">/</span>
+                    <button
+                      type="button"
+                      className="engraved-toggle"
+                      data-active={!voiceSettings.autoSpeak}
+                      onClick={() => onSaveVoiceSettings({ ...voiceSettings, autoSpeak: false })}
+                    >
+                      OFF
+                    </button>
+                  </div>
+                </div>
+
+                {/* Prosody Plasma Meters: Rate & Pitch */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-2">
+                  <PlasmaMeter
+                    label="Velocidade de Prosódia"
+                    displayValue={`${voiceSettings.rate.toFixed(2)}x`}
+                    min={0.8}
+                    max={1.4}
+                    step={0.05}
+                    value={voiceSettings.rate}
+                    onChange={(val) => onSaveVoiceSettings({ ...voiceSettings, rate: val })}
+                  />
+                  <PlasmaMeter
+                    label="Frequência / Pitch Base"
+                    displayValue={`${voiceSettings.pitch.toFixed(2)}`}
+                    min={0.8}
+                    max={1.6}
+                    step={0.05}
+                    value={voiceSettings.pitch}
+                    onChange={(val) => onSaveVoiceSettings({ ...voiceSettings, pitch: val })}
+                  />
+                </div>
+
+                {/* Sample Audio Test Button */}
+                <div className="space-y-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleTestVoice}
+                    disabled={isTestingVoice}
+                    className="copper-capsule w-full py-2.5 flex items-center justify-center gap-2 text-amber-200 hover:text-white disabled:opacity-50"
+                  >
+                    {isTestingVoice ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-orange-400" />
+                    ) : (
+                      <Radio className="w-4 h-4 text-orange-400" />
+                    )}
+                    <span className="engraved-serif text-xs font-bold tracking-widest">
+                      {isTestingVoice ? 'EMITINDO SINAL DE TESTE...' : 'EMITIR AMOSTRA ACÚSTICA'}
+                    </span>
+                  </button>
+
+                  {voiceTestError && (
+                    <div className="flex items-start gap-2 p-2.5 border border-rose-500/50 bg-rose-950/30 text-rose-200 text-[11px] font-sans">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <span>{voiceTestError}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ==================== SECTION 3: WHISPER STT & VAD ==================== */}
+            {activeSection === 'whisper' && (
+              <div className="space-y-6">
+                {/* Whisper Key Mode: Unified vs Separate */}
+                <div className="space-y-2">
+                  <div className="flex items-baseline">
+                    <span className="engraved-label">Credencial Groq Whisper Large-v3</span>
+                    <div className="dotted-leader" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={sttMode === 'unified'}
+                        onClick={() =>
+                          onSaveVoiceSettings({ ...voiceSettings, sttKeyMode: 'unified' })
+                        }
+                      >
+                        UNIFIED
+                      </button>
+                      <span className="text-zinc-600 font-serif">/</span>
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={sttMode === 'separate'}
+                        onClick={() =>
+                          onSaveVoiceSettings({ ...voiceSettings, sttKeyMode: 'separate' })
+                        }
+                      >
+                        DEDICATED
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Use <strong>DEDICATED</strong> para manter uma chave Groq (<code className="text-amber-300">gsk_...</code>) exclusiva para transcrição Whisper quando seu LLM principal for Google Gemini ou OpenRouter.
+                  </p>
+
+                  {sttMode === 'unified' && !isMainKeyGroq && (
+                    <div className="flex items-start gap-2 p-2.5 border border-amber-500/50 bg-amber-950/30 text-amber-200 text-[11px] font-sans">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span>
+                        Sua chave primária atual não é uma chave Groq (<code className="text-amber-300">gsk_...</code>). Mude para <strong>DEDICATED</strong> e insira uma chave Groq abaixo para usar o Whisper Large-v3.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Dedicated Groq STT Key Input */}
+                {sttMode === 'separate' && (
+                  <div className="space-y-2 pt-2 border-t border-amber-900/30">
+                    <label className="engraved-label block">
+                      Chave Groq Dedicada ao Whisper (<code className="text-orange-400 text-xs">gsk_...</code>)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                      value={tempSttKey}
+                      onChange={(e) => {
+                        setTempSttKey(e.target.value);
+                        localStorage.setItem('amadeus_groq_stt_key', e.target.value.trim());
+                        onSaveVoiceSettings({
+                          ...voiceSettings,
+                          separateGroqSttKey: e.target.value.trim(),
+                        });
+                      }}
+                      className="w-full h-9 bg-black/85 border border-amber-900/60 focus:border-orange-400 px-3 text-amber-100 font-mono text-xs outline-none shadow-inner"
+                    />
+                  </div>
+                )}
+
+                {/* Capture Mode: PTT vs Hands-Free VAD */}
+                <div className="flex items-baseline pt-3 border-t border-amber-900/30">
+                  <span className="engraved-label">Operação do Microfone</span>
+                  <div className="dotted-leader" />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      className="engraved-toggle"
+                      data-active={(voiceSettings.micMode || 'ptt') === 'ptt'}
+                      onClick={() => onSaveVoiceSettings({ ...voiceSettings, micMode: 'ptt' })}
+                    >
+                      PUSH-TO-TALK
+                    </button>
+                    <span className="text-zinc-600 font-serif">/</span>
+                    <button
+                      type="button"
+                      className="engraved-toggle"
+                      data-active={voiceSettings.micMode === 'hands_free'}
+                      onClick={() =>
+                        onSaveVoiceSettings({ ...voiceSettings, micMode: 'hands_free' })
+                      }
+                    >
+                      HANDS-FREE (VAD)
+                    </button>
+                  </div>
+                </div>
+
+                {/* VAD Gate Sensitivity Plasma Meter */}
+                <PlasmaMeter
+                  label="Sensibilidade do Gate Acústico (VAD)"
+                  displayValue={`${(voiceSettings.vadSensitivity ?? 1.0).toFixed(2)}x`}
+                  min={0.5}
+                  max={2.0}
+                  step={0.1}
+                  value={voiceSettings.vadSensitivity ?? 1.0}
+                  onChange={(val) =>
+                    onSaveVoiceSettings({ ...voiceSettings, vadSensitivity: val })
+                  }
+                />
+
+                {/* Web Speech Fallback Toggle */}
+                <div className="space-y-1.5 pt-3 border-t border-amber-900/30">
+                  <div className="flex items-baseline">
+                    <span className="engraved-label">Permitir Fallback p/ Web Speech do Navegador</span>
+                    <div className="dotted-leader" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={voiceSettings.allowSttWebSpeechFallback !== false}
+                        onClick={() =>
+                          onSaveVoiceSettings({
+                            ...voiceSettings,
+                            allowSttWebSpeechFallback: true,
+                          })
+                        }
+                      >
+                        ON
+                      </button>
+                      <span className="text-zinc-600 font-serif">/</span>
+                      <button
+                        type="button"
+                        className="engraved-toggle"
+                        data-active={voiceSettings.allowSttWebSpeechFallback === false}
+                        onClick={() =>
+                          onSaveVoiceSettings({
+                            ...voiceSettings,
+                            allowSttWebSpeechFallback: false,
+                          })
+                        }
+                      >
+                        OFF
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Quando <strong>OFF</strong>, opera exclusivamente via Groq Whisper Large-v3 e exibe alerta imediato se a chave Groq estiver ausente.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ==================== SECTION 4: DISPLAY ==================== */}
+            {activeSection === 'display' && (
+              <div className="space-y-6">
+                {/* CRT Scanlines Toggle */}
+                <div className="flex items-baseline">
+                  <span className="engraved-label">Linhas de Varredura de Tubo (CRT Scanlines)</span>
+                  <div className="dotted-leader" />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      className="engraved-toggle"
+                      data-active={scanlines}
+                      onClick={() => !scanlines && onToggleScanlines(true)}
+                    >
+                      ON
+                    </button>
+                    <span className="text-zinc-600 font-serif">/</span>
+                    <button
+                      type="button"
+                      className="engraved-toggle"
+                      data-active={!scanlines}
+                      onClick={() => scanlines && onToggleScanlines(false)}
+                    >
+                      OFF
+                    </button>
+                  </div>
+                </div>
+
+                {/* Default Camera Framing */}
+                {onSaveDefaultCamera && (
+                  <div className="space-y-2 pt-3 border-t border-amber-900/30">
+                    <span className="engraved-label block">Enquadramento Óptico Padrão</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {(
+                        [
+                          { id: 'auto', label: 'DINÂMICO (IA)' },
+                          { id: 'closeup', label: 'CLOSE-UP' },
+                          { id: 'medium', label: 'PLANO MÉDIO' },
+                          { id: 'full', label: 'CORPO INTEIRO' },
+                        ] as const
+                      ).map((cam) => (
+                        <button
+                          key={cam.id}
+                          type="button"
+                          onClick={() => onSaveDefaultCamera(cam.id)}
+                          className={`py-2 px-3 border text-center font-bold transition-all ${
+                            defaultCamera === cam.id
+                              ? 'border-orange-400 bg-orange-500/20 text-amber-100'
+                              : 'border-amber-900/40 bg-black/50 text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {cam.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* ENGINE 2: KOKORO-TTS (LIGHTWEIGHT LOCAL) */}
-            {voiceSettings.engine === 'kokoro' && (
-              <div className="p-3 rounded-lg border border-amadeus-accent/30 bg-amadeus-card/90 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-amadeus-accent">
-                    <Zap className="w-3.5 h-3.5 text-amadeus-accent" />
-                    <span>KOKORO-TTS (MOTOR LOCAL LEVE 82M)</span>
-                  </div>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
-                    100% Offline • ~100ms
-                  </span>
-                </div>
-                <p className="text-[10px] text-amadeus-muted leading-relaxed">
-                  Síntese neural ultrarrápida em Português Brasileiro (voz <em>pf_dora</em>). Roda diretamente em CPU ou GPU consumindo apenas ~350MB de memória.
-                </p>
-
-                {/* RVC on Kokoro option */}
-                <div className="pt-2 border-t border-amadeus-border/40 space-y-2">
-                  <div className="flex items-center justify-between">
+            {/* ==================== SECTION 5: SYSTEM & ARCHITECTURE ==================== */}
+            {activeSection === 'system' && (
+              <div className="space-y-4">
+                <div className="p-4 border border-amber-900/50 bg-black/60 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
                     <div>
-                      <span className="text-[11px] text-white font-medium block">Aplicar Timbre RVC de Makise Kurisu</span>
-                      <span className="text-[10px] text-amadeus-muted">Converte a voz base Kokoro para o timbre autêntico</span>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(voiceSettings.useRvc)}
-                      onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, useRvc: e.target.checked })}
-                      className="accent-amadeus-accent w-4 h-4 cursor-pointer"
-                    />
-                  </div>
-
-                  {voiceSettings.useRvc && (
-                    <div className="space-y-2 pt-1">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-amadeus-muted block">Modelo RVC (.pth):</label>
-                        <select
-                          value={voiceSettings.rvcModel || 'KurisuRVCv147'}
-                          onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, rvcModel: e.target.value })}
-                          className="w-full h-8 px-2 rounded bg-amadeus-card border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
-                        >
-                          {availableRvcModels.map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-orange-400 shrink-0" />
+                        <h3 className="engraved-serif text-xs font-bold text-amber-100">
+                          Kurisu Qwen3-TTS 1.7B (Síntese Neural Expressiva)
+                        </h3>
                       </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ENGINE 3: EDGE-TTS + RVC */}
-            {voiceSettings.engine === 'edge_rvc' && (
-              <>
-                {/* Neural vs System Voice selector */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-[11px] text-white font-medium block">Voz Neural de Alta Definição (Edge-TTS)</span>
-                      <span className="text-[10px] text-amadeus-muted">Voz humana com sincronia labial acústica</span>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={voiceSettings.useNeural !== false}
-                      onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, useNeural: e.target.checked })}
-                      className="accent-amadeus-accent w-4 h-4 cursor-pointer"
-                    />
-                  </div>
-
-                  {voiceSettings.useNeural !== false ? (
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-amadeus-muted block">Voz Neural (IA):</label>
-                      <select
-                        value={voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural'}
-                        onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, neuralVoice: e.target.value })}
-                        className="w-full h-8 px-2 rounded bg-amadeus-card border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
-                      >
-                        <option value="pt-BR-FranciscaNeural">Francisca Neural (Português BR - Natural & Expressiva)</option>
-                        <option value="pt-BR-ThalitaNeural">Thalita Neural (Português BR - Jovem & Rápida)</option>
-                        <option value="pt-BR-ElzaNeural">Elza Neural (Português BR - Calma & Séria)</option>
-                        <option value="ja-JP-NanamiNeural">Nanami Neural (Japonês - Anime Original)</option>
-                        <option value="ja-JP-AoiNeural">Aoi Neural (Japonês - Calma)</option>
-                        <option value="en-US-JennyNeural">Jenny Neural (Inglês - Cientista Viktor Chondria)</option>
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-amadeus-muted block">Voz do Sistema (Navegador):</label>
-                      <select
-                        value={voiceSettings.voiceURI || ''}
-                        onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, voiceURI: e.target.value })}
-                        className="w-full h-8 px-2 rounded bg-amadeus-card border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
-                      >
-                        <option value="">Padrão do Sistema</option>
-                        {availableVoices.map((v) => (
-                          <option key={v.voiceURI} value={v.voiceURI}>
-                            {v.name} ({v.lang})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-
-                {/* RVC Neural Voice Card (RTX 3050 GPU Acceleration) */}
-                <div className="p-3 rounded-lg border border-amadeus-accent/30 bg-amadeus-card/90 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-amadeus-accent">
-                        <Sparkles className="w-3.5 h-3.5 text-amadeus-accent" />
-                        <span>CLONAGEM DE VOZ RVC (KURISU)</span>
-                      </div>
-                      <p className="text-[10px] text-amadeus-muted mt-0.5">
-                        Timbre da dubladora original acelerado por GPU (CUDA FP16)
+                      <p className="text-[10px] text-zinc-400 mt-0.5">
+                        starrydark / Kurisu_Qwen3_TTS • Alibaba Qwen3-TTS 1.7B
                       </p>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(voiceSettings.useRvc)}
-                      onChange={(e) =>
-                        onSaveVoiceSettings({
-                          ...voiceSettings,
-                          useRvc: e.target.checked,
-                          useNeural: true,
-                        })
-                      }
-                      className="accent-amadeus-accent w-4 h-4 cursor-pointer"
-                    />
+                    <a
+                      href="https://huggingface.co/starrydark/Kurisu_Qwen3_TTS"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="copper-capsule px-3 py-1 flex items-center gap-1 text-[10px] text-amber-200 hover:text-white shrink-0"
+                    >
+                      <span>HuggingFace</span>
+                      <ExternalLink className="w-3 h-3 text-orange-400" />
+                    </a>
                   </div>
-
-                  {voiceSettings.useRvc && (
-                    <div className="space-y-2 pt-1 border-t border-amadeus-border/40">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-amadeus-muted block">Modelo RVC (.pth):</label>
-                        <select
-                          value={voiceSettings.rvcModel || 'KurisuRVCv147'}
-                          onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, rvcModel: e.target.value })}
-                          className="w-full h-8 px-2 rounded bg-amadeus-card border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
-                        >
-                          {availableRvcModels.map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="flex items-center justify-between pt-1">
-                        <button
-                          type="button"
-                          onClick={() => setShowRvcAdvanced((prev) => !prev)}
-                          className="text-[10px] text-amadeus-accent hover:underline flex items-center gap-1"
-                        >
-                          <span>{showRvcAdvanced ? '▼ Ocultar Ajustes Finos RVC' : '▶ Ajustes Finos de Tom & Timbre (Opcional)'}</span>
-                        </button>
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-amadeus-accent/10 border border-amadeus-accent/30 text-amadeus-accent">
-                          CUDA FP16
-                        </span>
-                      </div>
-
-                      {showRvcAdvanced && (
-                        <div className="grid grid-cols-2 gap-3 pt-2 text-[10px]">
-                          <div>
-                            <label className="text-amadeus-muted block mb-1">
-                              Afinação / Pitch ({voiceSettings.rvcPitch ?? 0} semitons):
-                            </label>
-                            <input
-                              type="range"
-                              min="-6"
-                              max="6"
-                              step="1"
-                              value={voiceSettings.rvcPitch ?? 0}
-                              onChange={(e) =>
-                                onSaveVoiceSettings({
-                                  ...voiceSettings,
-                                  rvcPitch: parseInt(e.target.value, 10),
-                                })
-                              }
-                              className="w-full accent-amadeus-accent cursor-pointer"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-amadeus-muted block mb-1">
-                              Fidelidade de Timbre ({Math.round((voiceSettings.rvcIndexRate ?? 0.75) * 100)}%):
-                            </label>
-                            <input
-                              type="range"
-                              min="0.2"
-                              max="1.0"
-                              step="0.05"
-                              value={voiceSettings.rvcIndexRate ?? 0.75}
-                              onChange={(e) =>
-                                onSaveVoiceSettings({
-                                  ...voiceSettings,
-                                  rvcIndexRate: parseFloat(e.target.value),
-                                })
-                              }
-                              className="w-full accent-amadeus-accent cursor-pointer"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
+                    Motor neural <em>end-to-end</em> de 1.7B parâmetros para síntese vocal expressiva em tempo real via CUDA BF16 ou túnel remoto Google Colab.
+                  </p>
                 </div>
-              </>
-            )}
 
-            {/* Sample audio preview button */}
+                <div className="p-4 border border-amber-900/50 bg-black/60 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Volume2 className="w-4 h-4 text-orange-400 shrink-0" />
+                        <h3 className="engraved-serif text-xs font-bold text-amber-100">
+                          Kurisu RVC v2 (Conversão Harmônica de Timbre)
+                        </h3>
+                      </div>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">
+                        FrancescoCaracciolo / Kurisu-RVC • Extração RMVPE + HuBERT
+                      </p>
+                    </div>
+                    <a
+                      href="https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC/tree/main"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="copper-capsule px-3 py-1 flex items-center gap-1 text-[10px] text-amber-200 hover:text-white shrink-0"
+                    >
+                      <span>HuggingFace</span>
+                      <ExternalLink className="w-3 h-3 text-orange-400" />
+                    </a>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
+                    Conversão acústica em GPU local sobre modelos base Kokoro-TTS 82M e Microsoft Edge Neural TTS.
+                  </p>
+                </div>
+
+                <div className="p-4 border border-amber-900/50 bg-black/60 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Database className="w-4 h-4 text-orange-400 shrink-0" />
+                    <h3 className="engraved-serif text-xs font-bold text-amber-100">
+                      Memória Vetorial RAG & Orquestrador Multi-LLM
+                    </h3>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
+                    Persistência híbrida em <strong>ChromaDB + SQLite</strong> com busca semântica vetorial e suporte a <strong>Groq LPU</strong>, <strong>Google Gemini</strong> e <strong>OpenRouter</strong>.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <span className="px-2 py-0.5 bg-black border border-amber-900/50 text-[10px] text-orange-300">
+                      FastAPI + ChromaDB
+                    </span>
+                    <span className="px-2 py-0.5 bg-black border border-amber-900/50 text-[10px] text-zinc-300">
+                      Groq Whisper Large-v3
+                    </span>
+                    <span className="px-2 py-0.5 bg-black border border-amber-900/50 text-[10px] text-zinc-300">
+                      WebAudio Lip-Sync
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Action Bar */}
+          <div className="px-6 py-3.5 border-t border-amber-900/40 bg-black/75 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
+              <Layers className="w-3.5 h-3.5 text-orange-400" />
+              <span>Persistência Imediata no Barramento Local</span>
+            </div>
             <button
               type="button"
-              onClick={handleTestVoice}
-              disabled={isTestingVoice}
-              className="w-full h-8 rounded border border-amadeus-accent/40 bg-amadeus-accent/10 hover:bg-amadeus-accent hover:text-black text-amadeus-accent text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              onClick={handleApplyAndClose}
+              className="copper-capsule px-5 py-2 flex items-center gap-2 text-amber-100 hover:text-white"
             >
-              {isTestingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Volume2 className="w-3.5 h-3.5" />}
-              <span>{isTestingVoice ? 'Reproduzindo Amostra...' : 'Ouvir Amostra de Voz'}</span>
+              {savedSuccess ? (
+                <Check className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <Check className="w-4 h-4 text-orange-400" />
+              )}
+              <span className="engraved-serif text-xs font-bold tracking-widest">
+                {savedSuccess ? 'CALIBRADO' : 'APLICAR E FECHAR'}
+              </span>
             </button>
-
-            <div className="flex items-center justify-between pt-1">
-              <span className="text-[11px] text-amadeus-muted">Falar Resposta Automaticamente:</span>
-              <input
-                type="checkbox"
-                checked={voiceSettings.autoSpeak}
-                onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, autoSpeak: e.target.checked })}
-                className="accent-amadeus-accent w-4 h-4 cursor-pointer"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <div>
-                <label className="text-[10px] text-amadeus-muted block mb-1">Velocidade ({voiceSettings.rate}x):</label>
-                <input
-                  type="range"
-                  min="0.8"
-                  max="1.4"
-                  step="0.05"
-                  value={voiceSettings.rate}
-                  onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, rate: parseFloat(e.target.value) })}
-                  className="w-full accent-amadeus-accent cursor-pointer"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-amadeus-muted block mb-1">Tom / Pitch ({voiceSettings.pitch}):</label>
-                <input
-                  type="range"
-                  min="0.8"
-                  max="1.6"
-                  step="0.05"
-                  value={voiceSettings.pitch}
-                  onChange={(e) => onSaveVoiceSettings({ ...voiceSettings, pitch: parseFloat(e.target.value) })}
-                  className="w-full accent-amadeus-accent cursor-pointer"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Section: Display Settings */}
-          <div className="space-y-3 pt-3 border-t border-amadeus-border/60">
-            <div className="flex items-center gap-2 text-xs font-bold text-white">
-              <Monitor className="w-3.5 h-3.5 text-amadeus-accent" />
-              <span>VISUAL & EFEITOS CRT</span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-amadeus-muted">Linhas de Varredura CRT (Scanlines):</span>
-              <input
-                type="checkbox"
-                checked={scanlines}
-                onChange={(e) => onToggleScanlines(e.target.checked)}
-                className="accent-amadeus-accent w-4 h-4 cursor-pointer"
-              />
-            </div>
-          </div>
-          </div>
-        ) : (
-          /* Credits & Models Tab */
-          <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
-            {/* Header info */}
-            <div className="p-3.5 rounded-lg border border-amadeus-accent/30 bg-amadeus-card/90 space-y-1.5 font-mono">
-              <div className="flex items-center gap-2 text-xs font-bold text-amadeus-accent">
-                <Cpu className="w-4 h-4 text-amadeus-accent" />
-                <span>RECONHECIMENTOS & INFRAESTRUTURA NEURAL</span>
-              </div>
-              <p className="text-[11px] text-amadeus-muted leading-relaxed font-sans">
-                O Amadeus System opera através da integração de modelos neurais de ponta, pesos especializados da comunidade open-source e motores de voz de estúdio.
-              </p>
-            </div>
-
-            {/* Model 1: Kurisu Qwen3-TTS */}
-            <div className="p-4 rounded-xl border border-amadeus-accent/40 bg-amadeus-card hover:border-amadeus-accent transition-colors space-y-2.5">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amadeus-accent shrink-0" />
-                    <h3 className="text-xs font-bold font-mono text-white tracking-wide">
-                      Kurisu Qwen3-TTS (Novo Motor de Voz)
-                    </h3>
-                  </div>
-                  <p className="text-[10px] text-amadeus-muted font-mono mt-0.5">
-                    starrydark / Kurisu_Qwen3_TTS • Alibaba Qwen3-TTS 1.7B
-                  </p>
-                </div>
-                <a
-                  href="https://huggingface.co/starrydark/Kurisu_Qwen3_TTS"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-amadeus-accent/10 border border-amadeus-accent/40 text-[10px] text-amadeus-accent font-mono hover:bg-amadeus-accent hover:text-black transition-colors shrink-0"
-                >
-                  <span>HuggingFace</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <p className="text-[11px] text-gray-300 leading-relaxed font-sans">
-                Motor neural <em>end-to-end</em> baseado na arquitetura Alibaba Qwen3-TTS (1.7 Bilhões de parâmetros), com pesos treinados especificamente na voz, entonações emocionais, suspiros e reações <em>tsundere</em> de Makise Kurisu. Executa inferência local em GPU via PyTorch 2.6 CUDA com acústica de estúdio seco.
-              </p>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 border border-amadeus-border text-amadeus-accent">
-                  Alibaba Qwen3-TTS
-                </span>
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 border border-amadeus-border text-amadeus-muted">
-                  PyTorch 2.6 cu124 BF16
-                </span>
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 border border-amadeus-border text-amadeus-muted">
-                  Resident Worker :8002
-                </span>
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 border border-amadeus-border text-amadeus-muted">
-                  150ms Breath Pauses
-                </span>
-              </div>
-            </div>
-
-            {/* Model 2: Kurisu RVC v2 */}
-            <div className="p-4 rounded-xl border border-amadeus-border bg-amadeus-card hover:border-amadeus-accent/60 transition-colors space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Volume2 className="w-4 h-4 text-amadeus-accent shrink-0" />
-                    <h3 className="text-xs font-bold font-mono text-white">
-                      Kurisu RVC v2 (Conversão de Timbre)
-                    </h3>
-                  </div>
-                  <p className="text-[10px] text-amadeus-muted font-mono mt-0.5">
-                    FrancescoCaracciolo / Kurisu-RVC • Modelo de Voz RVC v2
-                  </p>
-                </div>
-                <a
-                  href="https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC/tree/main"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-amadeus-accent/10 border border-amadeus-accent/40 text-[10px] text-amadeus-accent font-mono hover:bg-amadeus-accent hover:text-black transition-colors shrink-0"
-                >
-                  <span>HuggingFace</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <p className="text-[11px] text-gray-300 leading-relaxed font-sans">
-                Clonagem e conversão acústica de timbre em tempo real treinada sobre a voz oficial da dubladora japonesa de Makise Kurisu. Utiliza os pesos <code className="text-amadeus-accent font-mono text-[10px]">KurisuRVCv147.pth</code> e índice <code className="text-amadeus-accent font-mono text-[10px]">KurisuRVCv147.index</code> com extração harmônica RMVPE e HuBERT.
-              </p>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 border border-amadeus-border text-amadeus-accent">
-                  RVC v2
-                </span>
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 border border-amadeus-border text-amadeus-muted">
-                  CUDA FP16
-                </span>
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 border border-amadeus-border text-amadeus-muted">
-                  Worker :8001
-                </span>
-              </div>
-            </div>
-
-            {/* Model 3: Microsoft Edge-TTS */}
-            <div className="p-4 rounded-xl border border-amadeus-border bg-amadeus-card space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-amadeus-accent shrink-0" />
-                    <h3 className="text-xs font-bold font-mono text-white">
-                      Microsoft Edge Neural TTS
-                    </h3>
-                  </div>
-                  <p className="text-[10px] text-amadeus-muted font-mono mt-0.5">
-                    Azure Cognitive Services
-                  </p>
-                </div>
-                <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-amadeus-card border border-amadeus-border text-amadeus-muted">
-                  Cloud Neural
-                </span>
-              </div>
-              <p className="text-[11px] text-gray-300 leading-relaxed font-sans">
-                Geração de áudio neural de alta fluidez em Português do Brasil (<code className="text-amadeus-accent font-mono text-[10px]">FranciscaNeural</code>, <code className="text-amadeus-accent font-mono text-[10px]">ThalitaNeural</code>) e Japonês (<code className="text-amadeus-accent font-mono text-[10px]">NanamiNeural</code>), servindo como base acústica e fallback automático instantâneo.
-              </p>
-            </div>
-
-            {/* Model 4: Memória & LLMs */}
-            <div className="p-4 rounded-xl border border-amadeus-border bg-amadeus-card space-y-2">
-              <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-amadeus-accent shrink-0" />
-                <h3 className="text-xs font-bold font-mono text-white">
-                  Memória Semântica & Modelos de Linguagem
-                </h3>
-              </div>
-              <p className="text-[11px] text-gray-300 leading-relaxed font-sans">
-                <strong>ChromaDB + SQLite:</strong> Armazenamento vetorial local para recuperação de memórias semânticas (RAG) e contexto de longo prazo.<br />
-                <strong>LLMs Suportadas:</strong> Groq Cloud LPU (Llama 3.3 70B Versatile), Google Gemini 2.5 Flash / Pro, e OpenRouter.
-              </p>
-            </div>
-
-            {/* Disclaimer / Steins;Gate Lore */}
-            <div className="p-3.5 rounded-lg border border-amadeus-border/60 bg-black/40 space-y-1.5 text-[10px] text-amadeus-muted leading-relaxed font-sans">
-              <div className="flex items-center gap-1.5 font-bold text-amadeus-muted font-mono">
-                <Heart className="w-3.5 h-3.5 text-amadeus-red shrink-0" />
-                <span>DIREITOS & UNIVERSO ORIGINAL</span>
-              </div>
-              <p>
-                Makise Kurisu e o projeto Amadeus pertencem ao universo de <strong>Steins;Gate</strong> e <strong>Steins;Gate 0</strong>, criações originais de <strong>Chiyomaru Shikura</strong>, <strong>MAGES. / 5pb.</strong>, <strong>Nitroplus</strong> e <strong>White Fox</strong>.
-              </p>
-              <p>
-                Este software é um projeto conceitual e experimental desenvolvido para fins de pesquisa, estudo em inteligência artificial e homenagem de fã.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-amadeus-border bg-amadeus-card flex items-center justify-between">
-          <span className="text-[11px] text-amadeus-muted">
-            {activeTab === 'settings'
-              ? 'Configurações salvas localmente'
-              : 'Amadeus System // Viktor Chondria Lab 304'}
-          </span>
-          <div className="flex items-center gap-2">
-            {activeTab === 'settings' ? (
-              <>
-                <button
-                  onClick={onClose}
-                  className="px-3.5 py-1.5 rounded bg-amadeus-border/60 hover:bg-amadeus-border text-white text-xs transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-4 py-1.5 rounded bg-amadeus-accent text-black font-bold text-xs flex items-center gap-1.5 hover:bg-[#00e676] transition-colors"
-                >
-                  {savedSuccess ? <Check className="w-3.5 h-3.5" /> : null}
-                  <span>{savedSuccess ? 'Salvo!' : 'Salvar Alterações'}</span>
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={onClose}
-                className="px-4 py-1.5 rounded bg-amadeus-accent text-black font-bold text-xs hover:bg-[#00e676] transition-colors"
-              >
-                Fechar
-              </button>
-            )}
           </div>
         </div>
       </div>

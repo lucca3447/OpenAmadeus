@@ -122,17 +122,15 @@ class LLMOrchestrator:
             if clean_summary:
                 memory_store.update_session_context_summary(session_id, clean_summary)
         except Exception as e:
-            print(f"[Amadeus Core] Rolling context summary skipped (preserving previous): {e}")
+            print(f"[OpenAmadeus Core] Rolling context summary skipped (preserving previous): {e}")
 
     async def handle_chat(self, req: ChatRequest) -> ChatResponse:
         persona = load_persona(req.personaId or "kurisu")
         
-        # Active session ID
         session_id = req.sessionId
         if not session_id:
             session_id = memory_store.create_session()
 
-        # Read prior session history and rolling summary from SQLite before appending current turn
         history_turns = self._resolve_history_turns(session_id, req.history)
         context_summary = memory_store.get_session_context_summary(session_id)
 
@@ -146,13 +144,25 @@ class LLMOrchestrator:
         api_key = (req.apiKey or "").strip()
         is_groq = api_key.startswith("gsk_")
         is_openrouter = api_key.startswith("sk-or-")
+        allow_model_fallback = req.allowModelFallback if req.allowModelFallback is not None else True
+        allow_offline_fallback = req.allowOfflineSimulatorFallback if req.allowOfflineSimulatorFallback is not None else True
+        preferred_model = (req.selectedModel or "").strip() if req.selectedModel and req.selectedModel != "offline" else ""
 
         # Offline Simulator fallback if no key
         if not api_key:
+            if not allow_offline_fallback:
+                err_msg = "[MODO ESTRITO DE LLM] Nenhuma chave de API configurada e as respostas do Simulador Offline foram bloqueadas."
+                return ChatResponse(
+                    response=err_msg,
+                    emotion="serious",
+                    recalledMemories=recalled_ids,
+                    sessionId=session_id,
+                    error=err_msg,
+                )
+
             clean_text, emotion, learned = offline_simulator(req.message, persona, semantic_matches)
             pose, camera = infer_pose_and_camera(clean_text, emotion, req.message)
             
-            # If offline simulator detected user fact, save to Chroma + SQLite
             if learned:
                 saved = memory_store.add_memory(
                     category="user",
@@ -202,13 +212,6 @@ class LLMOrchestrator:
             block = "[EXEMPLOS CANÔNICOS DE DIÁLOGO E TOM DA KURISU]:\n" + "\n\n".join(ex_lines)
             memory_ctx_blocks.append(block)
 
-        # 4. Telemetria do Medidor de Divergência (Steins;Gate Worldline Meter)
-        div_data = await get_worldline_divergence()
-        div_val = div_data.get("divergence", "1.048596")
-        div_wl = div_data.get("worldline", "Steins Gate")
-        block_div = f"[TELEMETRIA DO SISTEMA AMADEUS // DIVERGENCE METER]: Linha de Mundo Atual: {div_val}% ({div_wl})"
-        memory_ctx_blocks.append(block_div)
-
         memory_ctx = ("\n\n" + "\n\n".join(memory_ctx_blocks)) if memory_ctx_blocks else ""
         system_prompt = persona.get("systemPrompt", "") + memory_ctx
 
@@ -232,10 +235,17 @@ class LLMOrchestrator:
                 last_groq_err = None
                 fp = api_key[-8:]
                 async with httpx.AsyncClient(timeout=35.0) as client:
-                    groq_candidates = await get_groq_candidate_models(client, api_key)
-                    if fp in self.model_cache and self.model_cache[fp] in groq_candidates:
-                        groq_candidates.remove(self.model_cache[fp])
-                        groq_candidates.insert(0, self.model_cache[fp])
+                    if not allow_model_fallback and preferred_model:
+                        groq_candidates = [preferred_model]
+                    else:
+                        groq_candidates = await get_groq_candidate_models(client, api_key)
+                        if fp in self.model_cache and self.model_cache[fp] in groq_candidates:
+                            groq_candidates.remove(self.model_cache[fp])
+                            groq_candidates.insert(0, self.model_cache[fp])
+                        if preferred_model:
+                            if preferred_model in groq_candidates:
+                                groq_candidates.remove(preferred_model)
+                            groq_candidates.insert(0, preferred_model)
 
                     for candidate_groq in groq_candidates:
                         try:
@@ -256,6 +266,8 @@ class LLMOrchestrator:
                             )
                             if res.status_code != 200:
                                 err_body = res.text
+                                if not allow_model_fallback:
+                                    raise GeminiError(res.status_code, f"[MODO FIXO GROQ • {candidate_groq}] {err_body}")
                                 is_retryable = (
                                     res.status_code in (400, 404, 429, 502, 503)
                                     or "decommissioned" in err_body.lower()
@@ -263,7 +275,7 @@ class LLMOrchestrator:
                                     or "rate limit" in err_body.lower()
                                 )
                                 if is_retryable:
-                                    print(f"[Amadeus Core] Groq model {candidate_groq} returned {res.status_code} ({err_body[:80]}...), trying next...")
+                                    print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned {res.status_code} ({err_body[:80]}...), trying next...")
                                     continue
                                 raise GeminiError(res.status_code, err_body)
 
@@ -273,7 +285,9 @@ class LLMOrchestrator:
                             clean_candidate = strip_thinking_tags(content_val if isinstance(content_val, str) else "")
 
                             if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
-                                print(f"[Amadeus Core] Groq model {candidate_groq} returned empty, reasoning, or scratchpad, trying next candidate...")
+                                if not allow_model_fallback:
+                                    raise GeminiError(502, f"[MODO FIXO GROQ • {candidate_groq}] Resposta vazia ou raciocínio interno sem diálogo.")
+                                print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned empty/reasoning, trying next candidate...")
                                 continue
 
                             raw_reply = clean_candidate
@@ -283,7 +297,7 @@ class LLMOrchestrator:
                             break
                         except GeminiError as e:
                             last_groq_err = e
-                            if e.code in (400, 404, 429, 502, 503):
+                            if allow_model_fallback and e.code in (400, 404, 429, 502, 503):
                                 continue
                             raise
 
@@ -302,7 +316,15 @@ class LLMOrchestrator:
                     })
                 messages.append({"role": "user", "content": req.message})
 
-                openrouter_candidates = get_openrouter_candidate_models()
+                if not allow_model_fallback and preferred_model:
+                    openrouter_candidates = [preferred_model]
+                else:
+                    openrouter_candidates = get_openrouter_candidate_models()
+                    if preferred_model:
+                        if preferred_model in openrouter_candidates:
+                            openrouter_candidates.remove(preferred_model)
+                        openrouter_candidates.insert(0, preferred_model)
+
                 last_or_err = None
                 async with httpx.AsyncClient(timeout=35.0) as client:
                     for candidate_or in openrouter_candidates:
@@ -313,7 +335,7 @@ class LLMOrchestrator:
                                     "Authorization": f"Bearer {api_key}",
                                     "Content-Type": "application/json",
                                     "HTTP-Referer": "http://localhost:5173",
-                                    "X-Title": "Amadeus System"
+                                    "X-Title": "OpenAmadeus"
                                 },
                                 json={
                                     "model": candidate_or,
@@ -327,6 +349,8 @@ class LLMOrchestrator:
                             )
                             if res.status_code != 200:
                                 err_body = res.text
+                                if not allow_model_fallback:
+                                    raise GeminiError(res.status_code, f"[MODO FIXO OPENROUTER • {candidate_or}] {err_body}")
                                 is_retryable = (
                                     res.status_code in (404, 429, 502, 503)
                                     or "unavailable for free" in err_body.lower()
@@ -334,7 +358,7 @@ class LLMOrchestrator:
                                     or "rate limit" in err_body.lower()
                                 )
                                 if is_retryable:
-                                    print(f"[Amadeus Core] OpenRouter model {candidate_or} returned {res.status_code}, trying next...")
+                                    print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned {res.status_code}, trying next...")
                                     continue
                                 raise GeminiError(res.status_code, err_body)
 
@@ -344,7 +368,9 @@ class LLMOrchestrator:
                             clean_candidate = strip_thinking_tags(content_val if isinstance(content_val, str) else "")
 
                             if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
-                                print(f"[Amadeus Core] OpenRouter model {candidate_or} returned empty, reasoning, or scratchpad, trying next candidate...")
+                                if not allow_model_fallback:
+                                    raise GeminiError(502, f"[MODO FIXO OPENROUTER • {candidate_or}] Resposta vazia ou raciocínio interno.")
+                                print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned empty/reasoning, trying next candidate...")
                                 continue
 
                             raw_reply = clean_candidate
@@ -353,7 +379,7 @@ class LLMOrchestrator:
                             break
                         except GeminiError as e:
                             last_or_err = e
-                            if e.code in (404, 429, 502, 503):
+                            if allow_model_fallback and e.code in (404, 429, 502, 503):
                                 continue
                             raise
 
@@ -386,7 +412,15 @@ class LLMOrchestrator:
                 }
 
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    candidates = await get_candidate_models(client, api_key, self.model_cache)
+                    if not allow_model_fallback and preferred_model:
+                        candidates = [preferred_model]
+                    else:
+                        candidates = await get_candidate_models(client, api_key, self.model_cache)
+                        if preferred_model:
+                            if preferred_model in candidates:
+                                candidates.remove(preferred_model)
+                            candidates.insert(0, preferred_model)
+
                     selected_model = candidates[0]
                     data = None
                     last_error = None
@@ -400,8 +434,8 @@ class LLMOrchestrator:
                             break
                         except GeminiError as e:
                             last_error = e
-                            if e.code in (503, 429, 404):
-                                print(f"[Amadeus Core] Model {candidate_model} returned {e.code}, trying next...")
+                            if allow_model_fallback and e.code in (503, 429, 404):
+                                print(f"[OpenAmadeus Core] Model {candidate_model} returned {e.code}, trying next...")
                                 continue
                             raise
 
@@ -418,9 +452,8 @@ class LLMOrchestrator:
             clean_text, emotion, learned = parse_tags(raw_reply, user_message=req.message)
             pose, camera = infer_pose_and_camera(raw_reply, emotion, user_message=req.message)
 
-            # Auto-consolidate learned memory into ChromaDB + SQLite
             if learned:
-                print(f"[Amadeus Core] Auto-consolidating memory: {learned.title}")
+                print(f"[OpenAmadeus Core] Auto-consolidating memory: {learned.title}")
                 saved = memory_store.add_memory(
                     category="user",
                     title=learned.title,
@@ -430,10 +463,7 @@ class LLMOrchestrator:
                 )
                 learned.id = saved["id"]
 
-            # Save assistant message to SQLite
             memory_store.save_message(session_id, sender="amadeus", content=clean_text, emotion=emotion, recalled=recalled_ids)
-
-            # Phase 5: Update rolling session context summary every SUMMARY_INTERVAL messages
             await self._maybe_update_context_summary(session_id, api_key, is_groq, is_openrouter, selected_gemini_model)
 
             return ChatResponse(

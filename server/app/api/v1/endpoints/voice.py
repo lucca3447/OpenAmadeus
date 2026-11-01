@@ -26,6 +26,8 @@ async def text_to_speech(req: TTSRequest):
         emotion=req.emotion,
         instruct=req.instruct,
         stream=bool(req.stream),
+        allow_fallback=req.allow_fallback if req.allow_fallback is not None else True,
+        allowed_fallbacks=req.allowed_fallbacks,
     )
     headers = {
         "X-Accel-Buffering": "no",
@@ -90,4 +92,3 @@ async def get_voice_models():
         "kokoro_voices": ["pf_dora"],
         "edge_voices": ["pt-BR-FranciscaNeural", "pt-BR-ThalitaNeural", "ja-JP-NanamiNeural"]
     }
-

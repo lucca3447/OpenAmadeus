@@ -247,36 +247,53 @@ export class MemoryService {
     return initial;
   }
 
-  static saveActiveSession(sessionId: string, messages: ChatMessage[]): void {
+  static saveActiveSession(sessionId: string, messages: ChatMessage[], touchInteraction = true): void {
     localStorage.setItem(
       STORAGE_ACTIVE_SESSION,
       JSON.stringify({ sessionId, messages })
     );
 
-    // Keep sessions log synchronized in real-time so ongoing chats show in the sidebar immediately
+    // Keep sessions log synchronized so ongoing chats show in the sidebar ordered by last interaction
     if (messages.length > 0) {
       const logs = this.getSessionLogs();
       const existingIdx = logs.findIndex((s) => s.id === sessionId);
+      const existingSession = existingIdx >= 0 ? logs[existingIdx] : undefined;
 
       // Intelligent title: extract first real user message or fallback to clean description
       const userMsg = messages.find((m) => m.sender === 'user');
       const summary = userMsg
         ? (userMsg.content.length > 55 ? userMsg.content.slice(0, 55) + '...' : userMsg.content)
-        : (messages[0]?.content.slice(0, 50) || 'Nova conversa com Kurisu');
+        : existingSession?.summary || (messages[0]?.content.slice(0, 50) || 'Nova conversa com Kurisu');
+
+      const lastMsgTs = messages[messages.length - 1]?.timestamp;
+      const startedAt = existingSession?.startedAt || messages[0]?.timestamp || Date.now();
+      const endedAt = touchInteraction
+        ? Date.now()
+        : (existingSession?.endedAt || lastMsgTs || startedAt);
 
       const sessionItem: CallSession = {
         id: sessionId,
-        startedAt: existingIdx >= 0 ? logs[existingIdx].startedAt : (messages[0]?.timestamp || Date.now()),
-        endedAt: Date.now(),
+        startedAt,
+        endedAt,
         summary,
         messageCount: messages.length,
         messages,
       };
 
       if (existingIdx >= 0) {
-        logs.splice(existingIdx, 1);
+        if (touchInteraction) {
+          logs.splice(existingIdx, 1);
+          logs.unshift(sessionItem);
+        } else {
+          // Update cached messages in place without changing sidebar order
+          logs[existingIdx] = sessionItem;
+        }
+      } else if (touchInteraction) {
+        logs.unshift(sessionItem);
+      } else {
+        logs.push(sessionItem);
+        logs.sort((a, b) => (b.endedAt || b.startedAt || 0) - (a.endedAt || a.startedAt || 0));
       }
-      logs.unshift(sessionItem);
 
       // Keep up to 30 past sessions
       localStorage.setItem(STORAGE_SESSIONS_LOG, JSON.stringify(logs.slice(0, 30)));
@@ -286,7 +303,8 @@ export class MemoryService {
   static archiveAndStartNewSession(currentMessages: ChatMessage[]): string {
     const active = this.getActiveSession();
     if (currentMessages.length > 0) {
-      this.saveActiveSession(active.sessionId, currentMessages);
+      // Preserve existing last-interaction timestamp of the previous session
+      this.saveActiveSession(active.sessionId, currentMessages, false);
     }
 
     const newId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;

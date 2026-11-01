@@ -23,7 +23,6 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
     let animationFrameId: number;
     let phase = 0;
 
-    // Responsive Canvas Resizing for high-DPI razor-sharp lines
     const updateSize = () => {
       const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
@@ -49,25 +48,21 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
       const height = canvas.height;
       const centerY = height / 2;
 
-      // Dark obsidian background: full clear when idle to eliminate ghost wave trails,
-      // slight persistence (alpha 0.28) during animation for CRT phosphor trail
       if (!isActive && !isListening) {
-        ctx.fillStyle = '#0c0e12';
+        ctx.fillStyle = '#070504';
         ctx.fillRect(0, 0, width, height);
       } else {
-        ctx.fillStyle = 'rgba(12, 14, 18, 0.28)';
+        ctx.fillStyle = 'rgba(7, 5, 4, 0.3)';
         ctx.fillRect(0, 0, width, height);
       }
 
-      // Draw faint technical grid lines (amber/charcoal)
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.06)';
+      // Warm copper/amber oscilloscope reticle grid
+      ctx.strokeStyle = 'rgba(249, 115, 22, 0.08)';
       ctx.lineWidth = 1;
 
       ctx.beginPath();
-      // Center horizontal line
       ctx.moveTo(0, centerY);
       ctx.lineTo(width, centerY);
-      // Vertical grid lines
       const gridStep = Math.max(Math.floor(width / 16), 24);
       for (let x = 0; x < width; x += gridStep) {
         ctx.moveTo(x, 0);
@@ -75,7 +70,6 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
       }
       ctx.stroke();
 
-      // Check for real acoustic waveform from SpeechService AnalyserNode (TTS or Mic)
       const activeAnalyser = isActive
         ? SpeechService.getAnalyser()
         : isListening
@@ -96,7 +90,7 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
         if (variance > 30) {
           hasRealAudio = true;
           currentSpeed = 0.14;
-          const waveColor = isActive ? '#f59e0b' : '#38bdf8';
+          const waveColor = isActive ? '#fb923c' : '#38bdf8';
           ctx.beginPath();
           ctx.strokeStyle = waveColor;
           ctx.lineWidth = 2.5;
@@ -122,7 +116,6 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
         }
       }
 
-      // Draw aesthetic harmonic wave when not using real audio
       if (!hasRealAudio) {
         if (isActive || isListening) {
           let baseAmplitude = height * 0.22;
@@ -135,10 +128,10 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
           }
 
           ctx.beginPath();
-          ctx.strokeStyle = isActive ? '#f59e0b' : '#38bdf8';
+          ctx.strokeStyle = isActive ? '#fb923c' : '#38bdf8';
           ctx.lineWidth = 2;
           ctx.shadowBlur = 12;
-          ctx.shadowColor = isActive ? '#f59e0b' : '#38bdf8';
+          ctx.shadowColor = isActive ? '#f97316' : '#38bdf8';
 
           for (let x = 0; x < width; x++) {
             const normX = x / width;
@@ -158,10 +151,9 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
           ctx.stroke();
           ctx.shadowBlur = 0;
         } else {
-          // Precise razor-sharp horizontal reference line when in idle/standby
           ctx.shadowBlur = 0;
           ctx.beginPath();
-          ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+          ctx.strokeStyle = 'rgba(249, 115, 22, 0.38)';
           ctx.lineWidth = 1.5;
           ctx.moveTo(0, centerY);
           ctx.lineTo(width, centerY);
@@ -171,8 +163,6 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
 
       if (isActive || isListening) {
         phase += currentSpeed;
-      }
-      if (isActive || isListening) {
         animationFrameId = requestAnimationFrame(render);
       }
     };
@@ -186,18 +176,31 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
   }, [isActive, isListening]);
 
   return (
-    <div className={`relative border border-amadeus-border bg-[#0b0e14] rounded-lg overflow-hidden shadow-sm ${className}`}>
-      <div className="absolute top-1.5 left-2.5 text-[10px] font-mono text-amadeus-muted tracking-wider flex items-center gap-1.5 z-10 select-none pointer-events-none">
-        <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-[#f59e0b] animate-ping' : isListening ? 'bg-[#38bdf8] animate-pulse' : 'bg-[#78350f]'}`} />
-        <span className="text-[#94a3b8]">OSCILOSCÓPIO:</span>
-        <span className={`font-semibold ${isActive ? 'text-[#f59e0b]' : isListening ? 'text-[#38bdf8]' : 'text-[#64748b]'}`}>
-          {isActive ? 'VOZ TRANSMITINDO' : isListening ? 'MICROFONE ATIVO' : 'EM ESPERA'}
+    <div
+      className={`relative border border-amber-900/60 bg-[#070504] overflow-hidden shadow-[inset_0_2px_8px_rgba(0,0,0,0.95)] ${className}`}
+    >
+      <div className="absolute top-1.5 left-2.5 text-[10px] font-mono tracking-wider flex items-center gap-1.5 z-10 select-none pointer-events-none">
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${
+            isActive
+              ? 'bg-orange-400 animate-ping'
+              : isListening
+                ? 'bg-sky-400 animate-pulse'
+                : 'bg-amber-900'
+          }`}
+        />
+        <span className="engraved-serif text-[9px] text-amber-200/80 font-bold tracking-widest">
+          OSCILOSCÓPIO:
+        </span>
+        <span
+          className={`font-bold ${
+            isActive ? 'text-orange-400' : isListening ? 'text-sky-400' : 'text-zinc-500'
+          }`}
+        >
+          {isActive ? 'SINAL ATIVO' : isListening ? 'ESCUTA VAD' : 'REPOUSO'}
         </span>
       </div>
-      <canvas
-        ref={canvasRef}
-        className="w-full h-full block"
-      />
+      <canvas ref={canvasRef} className="w-full h-full block" />
     </div>
   );
 };

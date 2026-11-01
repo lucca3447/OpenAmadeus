@@ -2,7 +2,21 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MemoryItem, PersonaProfile } from '../types/amadeus';
 import { MemoryService } from '../services/memoryService';
 import { BackendService } from '../services/backendService';
-import { Brain, Plus, X, Tag, Sparkles, Download, Upload, Trash2, Database, ShieldCheck, UserCheck } from 'lucide-react';
+import {
+  Brain,
+  Plus,
+  X,
+  Tag,
+  Sparkles,
+  Download,
+  Upload,
+  Trash2,
+  Database,
+  ShieldCheck,
+  UserCheck,
+  Layers,
+  Activity,
+} from 'lucide-react';
 
 interface MemoryInspectorModalProps {
   isOpen: boolean;
@@ -41,7 +55,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
           setBackendDetails(`ChromaDB (${health.chromaCount} vetores) + SQLite (${health.totalSessions} sessões)`);
         } else {
           setBackendAvailable(false);
-          setBackendDetails('Navegador Local (LocalStorage)');
+          setBackendDetails('Armazenamento Local (LocalStorage)');
         }
       });
     }
@@ -106,7 +120,11 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
   };
 
   const handleClearLearned = async () => {
-    if (confirm('Deseja realmente limpar todas as memórias aprendidas durante suas conversas? As memórias canônicas de Steins;Gate serão mantidas.')) {
+    if (
+      confirm(
+        'Deseja limpar todas as memórias aprendidas durante as sessões? O núcleo de memória base será mantido.'
+      )
+    ) {
       if (backendAvailable) {
         await BackendService.clearLearnedMemories();
       } else {
@@ -124,7 +142,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `amadeus_kurisu_cortex_${Date.now()}.json`;
+    a.download = `openamadeus_cortex_${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -142,7 +160,9 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
         try {
           const parsed: MemoryItem[] = JSON.parse(content);
           if (!Array.isArray(parsed)) throw new Error('Invalid JSON');
-          const nonCanonical = parsed.filter((m) => m.source !== 'canonical' && m.title && m.content);
+          const nonCanonical = parsed.filter(
+            (m) => m.source !== 'canonical' && m.title && m.content
+          );
           let count = 0;
           for (const item of nonCanonical) {
             const created = await BackendService.addMemory({
@@ -154,18 +174,22 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
             });
             if (created) count++;
           }
-          alert(`${count} memórias importadas com sucesso para o Córtex!`);
+          alert(`${count} blocos sinápticos importados com sucesso para o Córtex!`);
           onMemoryAdded?.();
         } catch {
-          alert('Erro ao importar arquivo. Certifique-se de que é um JSON válido de memórias do Amadeus.');
+          alert(
+            'Erro ao importar arquivo. Certifique-se de que é um JSON válido de memórias do OpenAmadeus.'
+          );
         }
       } else {
         const res = MemoryService.importMemoriesJSON(persona.id, content);
         if (res.success) {
-          alert(`${res.count} memórias importadas com sucesso para o Córtex!`);
+          alert(`${res.count} blocos sinápticos importados com sucesso para o Córtex!`);
           onMemoryAdded?.();
         } else {
-          alert('Erro ao importar arquivo. Certifique-se de que é um JSON válido de memórias do Amadeus.');
+          alert(
+            'Erro ao importar arquivo. Certifique-se de que é um JSON válido de memórias do OpenAmadeus.'
+          );
         }
       }
     };
@@ -173,7 +197,6 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
     e.target.value = '';
   };
 
-  // Filter memories
   const filteredMemories = persona.memories.filter((mem) => {
     if (filterSource === 'canonical') return mem.source === 'canonical' || !mem.source;
     if (filterSource === 'learned') return mem.source === 'learned';
@@ -182,313 +205,419 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
   });
 
   const learnedCount = persona.memories.filter((m) => m.source === 'learned').length;
-  const canonicalCount = persona.memories.filter((m) => m.source === 'canonical' || !m.source).length;
+  const canonicalCount = persona.memories.filter(
+    (m) => m.source === 'canonical' || !m.source
+  ).length;
   const customCount = persona.memories.filter((m) => m.source === 'custom').length;
 
+  const filterCapsules = [
+    { id: 'all' as const, label: 'TODAS', count: persona.memories.length, icon: Layers },
+    { id: 'canonical' as const, label: 'NÚCLEO BASE', count: canonicalCount, icon: ShieldCheck },
+    { id: 'learned' as const, label: 'APRENDIDAS', count: learnedCount, icon: UserCheck },
+    { id: 'custom' as const, label: 'INJETADAS', count: customCount, icon: Sparkles },
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl bg-amadeus-panel border border-amadeus-border shadow-[0_0_40px_rgba(0,0,0,0.9)] overflow-hidden font-mono text-sm">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-amadeus-border bg-amadeus-card">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded bg-amadeus-border/40 flex items-center justify-center text-amadeus-accent">
-              <Brain className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-amadeus-accent tracking-wider text-glow-nixie">
-                INSPETOR DE CÓRTEX & MEMÓRIAS // {persona.name.toUpperCase()}
-              </h2>
-              <div className="text-[11px] text-amadeus-muted flex items-center gap-2">
-                <span>{persona.memories.length} BLOCOS DE MEMÓRIA</span>
-                <span className="opacity-40">|</span>
-                <span className={backendAvailable ? 'text-amadeus-accent' : 'text-amber-400'}>
-                  {backendDetails}
-                </span>
-              </div>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded flex items-center justify-center text-amadeus-muted hover:text-white hover:bg-amadeus-border/60 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-fadeIn select-none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="amadeus-cortex-title"
+    >
+      <div className="relative w-full max-w-5xl max-h-[90vh] flex flex-col md:flex-row chalkboard-grid border border-orange-500/40 shadow-[0_0_50px_rgba(0,0,0,0.95)] overflow-hidden">
+        {/* Subtle Radial Amber Spotlight */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_60%_25%,rgba(234,88,12,0.09),transparent_65%)] pointer-events-none" />
 
-        {/* Action Bar (Filters + Export/Import) */}
-        <div className="px-6 py-2.5 border-b border-amadeus-border/60 bg-black/40 flex flex-wrap items-center justify-between gap-2">
-          {/* Source Tabs */}
-          <div className="flex items-center gap-1 text-[11px]">
-            <button
-              onClick={() => setFilterSource('all')}
-              className={`px-2.5 py-1 rounded transition-colors ${
-                filterSource === 'all'
-                  ? 'bg-amadeus-accent text-black font-bold'
-                  : 'bg-amadeus-card text-amadeus-muted hover:text-white'
-              }`}
-            >
-              Todas ({persona.memories.length})
-            </button>
-            <button
-              onClick={() => setFilterSource('canonical')}
-              className={`px-2.5 py-1 rounded flex items-center gap-1 transition-colors ${
-                filterSource === 'canonical'
-                  ? 'bg-amadeus-accent text-black font-bold'
-                  : 'bg-amadeus-card text-amadeus-muted hover:text-white'
-              }`}
-            >
-              <ShieldCheck className="w-3 h-3" />
-              Canônicas ({canonicalCount})
-            </button>
-            <button
-              onClick={() => setFilterSource('learned')}
-              className={`px-2.5 py-1 rounded flex items-center gap-1 transition-colors ${
-                filterSource === 'learned'
-                  ? 'bg-purple-400 text-black font-bold'
-                  : 'bg-amadeus-card text-purple-300 hover:text-white'
-              }`}
-            >
-              <UserCheck className="w-3 h-3" />
-              Aprendidas ({learnedCount})
-            </button>
-            {customCount > 0 && (
-              <button
-                onClick={() => setFilterSource('custom')}
-                className={`px-2.5 py-1 rounded transition-colors ${
-                  filterSource === 'custom'
-                    ? 'bg-amber-400 text-black font-bold'
-                    : 'bg-amadeus-card text-amber-300 hover:text-white'
-                }`}
-              >
-                Custom ({customCount})
-              </button>
-            )}
-          </div>
+        {/* ================= LEFT COLUMN: COPPER PCB FILTER CAPSULES + POWER BUS ================= */}
+        <aside className="relative md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-amber-900/40 bg-black/45 p-4 flex flex-col justify-between z-10">
+          {/* Vertical Glowing Conductor Line */}
+          <div className="hidden md:block absolute left-9 top-6 bottom-16 bus-line-vertical z-0" />
 
-          {/* Tools */}
-          <div className="flex items-center gap-2 text-[11px]">
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleImportFile}
-              accept=".json"
-              className="hidden"
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              title="Importar memórias de um arquivo JSON"
-              className="p-1.5 rounded bg-amadeus-card border border-amadeus-border text-amadeus-muted hover:text-white hover:border-amadeus-accent transition-colors flex items-center gap-1"
+          <div className="relative z-10 space-y-4">
+            {/* Filter Capsules */}
+            <div
+              role="tablist"
+              aria-label="Filtros de Memória Sináptica"
+              className="flex md:flex-col gap-2.5 overflow-x-auto md:overflow-visible pb-1 md:pb-0"
             >
-              <Upload className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Importar</span>
-            </button>
-            <button
-              onClick={handleExportJSON}
-              title="Exportar todo o córtex em arquivo JSON de backup"
-              className="p-1.5 rounded bg-amadeus-card border border-amadeus-border text-amadeus-muted hover:text-white hover:border-amadeus-accent transition-colors flex items-center gap-1"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Exportar</span>
-            </button>
-            {learnedCount > 0 && (
-              <button
-                onClick={handleClearLearned}
-                title="Limpar apenas as memórias aprendidas com você"
-                className="p-1.5 rounded bg-red-950/40 border border-red-800/40 text-red-400 hover:bg-red-900/60 hover:text-red-200 transition-colors flex items-center gap-1"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Limpar Aprendidas</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Modal Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {/* Add Memory Button / Toggle */}
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-amadeus-muted">
-              Mostrando {filteredMemories.length} memórias ativas:
-            </div>
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="px-3 py-1.5 rounded bg-amadeus-border/40 border border-amadeus-accent/40 text-amadeus-accent text-xs flex items-center gap-1.5 hover:bg-amadeus-accent hover:text-black transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{showAddForm ? 'Cancelar' : 'Digitalizar Nova Memória'}</span>
-            </button>
-          </div>
-
-          {/* New Memory Form */}
-          {showAddForm && (
-            <form onSubmit={handleAddMemory} className="p-4 rounded-lg bg-amadeus-card border border-amadeus-accent/40 space-y-3 animate-fadeIn">
-              <div className="text-xs font-bold text-amadeus-accent flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>INJETAR NOVO BLOCO SINÁPTICO</span>
-              </div>
-              <div>
-                <label className="text-[11px] text-amadeus-muted block mb-1">Título da Memória:</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Conversa sobre o futuro no terraço"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full h-8 px-3 rounded bg-amadeus-panel border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] text-amadeus-muted block mb-1">Categoria:</label>
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value as any)}
-                    className="w-full h-8 px-2 rounded bg-amadeus-panel border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
+              {filterCapsules.map((cap) => {
+                const Icon = cap.icon;
+                const selected = filterSource === cap.id;
+                return (
+                  <button
+                    key={cap.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    data-selected={selected}
+                    onClick={() => setFilterSource(cap.id)}
+                    className="copper-capsule px-4 py-2.5 flex items-center justify-between gap-2 text-left shrink-0 md:w-full"
                   >
-                    <option value="anecdote">História Pessoal / Episódio</option>
-                    <option value="research">Pesquisa / Teoria Científica</option>
-                    <option value="relationship">Relação Interpessoal</option>
-                    <option value="secret">Segredo / Fato Oculto</option>
-                    <option value="biography">Biografia / Fato de Vida</option>
-                    <option value="user">Dado sobre o Operador</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[11px] text-amadeus-muted block mb-1">Sentimento / Peso Emocional:</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Nostalgia e carinho"
-                    value={newEmotion}
-                    onChange={(e) => setNewEmotion(e.target.value)}
-                    className="w-full h-8 px-3 rounded bg-amadeus-panel border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[11px] text-amadeus-muted block mb-1">Palavras-chave Gatilho (separadas por vírgula):</label>
-                <input
-                  type="text"
-                  placeholder="Ex: terraço, noite, futuro, promessa"
-                  value={newKeywords}
-                  onChange={(e) => setNewKeywords(e.target.value)}
-                  className="w-full h-8 px-3 rounded bg-amadeus-panel border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] text-amadeus-muted block mb-1">Conteúdo Detalhado da Memória:</label>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder="Descreva o evento, a tese ou o fato a ser consolidado no córtex da Kurisu..."
-                  value={newContent}
-                  onChange={(e) => setNewContent(e.target.value)}
-                  className="w-full p-2.5 rounded bg-amadeus-panel border border-amadeus-border text-xs text-white focus:outline-none focus:border-amadeus-accent resize-none font-sans"
-                />
-              </div>
-              <div className="flex justify-end pt-1">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full shrink-0 transition-all ${
+                          selected
+                            ? 'bg-orange-400 shadow-[0_0_8px_#fb923c]'
+                            : 'bg-amber-900/70'
+                        }`}
+                      />
+                      <Icon
+                        className={`w-4 h-4 shrink-0 ${
+                          selected ? 'text-orange-400' : 'text-amber-200/70'
+                        }`}
+                      />
+                      <span
+                        className={`engraved-serif font-bold text-xs tracking-widest ${
+                          selected ? 'text-amber-100' : 'text-amber-200/70'
+                        }`}
+                      >
+                        {cap.label}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/70 border border-amber-900/50 text-orange-400">
+                      {cap.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* I/O Tools on the Bus */}
+            <div className="hidden md:flex flex-col gap-2 pt-3 border-t border-amber-900/30">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImportFile}
+                accept=".json"
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => setShowAddForm((prev) => !prev)}
+                className="copper-capsule px-3.5 py-2 flex items-center gap-2 text-amber-200 hover:text-white"
+              >
+                <Plus className="w-3.5 h-3.5 text-orange-400" />
+                <span className="engraved-serif text-[11px] font-bold tracking-wider">
+                  {showAddForm ? 'FECHAR EDITOR' : 'INJETAR MEMÓRIA'}
+                </span>
+              </button>
+
+              <div className="grid grid-cols-2 gap-1.5">
                 <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded bg-amadeus-accent text-black font-bold text-xs hover:bg-amadeus-highlight transition-colors flex items-center gap-1.5"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Importar memórias de um arquivo JSON"
+                  className="px-2.5 py-1.5 bg-black/75 border border-amber-900/50 hover:border-orange-400 text-zinc-300 hover:text-amber-200 text-[10px] font-mono flex items-center justify-center gap-1 transition-colors"
                 >
-                  <Database className="w-3.5 h-3.5" />
-                  <span>Consolidar no Córtex</span>
+                  <Upload className="w-3 h-3 text-orange-400" />
+                  <span>IMPORTAR</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportJSON}
+                  title="Exportar córtex completo em JSON"
+                  className="px-2.5 py-1.5 bg-black/75 border border-amber-900/50 hover:border-orange-400 text-zinc-300 hover:text-amber-200 text-[10px] font-mono flex items-center justify-center gap-1 transition-colors"
+                >
+                  <Download className="w-3 h-3 text-orange-400" />
+                  <span>EXPORTAR</span>
                 </button>
               </div>
-            </form>
-          )}
 
-          {/* Memories List */}
-          <div className="space-y-3">
-            {filteredMemories.length === 0 ? (
-              <div className="p-8 text-center text-xs text-amadeus-muted border border-dashed border-amadeus-border rounded-lg">
-                Nenhuma memória encontrada nesta categoria.
+              {learnedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearLearned}
+                  className="px-3 py-1.5 bg-rose-950/35 border border-rose-500/40 hover:border-rose-400 text-rose-300 hover:text-white text-[10px] font-mono flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Trash2 className="w-3 h-3 text-rose-400" />
+                  <span>LIMPAR APRENDIDAS ({learnedCount})</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom CÓRTEX RAG Plate + Horizontal Bus Line */}
+          <div className="hidden md:block relative z-10 pt-6">
+            <div className="bg-black/95 border border-orange-500/60 px-3 py-2 shadow-[0_0_20px_rgba(249,115,22,0.2)]">
+              <div className="engraved-serif text-sm font-bold tracking-widest text-amber-100">
+                CÓRTEX RAG
               </div>
-            ) : (
-              filteredMemories.map((mem) => {
-                const isRecalled = recalledMemoryIds.includes(mem.id);
-                const isLearned = mem.source === 'learned';
-                const isCustom = mem.source === 'custom';
+              <div className="text-[9px] font-mono text-orange-400/80 tracking-widest uppercase">
+                {backendAvailable ? 'CHROMADB + SQLITE ONLINE' : 'LOCAL STORAGE FALLBACK'}
+              </div>
+            </div>
+            <div className="bus-line-horizontal w-full mt-1" />
+          </div>
+        </aside>
 
-                return (
-                  <div
-                    key={mem.id}
-                    className={`p-4 rounded-lg border transition-all ${
-                      isRecalled
-                        ? 'bg-amadeus-card/90 border-amadeus-accent shadow-[0_0_15px_rgba(0,255,136,0.15)] ring-1 ring-amadeus-accent/50'
-                        : isLearned
-                        ? 'bg-purple-950/20 border-purple-800/40 hover:border-purple-600/60'
-                        : isCustom
-                        ? 'bg-amber-950/20 border-amber-800/40 hover:border-amber-600/60'
-                        : 'bg-amadeus-card/50 border-amadeus-border hover:border-amadeus-border/80'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-white tracking-wide">
-                          {mem.title}
-                        </span>
+        {/* ================= RIGHT COLUMN: SYNAPTIC MEMORY WORKSPACE ================= */}
+        <div className="relative z-10 flex-1 flex flex-col min-h-0">
+          {/* Header Bar */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-amber-900/40 bg-black/50">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full border border-orange-500/50 bg-[#120e0b] flex items-center justify-center text-orange-400">
+                <Brain className="w-4 h-4" />
+              </div>
+              <div>
+                <h2
+                  id="amadeus-cortex-title"
+                  className="engraved-heading text-lg md:text-xl font-bold uppercase"
+                >
+                  Inspetor Sináptico // {persona.name}
+                </h2>
+                <div className="text-[11px] font-mono text-orange-400/80 flex items-center gap-2">
+                  <span>{persona.memories.length} VETORES CONSOLIDADOS</span>
+                  <span className="opacity-40">•</span>
+                  <span className={backendAvailable ? 'text-emerald-400' : 'text-amber-300'}>
+                    {backendDetails}
+                  </span>
+                </div>
+              </div>
+            </div>
 
-                        {isLearned ? (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-900/60 text-purple-300 font-bold border border-purple-600/40">
-                            ★ APRENDIDA COM VOCÊ
-                          </span>
-                        ) : isCustom ? (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-amber-900/60 text-amber-300 font-bold border border-amber-600/40">
-                            ★ CUSTOMIZADA
-                          </span>
-                        ) : (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-amadeus-border/40 text-amadeus-muted uppercase">
-                            CANÔNICA S;G
-                          </span>
-                        )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddForm((prev) => !prev)}
+                className="md:hidden copper-capsule px-3 py-1.5 text-[10px] text-amber-200 flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3 text-orange-400" />
+                <span>INJETAR</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                title="Fechar Inspetor Sináptico"
+                className="w-8 h-8 rounded-full border border-amber-900/60 bg-black/60 flex items-center justify-center text-zinc-400 hover:text-amber-200 hover:border-orange-400 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
-                        {isRecalled && (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-amadeus-accent/20 text-amadeus-accent border border-amadeus-accent/40 animate-pulse">
-                            SINAPSE ATIVA
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Delete button for custom / learned */}
-                      {(isLearned || isCustom) && (
-                        <button
-                          onClick={() => handleDeleteMemory(mem.id)}
-                          title="Excluir esta memória"
-                          className="text-amadeus-muted hover:text-red-400 transition-colors p-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-
-                    <p className="text-xs text-gray-300 font-sans leading-relaxed mb-3">
-                      {mem.content}
-                    </p>
-
-                    <div className="flex flex-wrap items-center justify-between text-[11px] text-amadeus-muted pt-2 border-t border-amadeus-border/30 gap-2">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Tag className="w-3 h-3 text-amadeus-accent/70 shrink-0" />
-                        {mem.triggerKeywords && mem.triggerKeywords.length > 0 ? (
-                          mem.triggerKeywords.map((kw, i) => (
-                            <span key={i} className="text-[10px] bg-black/40 px-1.5 py-0.5 rounded text-amadeus-accent/80">
-                              #{kw}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-[10px] text-amadeus-muted/60">Sem palavras-chave específicas</span>
-                        )}
-                      </div>
-
-                      {mem.emotionalWeight && (
-                        <div className="text-[10px] text-amadeus-muted italic">
-                          Sentimento: <span className="text-gray-300">{mem.emotionalWeight}</span>
-                        </div>
-                      )}
-                    </div>
+          {/* Scrollable Memory Workspace */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 font-mono text-xs">
+            {/* Collapsible Add Memory Steel Deck Form */}
+            {showAddForm && (
+              <form
+                onSubmit={handleAddMemory}
+                className="widescreen-steel-deck p-5 space-y-3.5 animate-fadeIn"
+              >
+                <div className="flex items-center justify-between border-b border-amber-900/40 pb-2">
+                  <div className="engraved-serif text-xs font-bold text-amber-200 flex items-center gap-2 tracking-widest">
+                    <Sparkles className="w-4 h-4 text-orange-400" />
+                    <span>INJETAR NOVO BLOCO SINÁPTICO NO CÓRTEX</span>
                   </div>
-                );
-              })
+                  <button
+                    type="button"
+                    onClick={() => setShowAddForm(false)}
+                    className="text-[10px] text-zinc-400 hover:text-white"
+                  >
+                    [CANCELAR]
+                  </button>
+                </div>
+
+                <div>
+                  <label className="engraved-label text-sm block mb-1">
+                    Identificador / Título do Registro:
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Arquitetura de Redes Neurais Recorrentes"
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    className="w-full h-9 px-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="engraved-label text-sm block mb-1">Domínio Cognitivo:</label>
+                    <select
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value as MemoryItem['category'])}
+                      className="w-full h-9 px-2.5 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
+                    >
+                      <option value="research">Pesquisa / Teoria Científica</option>
+                      <option value="anecdote">Episódio / Experiência Pessoal</option>
+                      <option value="relationship">Relação Interpessoal</option>
+                      <option value="biography">Registro Biográfico</option>
+                      <option value="user">Dado sobre o Operador</option>
+                      <option value="secret">Registro Reservado</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="engraved-label text-sm block mb-1">
+                      Valência / Peso Emocional:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Analítico e curioso"
+                      value={newEmotion}
+                      onChange={(e) => setNewEmotion(e.target.value)}
+                      className="w-full h-9 px-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="engraved-label text-sm block mb-1">
+                    Gatilhos Léxicos (separados por vírgula):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: neurociência, córtex, sinapse, memória"
+                    value={newKeywords}
+                    onChange={(e) => setNewKeywords(e.target.value)}
+                    className="w-full h-9 px-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="engraved-label text-sm block mb-1">
+                    Conteúdo Vetorial Detalhado:
+                  </label>
+                  <textarea
+                    required
+                    rows={3}
+                    placeholder="Descreva o conhecimento, evento ou contexto a ser indexado no ChromaDB..."
+                    value={newContent}
+                    onChange={(e) => setNewContent(e.target.value)}
+                    className="w-full p-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none resize-none font-sans"
+                  />
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    className="copper-capsule px-5 py-2 text-amber-100 hover:text-white flex items-center gap-2"
+                  >
+                    <Database className="w-3.5 h-3.5 text-orange-400" />
+                    <span className="engraved-serif text-xs font-bold tracking-widest">
+                      CONSOLIDAR NO CÓRTEX
+                    </span>
+                  </button>
+                </div>
+              </form>
             )}
+
+            {/* Memories List */}
+            <div className="space-y-3">
+              {filteredMemories.length === 0 ? (
+                <div className="p-10 text-center text-xs text-zinc-500 border border-dashed border-amber-900/40 bg-black/40">
+                  Nenhum vetor sináptico encontrado para este filtro.
+                </div>
+              ) : (
+                filteredMemories.map((mem) => {
+                  const isRecalled = recalledMemoryIds.includes(mem.id);
+                  const isLearned = mem.source === 'learned';
+                  const isCustom = mem.source === 'custom';
+
+                  return (
+                    <div
+                      key={mem.id}
+                      className={`p-4 border transition-all relative ${
+                        isRecalled
+                          ? 'widescreen-steel-deck border-orange-400 shadow-[0_0_20px_rgba(249,115,22,0.25)]'
+                          : isLearned
+                            ? 'bg-purple-950/20 border-purple-500/40 hover:border-purple-400/70'
+                            : isCustom
+                              ? 'bg-amber-950/20 border-amber-500/40 hover:border-amber-400/70'
+                              : 'bg-black/65 border-amber-900/40 hover:border-orange-500/50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="engraved-serif text-xs font-bold text-amber-100 tracking-wider">
+                            {mem.title}
+                          </span>
+
+                          {isLearned ? (
+                            <span className="text-[10px] px-2 py-0.5 bg-purple-950/80 text-purple-300 font-bold border border-purple-500/50 flex items-center gap-1">
+                              <UserCheck className="w-3 h-3" />
+                              <span>APRENDIDA EM DIÁLOGO</span>
+                            </span>
+                          ) : isCustom ? (
+                            <span className="text-[10px] px-2 py-0.5 bg-amber-950/80 text-amber-300 font-bold border border-amber-500/50 flex items-center gap-1">
+                              <Sparkles className="w-3 h-3" />
+                              <span>INJETADA PELO OPERADOR</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-2 py-0.5 bg-zinc-900 text-zinc-400 border border-zinc-700 flex items-center gap-1 uppercase">
+                              <ShieldCheck className="w-3 h-3 text-orange-400" />
+                              <span>NÚCLEO BASE</span>
+                            </span>
+                          )}
+
+                          {isRecalled && (
+                            <span className="text-[10px] px-2 py-0.5 bg-orange-500/20 text-orange-300 border border-orange-400/60 flex items-center gap-1 animate-pulse">
+                              <Activity className="w-3 h-3" />
+                              <span>SINAPSE ATIVA</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {(isLearned || isCustom) && (
+                          <button
+                            onClick={() => handleDeleteMemory(mem.id)}
+                            title="Remover este bloco sináptico"
+                            className="text-zinc-500 hover:text-rose-400 transition-colors p-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-zinc-200 font-sans leading-relaxed mb-3">
+                        {mem.content}
+                      </p>
+
+                      <div className="flex flex-wrap items-center justify-between text-[11px] text-zinc-400 pt-2 border-t border-amber-900/30 gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Tag className="w-3 h-3 text-orange-400 shrink-0" />
+                          {mem.triggerKeywords && mem.triggerKeywords.length > 0 ? (
+                            mem.triggerKeywords.map((kw, i) => (
+                              <span
+                                key={i}
+                                className="text-[10px] bg-black/70 border border-amber-900/40 px-1.5 py-0.5 text-amber-300/90"
+                              >
+                                #{kw}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-[10px] text-zinc-500">
+                              Indexação semântica vetorial (RAG)
+                            </span>
+                          )}
+                        </div>
+
+                        {mem.emotionalWeight && (
+                          <div className="text-[10px] text-zinc-400">
+                            Valência: <span className="text-amber-200">{mem.emotionalWeight}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Bottom Bar */}
+          <div className="px-6 py-3.5 border-t border-amber-900/40 bg-black/75 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
+              <Database className="w-3.5 h-3.5 text-orange-400" />
+              <span>Recuperação Semântica Ativa a Cada Turno de Diálogo</span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="copper-capsule px-5 py-1.5 text-amber-100 hover:text-white"
+            >
+              <span className="engraved-serif text-xs font-bold tracking-widest">FECHAR</span>
+            </button>
           </div>
         </div>
       </div>

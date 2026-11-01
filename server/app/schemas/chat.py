@@ -17,6 +17,9 @@ class ChatRequest(BaseModel):
     personaId: Optional[str] = "kurisu"
     apiKey: Optional[str] = None
     history: List[HistoryTurn] = []
+    selectedModel: Optional[str] = None
+    allowModelFallback: Optional[bool] = True
+    allowOfflineSimulatorFallback: Optional[bool] = True
 
 class ChatResponse(BaseModel):
     response: str
