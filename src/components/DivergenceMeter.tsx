@@ -2,65 +2,63 @@ import React, { useState, useEffect } from 'react';
 import { BackendService } from '../services/backendService';
 
 export const DivergenceMeter: React.FC = () => {
-  const [divergence, setDivergence] = useState<string>('1.048596');
-  const [worldline, setWorldline] = useState<string>('Steins Gate');
+  const [telemetry, setTelemetry] = useState<string>('24.0kHz');
+  const [busLabel, setBusLabel] = useState<string>('PCM16 Neural Audio Bus');
   const [isHovered, setIsHovered] = useState<boolean>(false);
 
   useEffect(() => {
     let isMounted = true;
-    const fetchDiv = async () => {
+    const fetchTelemetry = async () => {
       try {
         const data = await BackendService.getDivergence();
         if (isMounted) {
-          setDivergence(data.divergence || '1.048596');
-          setWorldline(data.worldline || 'Steins Gate');
+          // Normalize legacy worldline strings into OpenAmadeus technical telemetry
+          const rawDiv = data.divergence || '24.008';
+          const isLegacyLore =
+            !data.worldline ||
+            data.worldline.toLowerCase().includes('steins') ||
+            data.worldline.toLowerCase().includes('beta') ||
+            data.worldline.toLowerCase().includes('alpha');
+          setTelemetry(rawDiv === '1.048596' ? '24.0kHz' : rawDiv.slice(0, 6));
+          setBusLabel(isLegacyLore ? 'PCM16 Neural Audio Bus' : data.worldline);
         }
       } catch {
-        // keep fallback
+        // Keep default 24.0kHz telemetry
       }
     };
 
-    fetchDiv();
-    const interval = setInterval(fetchDiv, 60000); // refresh every minute
+    fetchTelemetry();
+    const interval = setInterval(fetchTelemetry, 60000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
   }, []);
 
-  // Format characters for Nixie tube look
-  const cleanDigits = divergence.replace(/[^0-9.]/g, '');
-  const displayChars = cleanDigits.split('');
+  const displayChars = telemetry.padEnd(6, '0').slice(0, 6).split('');
 
   return (
     <div
-      className="relative hidden sm:flex items-center gap-1.5 bg-[#100a06] border border-[#d97706] px-2.5 py-1 rounded box-glow-nixie cursor-help select-none group"
+      className="relative hidden md:flex items-center gap-1 px-2.5 py-1 rounded bg-[#070504] border border-amber-900/50 shadow-inner cursor-help select-none"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      title={`Medidor de Divergência: ${divergence}% [${worldline}]`}
+      title={`Barramento Acústico: ${telemetry} [${busLabel}]`}
     >
-      <span className="text-[10px] font-mono text-[#d97706] font-bold">DIV:</span>
-      <div className="flex items-center gap-0.5 font-mono text-xs font-bold tracking-widest text-[#fbbf24] text-glow-nixie">
-        {displayChars.map((char, idx) => (
-          <span
-            key={idx}
-            className={`inline-block text-center ${
-              char === '.'
-                ? 'w-1 text-[#f59e0b] -mx-0.5'
-                : 'w-2.5 px-0.5 py-0.2 bg-[#261004] rounded-[2px] border border-[#d97706]/40 shadow-[0_0_4px_rgba(245,158,11,0.4)]'
-            }`}
-          >
-            {char}
-          </span>
-        ))}
-        <span className="text-[10px] text-[#f59e0b] ml-0.5">%</span>
+      {displayChars.map((char, idx) => (
+        <div key={idx} className="vacuum-nixie-tube">
+          <span className="nixie-ghost-stack">{idx % 2 === 0 ? '8' : '0'}</span>
+          <span className="nixie-cathode-lit">{char}</span>
+        </div>
+      ))}
+      <div className="pl-2 flex flex-col leading-tight">
+        <span className="text-[9px] font-mono text-amber-500/80 uppercase tracking-widest">SRATE</span>
+        <span className="text-[10px] font-mono text-emerald-400 font-bold">PCM</span>
       </div>
 
-      {/* Floating tooltip on hover */}
       {isHovered && (
-        <div className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 bg-[#120a04] border border-[#f59e0b]/50 text-[#fbbf24] text-[10px] font-mono px-2.5 py-1 rounded shadow-xl whitespace-nowrap pointer-events-none">
-          <div className="font-bold text-[#f59e0b]">MEDIDOR DE DIVERGÊNCIA</div>
-          <div className="text-[9px] text-[#cbd5e1]">{worldline}</div>
+        <div className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 bg-[#0d0a08] border border-orange-500/50 text-amber-200 text-[10px] font-mono px-3 py-1.5 rounded shadow-2xl whitespace-nowrap pointer-events-none">
+          <div className="font-bold text-orange-400 tracking-wider">TELEMETRIA DE BARRAMENTO</div>
+          <div className="text-[9px] text-zinc-300">{busLabel} • {telemetry}</div>
         </div>
       )}
     </div>

@@ -1,13 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  Mic, 
-  MicOff, 
-  Volume2, 
-  VolumeX, 
+import {
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
   Sparkles,
   Zap,
   ChevronDown,
-  Headphones
+  Headphones,
+  Square,
+  Send,
+  AlertTriangle,
 } from 'lucide-react';
 
 import { MODEL_OPTIONS, ModelOption, AIProvider } from '../services/aiService';
@@ -22,6 +25,8 @@ interface PromptBarProps {
   interimTranscript?: string;
   voiceEnabled: boolean;
   onToggleVoice: () => void;
+  isSpeaking?: boolean;
+  onStopSpeaking?: () => void;
   currentModel: string;
   onSelectModel: (model: string) => void;
   modelOptions?: ModelOption[];
@@ -33,10 +38,10 @@ interface PromptBarProps {
 }
 
 const SUGGESTED_TOPICS = [
-  { label: 'Identidade', prompt: 'Quem é você e qual seu papel no laboratório?' },
-  { label: 'Viagem no Tempo', prompt: 'O que você acha sobre viagem no tempo e linhas de mundo?' },
-  { label: 'Viktor Chondria', prompt: 'Como funciona sua pesquisa na Viktor Chondria?' },
-  { label: 'Dr Pepper', prompt: 'Qual sua opinião sincera sobre refrigerante Dr Pepper?' },
+  { label: 'Arquitetura Neural', prompt: 'Como sua arquitetura de memória e raciocínio funciona?' },
+  { label: 'Memória RAG', prompt: 'Como você armazena e recupera memórias sinápticas de longo prazo?' },
+  { label: 'Neurociência Digital', prompt: 'É possível mapear estados emocionais e cognitivos em redes neurais?' },
+  { label: 'Síntese Vocal', prompt: 'Como funcionam os motores de síntese acústica e prosódia neural?' },
 ];
 
 export const PromptBar: React.FC<PromptBarProps> = ({
@@ -48,6 +53,8 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   interimTranscript = '',
   voiceEnabled,
   onToggleVoice,
+  isSpeaking = false,
+  onStopSpeaking,
   currentModel,
   onSelectModel,
   modelOptions,
@@ -60,7 +67,6 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Auto-resize textarea height
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -94,16 +100,16 @@ export const PromptBar: React.FC<PromptBarProps> = ({
     <div className="w-full max-w-4xl mx-auto px-4 pb-4 pt-2 z-20 font-mono select-none">
       {/* Topics Carousel */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-2 text-[11px] scrollbar-none">
-        <span className="text-[#717d96] font-bold flex items-center gap-1 mr-1 shrink-0">
-          <Sparkles className="w-3 h-3 text-[#f59e0b]" />
-          <span>SUGESTÕES:</span>
+        <span className="text-zinc-400 font-bold flex items-center gap-1 mr-1 shrink-0">
+          <Sparkles className="w-3 h-3 text-orange-400" />
+          <span>TÓPICOS:</span>
         </span>
         {SUGGESTED_TOPICS.map((topic, i) => (
           <button
             key={i}
             type="button"
             onClick={() => handleFillTopic(topic.prompt)}
-            className="px-2.5 py-1 rounded-full bg-[#181c24] border border-[#272d3c] text-[#cbd5e1] hover:text-[#f59e0b] hover:border-[#f59e0b]/60 transition-colors whitespace-nowrap font-sans text-xs"
+            className="px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300 hover:text-orange-400 hover:border-orange-500/60 transition-colors whitespace-nowrap font-sans text-xs"
           >
             {topic.label}
           </button>
@@ -111,7 +117,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
       </div>
 
       {/* Main Prompt Bar Container */}
-      <div className="rounded-2xl border border-[#f59e0b]/40 bg-[#0b0d11]/95 backdrop-blur-xl p-2.5 box-glow-nixie transition-all">
+      <div className="widescreen-steel-deck rounded-lg p-3 transition-all">
         <form onSubmit={handleSend} className="flex flex-col gap-2">
           {/* Multiline Auto-resizing Textarea */}
           <textarea
@@ -123,18 +129,18 @@ export const PromptBar: React.FC<PromptBarProps> = ({
             disabled={disabled}
             placeholder={
               interimTranscript
-                ? `🎙️ ${interimTranscript}`
+                ? `[VOZ] ${interimTranscript}`
                 : isListening
                   ? micMode === 'hands_free'
-                    ? '🎙️ Hands-Free ativo (fale a qualquer momento)...'
-                    : '🎙️ Escutando sua fala (solte Espaço ou clique p/ enviar)...'
+                    ? 'Hands-Free ativo (fale a qualquer momento)...'
+                    : 'Escutando sua fala (solte Espaço ou clique para enviar)...'
                   : 'Envie uma mensagem ou segure [Espaço] fora do campo para falar...'
             }
-            className="w-full bg-transparent border-none text-sm text-[#f8fafc] placeholder-[#64748b] focus:outline-none resize-none px-2 py-1 font-sans max-h-36 leading-relaxed"
+            className="w-full bg-transparent border-none text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none resize-none px-2 py-1 font-sans max-h-36 leading-relaxed"
           />
 
           {/* Bottom Tools Row */}
-          <div className="flex items-center justify-between pt-1 border-t border-[#1c202a]">
+          <div className="flex items-center justify-between pt-2 border-t border-amber-900/30">
             {/* Model Selector Pill Dropdown */}
             <div className="flex items-center gap-2">
               <div className="relative flex items-center">
@@ -142,20 +148,38 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                   value={currentModel}
                   onChange={(e) => onSelectModel(e.target.value)}
                   disabled={disabled}
-                  className="appearance-none bg-[#161922] border border-[#2a3040] text-[#e2e8f0] text-[11px] font-mono rounded-lg pl-2.5 pr-6 py-1 focus:outline-none focus:border-[#f59e0b] cursor-pointer disabled:opacity-50 transition-colors"
+                  className="appearance-none bg-[#0a0807] border border-amber-900/60 text-amber-100 text-[11px] font-mono rounded pl-2.5 pr-6 py-1 focus:outline-none focus:border-orange-400 cursor-pointer disabled:opacity-50 transition-colors"
                 >
                   {(modelOptions && modelOptions.length > 0 ? modelOptions : MODEL_OPTIONS).map((opt) => (
                     <option key={opt.id} value={opt.id}>
-                      {'isDecommissioned' in opt && opt.isDecommissioned ? `⚠️ [Desativado] ${opt.label}` : opt.label}
+                      {'isDecommissioned' in opt && opt.isDecommissioned ? `[Desativado] ${opt.label}` : opt.label}
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="w-3 h-3 text-[#717d96] absolute right-1.5 top-2 pointer-events-none" />
+                <ChevronDown className="w-3 h-3 text-orange-400 absolute right-1.5 top-2 pointer-events-none" />
               </div>
+              {modelOptions?.find((m) => m.id === currentModel && 'isDecommissioned' in m && m.isDecommissioned) && (
+                <span title="Modelo descontinuado no provedor">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                </span>
+              )}
             </div>
 
-            {/* Action Buttons: Mic, Sound & Send */}
+            {/* Action Buttons: Barge-In, Mic, VAD/PTT, Stream, Sound & Transmit */}
             <div className="flex items-center gap-1.5">
+              {/* Manual Barge-In / Cut Voice Button */}
+              {isSpeaking && onStopSpeaking && (
+                <button
+                  type="button"
+                  onClick={onStopSpeaking}
+                  title="Interromper Fala Imediatamente (Barge-In Manual)"
+                  className="copper-capsule px-3 py-1 flex items-center gap-1.5 text-amber-300 hover:text-white border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.45)] animate-pulse"
+                >
+                  <Square className="w-3 h-3 fill-amber-400 text-amber-400" />
+                  <span className="engraved-serif text-[10px] font-bold tracking-widest">CORTAR VOZ</span>
+                </button>
+              )}
+
               {/* Mic Toggle */}
               <button
                 type="button"
@@ -168,10 +192,10 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                       ? 'Ativar Microfone Contínuo (Hands-Free + Barge-in)'
                       : 'Ativar Microfone (Push-to-Talk ou segure [Espaço])'
                 }
-                className={`p-2 rounded-lg border transition-all ${
+                className={`p-1.5 rounded-full border transition-all ${
                   isListening
-                    ? 'border-[#38bdf8] bg-[#38bdf8]/20 text-[#38bdf8] animate-pulse shadow-[0_0_10px_rgba(56,189,248,0.4)]'
-                    : 'border-[#2a3040] bg-[#161922] text-[#94a3b8] hover:text-[#f59e0b] hover:border-[#f59e0b]/50'
+                    ? 'border-sky-400 bg-sky-500/20 text-sky-300 animate-pulse shadow-[0_0_10px_rgba(56,189,248,0.4)]'
+                    : 'border-amber-900/60 bg-[#120e0b] text-zinc-400 hover:text-orange-400 hover:border-orange-500/50'
                 }`}
               >
                 {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
@@ -184,13 +208,13 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                   onClick={onToggleMicMode}
                   title={
                     micMode === 'hands_free'
-                      ? '🎧 Modo Hands-Free Ativo (VAD + Barge-in) — Clique para alternar para Push-to-Talk ([Espaço])'
-                      : '⌨️ Modo Push-to-Talk Ativo (Seguro p/ Caixas de Som, atalho [Espaço]) — Clique para alternar para Hands-Free'
+                      ? 'Modo Hands-Free Ativo (VAD + Barge-in) — Clique para alternar para Push-to-Talk ([Espaço])'
+                      : 'Modo Push-to-Talk Ativo (Atalho [Espaço]) — Clique para alternar para Hands-Free'
                   }
-                  className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all ${
+                  className={`px-2 py-1 rounded-full border text-[10px] font-bold flex items-center gap-1 transition-all ${
                     micMode === 'hands_free'
-                      ? 'border-[#38bdf8]/60 bg-[#0c202e] text-[#38bdf8] shadow-[0_0_10px_rgba(56,189,248,0.3)]'
-                      : 'border-[#2a3040] bg-[#161922] text-[#64748b] hover:text-[#cbd5e1]'
+                      ? 'border-sky-400/60 bg-[#0c202e] text-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.3)]'
+                      : 'border-amber-900/60 bg-[#120e0b] text-zinc-400 hover:text-amber-200'
                   }`}
                 >
                   <Headphones className="w-3.5 h-3.5" />
@@ -198,20 +222,20 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                 </button>
               )}
 
-                            {/* Quick Stream vs Complete WAV Toggle */}
+              {/* Quick Stream vs Complete WAV Toggle */}
               {isQwen && onToggleStream && (
                 <button
                   type="button"
                   onClick={onToggleStream}
                   title={
                     streamEnabled
-                      ? '⚡ Streaming em Tempo Real Ativo (~500ms) — Clique para alternar para WAV Completo'
-                      : '🛡️ Modo WAV Completo Ativo (Estável) — Clique para alternar para Streaming em Tempo Real'
+                      ? 'Streaming em Tempo Real Ativo (~500ms) — Clique para WAV Completo'
+                      : 'Modo WAV Completo Ativo (Estável) — Clique para Streaming em Tempo Real'
                   }
-                  className={`p-2 rounded-lg border transition-all ${
+                  className={`p-1.5 rounded-full border transition-all ${
                     streamEnabled
-                      ? 'border-[#38bdf8]/60 bg-[#0c202e] text-[#38bdf8] shadow-[0_0_10px_rgba(56,189,248,0.4)]'
-                      : 'border-[#2a3040] bg-[#161922] text-[#64748b] hover:text-[#cbd5e1]'
+                      ? 'border-sky-400/60 bg-[#0c202e] text-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.4)]'
+                      : 'border-amber-900/60 bg-[#120e0b] text-zinc-400 hover:text-amber-200'
                   }`}
                 >
                   <Zap className="w-4 h-4" />
@@ -222,24 +246,25 @@ export const PromptBar: React.FC<PromptBarProps> = ({
               <button
                 type="button"
                 onClick={onToggleVoice}
-                title={voiceEnabled ? 'Voz da Kurisu Ativa' : 'Voz Silenciada'}
-                className={`p-2 rounded-lg border transition-all ${
+                title={voiceEnabled ? 'Síntese Vocal Ativa' : 'Síntese Vocal Silenciada'}
+                className={`p-1.5 rounded-full border transition-all ${
                   voiceEnabled
-                    ? 'border-[#f59e0b]/40 bg-[#201509] text-[#f59e0b] box-glow-nixie'
-                    : 'border-[#2a3040] bg-[#161922] text-[#64748b] hover:text-[#cbd5e1]'
+                    ? 'border-orange-500/60 bg-[#201509] text-orange-400 shadow-[0_0_10px_rgba(249,115,22,0.3)]'
+                    : 'border-amber-900/60 bg-[#120e0b] text-zinc-500 hover:text-zinc-300'
                 }`}
               >
-                {voiceEnabled ? <Volume2 className="w-4 h-4 text-[#f59e0b]" /> : <VolumeX className="w-4 h-4" />}
+                {voiceEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
               </button>
 
-              {/* Send Button: Iconic Circular Amber Arrow Button from Amadeus Login Screen */}
+              {/* Metallic TRANSMIT Capsule Button */}
               <button
                 type="submit"
                 disabled={disabled || !input.trim()}
-                title="Transmitir para Amadeus (Enter)"
-                className="w-8 h-8 rounded-full bg-[#f59e0b] hover:bg-[#fbbf24] text-black font-bold text-sm flex items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.6)] transition-all disabled:opacity-30 disabled:hover:bg-[#f59e0b] transform hover:scale-105 active:scale-95"
+                title="Transmitir Comando (Enter)"
+                className="copper-capsule h-8 px-3.5 flex items-center gap-1.5 text-amber-200 hover:text-white disabled:opacity-40"
               >
-                <span className="translate-x-[0.5px]">➔</span>
+                <Send className="w-3.5 h-3.5 text-orange-400" />
+                <span className="engraved-serif text-[11px] font-bold tracking-widest">TRANSMIT</span>
               </button>
             </div>
           </div>

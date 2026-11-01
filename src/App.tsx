@@ -1,22 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
+import {
   CameraFraming,
-  CharacterPose, 
-  ChatMessage, 
-  Emotion, 
-  PersonaProfile, 
+  CharacterPose,
+  ChatMessage,
+  Emotion,
+  PersonaProfile,
   VoiceSettings,
   CallSession,
-  MemoryItem
+  MemoryItem,
+  LLMFallbackSettings,
+  SettingsSectionId,
 } from './types/amadeus';
 import { MemoryService } from './services/memoryService';
-import { 
-  AIService, 
-  AIStatus, 
-  ModelOption, 
-  OFFLINE_MODEL_ID, 
-  getProviderFromKey, 
-  getModelOptionsForKey 
+import {
+  AIService,
+  AIStatus,
+  ModelOption,
+  OFFLINE_MODEL_ID,
+  getProviderFromKey,
+  getModelOptionsForKey,
 } from './services/aiService';
 import { BackendService, BackendHealth } from './services/backendService';
 import { SpeechService } from './services/speechService';
@@ -44,7 +46,7 @@ import { PromptBar } from './components/PromptBar';
 import { Phone, MicOff, X, Sparkles } from 'lucide-react';
 
 const INITIAL_GREETING =
-  'Olá! Conexão estabelecida com a unidade Amadeus. Aqui é Makise Kurisu do Laboratório 304. O que você gostaria de discutir hoje?';
+  'Olá! Conexão neural estabelecida com o OpenAmadeus. Aqui é Makise Kurisu. O que você gostaria de analisar ou discutir hoje?';
 
 const newId = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -70,6 +72,26 @@ export const App: React.FC = () => {
     localStorage.getItem('amadeus_gemini_key') ? { kind: 'pending' } : { kind: 'offline' }
   );
 
+  const [llmSettings, setLlmSettings] = useState<LLMFallbackSettings>(() => {
+    const raw = localStorage.getItem('amadeus_llm_settings');
+    if (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return {
+      allowModelFallback: true,
+      allowOfflineSimulatorFallback: true,
+    };
+  });
+
+  const handleSaveLlmSettings = (next: LLMFallbackSettings) => {
+    setLlmSettings(next);
+    localStorage.setItem('amadeus_llm_settings', JSON.stringify(next));
+  };
+
   // Active AI Model and dynamic options
   const currentProvider = getProviderFromKey(apiKey);
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(() => getModelOptionsForKey(apiKey));
@@ -91,6 +113,16 @@ export const App: React.FC = () => {
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>('neutral');
   const [currentPose, setCurrentPose] = useState<CharacterPose>('default');
   const [currentCamera, setCurrentCamera] = useState<CameraFraming | undefined>(undefined);
+  const [defaultCamera, setDefaultCamera] = useState<'auto' | 'closeup' | 'medium' | 'full'>(() => {
+    const saved = localStorage.getItem('amadeus_default_camera');
+    return saved === 'closeup' || saved === 'medium' || saved === 'full' ? saved : 'auto';
+  });
+
+  const handleSaveDefaultCamera = (cam: 'auto' | 'closeup' | 'medium' | 'full') => {
+    setDefaultCamera(cam);
+    localStorage.setItem('amadeus_default_camera', cam);
+  };
+
   const [memoryPulse, setMemoryPulse] = useState<number>(0);
   const [recalledMemoryIds, setRecalledMemoryIds] = useState<string[]>([]);
   const [learnedNotification, setLearnedNotification] = useState<string | null>(null);
@@ -123,8 +155,9 @@ export const App: React.FC = () => {
 
   const [scanlines, setScanlines] = useState<boolean>(() => {
     const val = localStorage.getItem('amadeus_scanlines');
-    return val !== null ? val === 'true' : false; // clean crisp default
+    return val !== null ? val === 'true' : false;
   });
+
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => {
     const val = localStorage.getItem('amadeus_voice_settings');
     if (val) {
@@ -151,13 +184,25 @@ export const App: React.FC = () => {
       useRvc: true,
       rvcModel: 'KurisuRVCv147',
       micMode: 'ptt',
+      sttKeyMode: 'unified',
+      separateGroqSttKey: localStorage.getItem('amadeus_groq_stt_key') || '',
+      allowSttWebSpeechFallback: true,
+      vadSensitivity: 1.0,
+      allowTtsFallback: true,
+      allowedTtsFallbacks: ['qwen_local', 'kokoro', 'edge_rvc', 'web_speech'],
     };
   });
 
   // Modal states
   const [isMemoryModalOpen, setIsMemoryModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('cortex');
   const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
+
+  const handleOpenSettingsWithSection = (section: SettingsSectionId = 'cortex') => {
+    setSettingsSection(section);
+    setIsSettingsModalOpen(true);
+  };
 
   // Sync memories from Python backend when online, fallback to LocalStorage when offline
   const refreshPersonaMemories = async () => {
@@ -190,7 +235,6 @@ export const App: React.FC = () => {
       setBackendHealth(health);
       if (health) {
         refreshPersonaMemories();
-        // Hydrate and merge sessions from backend SQLite with LocalStorage
         BackendService.listSessions().then((remoteSessions) => {
           if (remoteSessions && remoteSessions.length > 0) {
             const localLogs = MemoryService.getSessionLogs();
@@ -213,34 +257,36 @@ export const App: React.FC = () => {
     const initial = getModelOptionsForKey(apiKey);
     setModelOptions(initial);
 
-    // If key is empty / offline, lock to offline
     if (!apiKey.trim()) {
       setCurrentModel(OFFLINE_MODEL_ID);
       localStorage.setItem('amadeus_selected_model', OFFLINE_MODEL_ID);
       return;
     }
 
-    // Non-blocking background fetch
     let isMounted = true;
-    AIService.fetchLiveModelOptions(apiKey).then((liveModels) => {
-      if (!isMounted || liveModels.length === 0) return;
-      setModelOptions(liveModels);
+    AIService.fetchLiveModelOptions(apiKey)
+      .then((liveModels) => {
+        if (!isMounted || liveModels.length === 0) return;
+        setModelOptions(liveModels);
 
-      setCurrentModel((prevModel) => {
-        if (prevModel === OFFLINE_MODEL_ID) return prevModel;
-        const exists = liveModels.some((m) => m.id === prevModel);
-        if (!exists) {
-          const fallbackId = liveModels[0]?.id || OFFLINE_MODEL_ID;
-          const fallbackLabel = liveModels[0]?.label || fallbackId;
-          setModelNotice(`⚠️ O modelo anteriormente selecionado não está mais disponível no provedor. Migrado automaticamente para ${fallbackLabel}.`);
-          localStorage.setItem('amadeus_selected_model', fallbackId);
-          return fallbackId;
-        }
-        return prevModel;
+        setCurrentModel((prevModel) => {
+          if (prevModel === OFFLINE_MODEL_ID) return prevModel;
+          const exists = liveModels.some((m) => m.id === prevModel);
+          if (!exists) {
+            const fallbackId = liveModels[0]?.id || OFFLINE_MODEL_ID;
+            const fallbackLabel = liveModels[0]?.label || fallbackId;
+            setModelNotice(
+              `[Aviso de Provedor] O modelo anteriormente selecionado não está mais disponível. Migrado para ${fallbackLabel}.`
+            );
+            localStorage.setItem('amadeus_selected_model', fallbackId);
+            return fallbackId;
+          }
+          return prevModel;
+        });
+      })
+      .catch((err) => {
+        console.warn('[Amadeus] Background model fetch notice:', err);
       });
-    }).catch((err) => {
-      console.warn('[Amadeus] Background model fetch notice:', err);
-    });
 
     return () => {
       isMounted = false;
@@ -308,6 +354,11 @@ export const App: React.FC = () => {
     handleSaveVoiceSettings({ ...voiceSettings, micMode: next });
   };
 
+  const handleStopSpeaking = () => {
+    SpeechService.stopSpeaking();
+    setIsSpeaking(false);
+  };
+
   const speak = (text: string, emotion?: string) => {
     if (!voiceSettings.enabled || !voiceSettings.autoSpeak) return;
     SpeechService.speak(text, {
@@ -326,8 +377,19 @@ export const App: React.FC = () => {
       rvcModel: voiceSettings.rvcModel || 'KurisuRVCv147',
       rvcPitch: voiceSettings.rvcPitch ?? 0,
       rvcIndexRate: voiceSettings.rvcIndexRate ?? 0.75,
+      allowTtsFallback: voiceSettings.allowTtsFallback !== false,
+      allowedTtsFallbacks: voiceSettings.allowedTtsFallbacks || [
+        'qwen_local',
+        'kokoro',
+        'edge_rvc',
+        'web_speech',
+      ],
       onStart: () => setIsSpeaking(true),
       onEnd: () => setIsSpeaking(false),
+      onError: (msg) => {
+        setIsSpeaking(false);
+        setErrorNotice(msg);
+      },
     });
   };
 
@@ -335,7 +397,6 @@ export const App: React.FC = () => {
   const handleSendMessage = async (text: string) => {
     if (!text.trim() || isProcessing) return;
 
-    // 1. Local fallback RAG matching (used when Python backend is offline)
     const matched = MemoryService.matchMemories(text, persona);
 
     SpeechService.stopSpeaking();
@@ -355,12 +416,19 @@ export const App: React.FC = () => {
     setSessions(MemoryService.getSessionLogs());
     setErrorNotice(null);
     setIsProcessing(true);
-    // Immediate visual feedback while the model is working
     setCurrentEmotion('thinking');
 
     try {
-      // 2. Query Amadeus (via Python backend with ChromaDB if available, or direct browser-side)
-      const result = await AIService.queryAmadeus(text, persona, matched, apiKey, nextHistory, sessionId, currentModel);
+      const result = await AIService.queryAmadeus(
+        text,
+        persona,
+        matched,
+        apiKey,
+        nextHistory,
+        sessionId,
+        currentModel,
+        llmSettings
+      );
 
       const finalRecalledIds = result.recalledMemories ?? matched.map((m: MemoryItem) => m.id);
       setRecalledMemoryIds(finalRecalledIds);
@@ -376,7 +444,6 @@ export const App: React.FC = () => {
         setCurrentPose('default');
       }
 
-      // Check if decommissioned model triggered fallback
       if (result.decommissionNotice) {
         setModelNotice(result.decommissionNotice);
       }
@@ -386,20 +453,16 @@ export const App: React.FC = () => {
       }
 
       if (result.isError) {
-        // Visible in terminal mode too; intentionally not stored in the session history.
         setErrorNotice(result.response);
         setCurrentEmotion('worried');
         setCurrentPose('default');
         return;
       }
 
-      // Check if memory was learned
       if (result.learnedMemory) {
         if (result.learnedMemory.id) {
-          // Saved directly in Python backend (ChromaDB + SQLite)
           await refreshPersonaMemories();
         } else {
-          // Offline / browser-only fallback
           MemoryService.addMemory(persona.id, {
             category: 'user',
             title: result.learnedMemory.title,
@@ -428,10 +491,8 @@ export const App: React.FC = () => {
       MemoryService.saveActiveSession(sessionId, updatedHistory);
       setSessions(MemoryService.getSessionLogs());
 
-      // Preload the target emotion's mouth flap frames before speech starts
       preloadEmotionSprites(result.emotion, result.pose, result.camera);
 
-      // 3. Speak response with TTS if enabled
       speak(result.response, result.emotion);
     } catch (err: any) {
       console.error('Failed to query Amadeus:', err);
@@ -448,6 +509,7 @@ export const App: React.FC = () => {
   // Start new clean conversation
   const handleNewSession = () => {
     SpeechService.stopSpeaking();
+    setIsSpeaking(false);
     setErrorNotice(null);
     if (history.length > 0) {
       MemoryService.saveActiveSession(sessionId, history);
@@ -456,7 +518,14 @@ export const App: React.FC = () => {
     setSessionId(newSessionId);
 
     const initialMsgs: ChatMessage[] = [
-      { id: newId(), sender: 'amadeus', content: INITIAL_GREETING, timestamp: Date.now(), emotion: 'neutral', pose: 'default' },
+      {
+        id: newId(),
+        sender: 'amadeus',
+        content: INITIAL_GREETING,
+        timestamp: Date.now(),
+        emotion: 'neutral',
+        pose: 'default',
+      },
     ];
     setHistory(initialMsgs);
     setCurrentSubtitle(INITIAL_GREETING);
@@ -469,14 +538,13 @@ export const App: React.FC = () => {
   // Switch to a previous session from the sidebar
   const handleSelectSession = async (selectedId: string) => {
     SpeechService.stopSpeaking();
+    setIsSpeaking(false);
     setErrorNotice(null);
 
-    // 1. Ensure active session is saved before switching so no messages are lost
     if (history.length > 0) {
       MemoryService.saveActiveSession(sessionId, history);
     }
 
-    // 2. Load from LocalStorage or fallback to SQLite backend
     let loaded = MemoryService.loadSession(selectedId);
     if (!loaded || loaded.length === 0) {
       loaded = await BackendService.getSessionMessages(selectedId);
@@ -516,8 +584,19 @@ export const App: React.FC = () => {
     SpeechService.setMicConfig({
       mode: voiceSettings.micMode || 'ptt',
       apiKey,
+      sttKeyMode: voiceSettings.sttKeyMode || 'unified',
+      separateGroqSttKey: voiceSettings.separateGroqSttKey || localStorage.getItem('amadeus_groq_stt_key') || '',
+      allowSttWebSpeechFallback: voiceSettings.allowSttWebSpeechFallback !== false,
+      vadSensitivity: voiceSettings.vadSensitivity ?? 1.0,
     });
-  }, [voiceSettings.micMode, apiKey]);
+  }, [
+    voiceSettings.micMode,
+    voiceSettings.sttKeyMode,
+    voiceSettings.separateGroqSttKey,
+    voiceSettings.allowSttWebSpeechFallback,
+    voiceSettings.vadSensitivity,
+    apiKey,
+  ]);
 
   useEffect(() => {
     SpeechService.initRecognition(
@@ -537,12 +616,19 @@ export const App: React.FC = () => {
 
   // Spacebar Push-to-Talk shortcut when focus is outside inputs and modals
   useEffect(() => {
-    if (callState !== 'connected' || isMemoryModalOpen || isSettingsModalOpen || isLegalModalOpen) return;
+    if (callState !== 'connected' || isMemoryModalOpen || isSettingsModalOpen || isLegalModalOpen)
+      return;
 
     const isInteractiveElement = (el: EventTarget | null): boolean => {
       if (!(el instanceof HTMLElement)) return false;
       const tag = el.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || el.isContentEditable;
+      return (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        tag === 'BUTTON' ||
+        el.isContentEditable
+      );
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -585,7 +671,14 @@ export const App: React.FC = () => {
       setCurrentEmotion('neutral');
       setCurrentPose('default');
       const initialMsgs: ChatMessage[] = [
-        { id: newId(), sender: 'amadeus', content: INITIAL_GREETING, timestamp: Date.now(), emotion: 'neutral', pose: 'default' },
+        {
+          id: newId(),
+          sender: 'amadeus',
+          content: INITIAL_GREETING,
+          timestamp: Date.now(),
+          emotion: 'neutral',
+          pose: 'default',
+        },
       ];
       setHistory(initialMsgs);
       MemoryService.saveActiveSession(sessionId, initialMsgs);
@@ -596,7 +689,9 @@ export const App: React.FC = () => {
       if (lastMsg) {
         setCurrentSubtitle(lastMsg.content);
         setCurrentEmotion(lastMsg.emotion || 'neutral');
-        setCurrentPose(lastMsg.pose || (lastMsg.emotion === 'thinking' ? 'crossed_arms' : 'default'));
+        setCurrentPose(
+          lastMsg.pose || (lastMsg.emotion === 'thinking' ? 'crossed_arms' : 'default')
+        );
       }
     }
   };
@@ -616,6 +711,8 @@ export const App: React.FC = () => {
     setCallState('incoming');
   };
 
+  const effectiveCamera = defaultCamera === 'auto' ? currentCamera : defaultCamera;
+
   // Render Incoming Call Screen
   if (callState === 'incoming') {
     return (
@@ -631,24 +728,24 @@ export const App: React.FC = () => {
   // Render Disconnected Screen
   if (callState === 'disconnected') {
     return (
-      <div className="relative w-full h-screen flex flex-col items-center justify-center p-6 bg-[#0c0e12] font-mono text-center select-none">
+      <div className="relative w-full h-screen flex flex-col items-center justify-center p-6 bg-[#09090b] font-mono text-center select-none">
         <LabBackground scanlines={scanlines} />
-        <div className="p-8 rounded-2xl border border-[#262c3a] bg-[#12151c]/95 max-w-md w-full space-y-5 shadow-[0_0_35px_rgba(0,0,0,0.8)] box-glow-nixie z-10">
-          <div className="w-12 h-12 rounded-full border border-[#ef4444]/60 bg-[#260c0c] text-[#ef4444] mx-auto flex items-center justify-center">
+        <div className="p-8 border border-amber-900/60 bg-[#0d0c0e]/95 max-w-md w-full space-y-5 shadow-[0_0_35px_rgba(0,0,0,0.9)] z-10">
+          <div className="w-12 h-12 rounded-full border border-rose-500/60 bg-rose-950/50 text-rose-400 mx-auto flex items-center justify-center">
             <Phone className="w-6 h-6 rotate-[135deg]" />
           </div>
-          <div className="text-[#ef4444] font-bold text-lg tracking-widest text-glow-red">
-            CHAMADA ENCERRADA
+          <div className="engraved-heading text-rose-400 font-bold text-lg tracking-widest">
+            SESSÃO ENCERRADA
           </div>
-          <div className="text-xs text-[#94a3b8] font-sans">
-            A conexão com a unidade Amadeus Makise Kurisu foi finalizada. O histórico da conversa foi arquivado com segurança no laboratório.
+          <div className="text-xs text-zinc-400 font-sans">
+            A sessão neural com Makise Kurisu foi finalizada. O histórico e os vetores sinápticos foram arquivados localmente.
           </div>
           <button
             onClick={handleRestartCall}
-            className="w-full py-3 rounded-xl bg-[#f59e0b]/20 border border-[#f59e0b] text-[#fbbf24] font-bold text-xs hover:bg-[#f59e0b] hover:text-black transition-all flex items-center justify-center gap-2 box-glow-nixie"
+            className="copper-capsule w-full py-3 text-amber-200 font-bold text-xs hover:text-white transition-all flex items-center justify-center gap-2"
           >
-            <Phone className="w-4 h-4" />
-            <span>LIGAR NOVAMENTE PARA O AMADEUS</span>
+            <Phone className="w-4 h-4 text-orange-400" />
+            <span className="engraved-serif tracking-widest">RECONECTAR AO OPENAMADEUS</span>
           </button>
         </div>
       </div>
@@ -657,7 +754,7 @@ export const App: React.FC = () => {
 
   // Render Connected Workspace (Hybrid: Terminal Mode OR Call Mode)
   return (
-    <div className="relative w-full h-screen flex flex-col justify-between bg-[#0c0e12] overflow-hidden select-none font-mono">
+    <div className="relative w-full h-screen flex flex-col justify-between bg-[#09090b] overflow-hidden select-none font-mono">
       {/* Background Grid & Binary Texture */}
       <LabBackground scanlines={scanlines} />
 
@@ -675,15 +772,22 @@ export const App: React.FC = () => {
         onNewCall={handleNewSession}
         backendHealth={backendHealth}
         onOpenLegal={() => setIsLegalModalOpen(true)}
+        voiceSettings={voiceSettings}
+        llmSettings={llmSettings}
+        onOpenSettingsWithSection={handleOpenSettingsWithSection}
       />
 
       {/* Microphone problem banner */}
       {micError && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 w-full max-w-2xl px-4">
-          <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[#f59e0b]/50 bg-[#261505]/95 text-[#fbbf24] text-xs font-sans shadow-lg">
-            <MicOff className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex items-start gap-2 p-2.5 rounded border border-orange-500/50 bg-[#261505]/95 text-amber-200 text-xs font-sans shadow-lg">
+            <MicOff className="w-4 h-4 shrink-0 mt-0.5 text-orange-400" />
             <span className="flex-1">{micError}</span>
-            <button onClick={() => setMicError(null)} className="shrink-0 hover:text-white" title="Fechar aviso">
+            <button
+              onClick={() => setMicError(null)}
+              className="shrink-0 hover:text-white"
+              title="Fechar aviso"
+            >
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -692,8 +796,8 @@ export const App: React.FC = () => {
 
       {/* Real-Time Learning Toast */}
       {learnedNotification && (
-        <div className="absolute top-16 right-6 z-50 px-4 py-2 rounded-xl bg-[#1b152b] border border-[#a855f7] text-[#e9d5ff] text-xs shadow-[0_0_20px_rgba(168,85,247,0.4)] flex items-center gap-2 animate-bounce font-mono">
-          <Sparkles className="w-4 h-4 text-[#c084fc]" />
+        <div className="absolute top-16 right-6 z-50 px-4 py-2 rounded bg-[#1b152b] border border-purple-500 text-purple-200 text-xs shadow-[0_0_20px_rgba(168,85,247,0.4)] flex items-center gap-2 animate-bounce font-mono">
+          <Sparkles className="w-4 h-4 text-purple-400" />
           <span className="font-bold">{learnedNotification}</span>
         </div>
       )}
@@ -713,7 +817,7 @@ export const App: React.FC = () => {
               onNewSession={handleNewSession}
               onDeleteSession={handleDeleteSession}
               onOpenMemory={() => setIsMemoryModalOpen(true)}
-              onOpenSettings={() => setIsSettingsModalOpen(true)}
+              onOpenSettings={() => handleOpenSettingsWithSection('cortex')}
               backendHealth={backendHealth}
             />
 
@@ -740,9 +844,11 @@ export const App: React.FC = () => {
                 voiceEnabled={voiceSettings.enabled}
                 onToggleVoice={() => {
                   const next = !voiceSettings.enabled;
-                  if (!next) SpeechService.stopSpeaking();
+                  if (!next) handleStopSpeaking();
                   handleSaveVoiceSettings({ ...voiceSettings, enabled: next });
                 }}
+                isSpeaking={isSpeaking}
+                onStopSpeaking={handleStopSpeaking}
                 streamEnabled={Boolean(voiceSettings.stream)}
                 onToggleStream={handleToggleStream}
                 isQwen={(voiceSettings.engine || 'qwen3') === 'qwen3'}
@@ -758,7 +864,7 @@ export const App: React.FC = () => {
             <CompanionPanel
               emotion={currentEmotion}
               pose={currentPose}
-              camera={currentCamera}
+              camera={effectiveCamera}
               isProcessing={isProcessing}
               memoryPulse={memoryPulse}
               isSpeaking={isSpeaking}
@@ -775,7 +881,7 @@ export const App: React.FC = () => {
               <AmadeusSpriteView
                 emotion={currentEmotion}
                 pose={currentPose}
-                camera={currentCamera}
+                camera={effectiveCamera}
                 isListening={isListening}
                 isProcessing={isProcessing}
                 memoryPulse={memoryPulse}
@@ -788,7 +894,7 @@ export const App: React.FC = () => {
             {/* Bottom Section: Voice Oscilloscope, Subtitles & Control Bar */}
             <div className="w-full bg-gradient-to-t from-[#08090d] via-[#0c0e12]/95 to-transparent px-4 pb-2 z-20 space-y-2">
               {/* Atmospheric Voice Oscilloscope prominently above subtitles in Call Mode */}
-              <div className="w-full max-w-4xl mx-auto">
+              <div className="w-full max-w-5xl mx-auto">
                 <AudioOscilloscope
                   isActive={isSpeaking}
                   isListening={isListening}
@@ -796,7 +902,7 @@ export const App: React.FC = () => {
                 />
               </div>
 
-              {/* Subtitle Dialogue Box */}
+              {/* Widescreen Brushed Steel Deck Subtitle Box */}
               <SubtitleBox
                 speakerName={persona.name}
                 text={currentSubtitle}
@@ -805,7 +911,7 @@ export const App: React.FC = () => {
                 onTopicClick={handleSendMessage}
               />
 
-              {/* 100% Iconic Call Control Bar */}
+              {/* Clockwork Astrolabe & Metallic Pill Call Control Bar */}
               <ControlBar
                 onSendMessage={handleSendMessage}
                 isListening={isListening}
@@ -816,14 +922,16 @@ export const App: React.FC = () => {
                 voiceEnabled={voiceSettings.enabled}
                 onToggleVoice={() => {
                   const next = !voiceSettings.enabled;
-                  if (!next) SpeechService.stopSpeaking();
+                  if (!next) handleStopSpeaking();
                   handleSaveVoiceSettings({ ...voiceSettings, enabled: next });
                 }}
+                isSpeaking={isSpeaking}
+                onStopSpeaking={handleStopSpeaking}
                 streamEnabled={Boolean(voiceSettings.stream)}
                 onToggleStream={handleToggleStream}
                 isQwen={(voiceSettings.engine || 'qwen3') === 'qwen3'}
                 onOpenMemory={() => setIsMemoryModalOpen(true)}
-                onOpenSettings={() => setIsSettingsModalOpen(true)}
+                onOpenSettings={() => handleOpenSettingsWithSection('cortex')}
                 onEndCall={handleEndCall}
                 disabled={isProcessing}
               />
@@ -848,12 +956,17 @@ export const App: React.FC = () => {
           <SettingsModal
             isOpen={isSettingsModalOpen}
             onClose={() => setIsSettingsModalOpen(false)}
+            initialSection={settingsSection}
             apiKey={apiKey}
             onSaveApiKey={handleSaveApiKey}
             voiceSettings={voiceSettings}
             onSaveVoiceSettings={handleSaveVoiceSettings}
+            llmSettings={llmSettings}
+            onSaveLlmSettings={handleSaveLlmSettings}
             scanlines={scanlines}
             onToggleScanlines={handleToggleScanlines}
+            defaultCamera={defaultCamera}
+            onSaveDefaultCamera={handleSaveDefaultCamera}
           />
         )}
 

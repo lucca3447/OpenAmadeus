@@ -8,19 +8,20 @@
   }
   
   body {
-    background-color: #0c0e12;
+    background-color: #09090b;
     color: #f1f5f9;
     font-family: 'Inter', system-ui, sans-serif;
   }
 }
 
-/* Steins;Gate 0 Grid Texture ("Quadradinhos") */
-.bg-grid-amadeus {
-  background-color: #0c0e12;
+/* OpenAmadeus Technical Chalkboard Grid */
+.bg-grid-amadeus,
+.chalkboard-grid {
+  background-color: #0c0c0e;
   background-image: 
     linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-  background-size: 28px 28px;
+  background-size: 24px 24px;
 }
 
 /* Custom Scanline Effect */
@@ -38,14 +39,270 @@
   pointer-events: none;
 }
 
+/* Engraved High-Contrast Serif Typography */
+.engraved-serif {
+  font-family: 'Cinzel', 'Cormorant Garamond', Georgia, serif;
+  letter-spacing: 0.06em;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95), 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.engraved-heading {
+  font-family: 'Cinzel', Georgia, serif;
+  letter-spacing: 0.08em;
+  color: #f8fafc;
+  text-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.95),
+    0 0 14px rgba(251, 146, 60, 0.45),
+    -1px -1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.engraved-label {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  color: #e2e8f0;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
+}
+
+/* Dotted Leader Line between Label and Controls */
+.dotted-leader {
+  flex: 1;
+  border-bottom: 2px dotted rgba(255, 255, 255, 0.2);
+  margin: 0 12px;
+  position: relative;
+  top: -4px;
+}
+
+/* Engraved Text Toggles (ON / OFF without boxy borders) */
+.engraved-toggle {
+  font-family: 'Cinzel', Georgia, serif;
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: 0.08em;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+}
+
+.engraved-toggle[data-active="true"] {
+  color: #ffffff;
+  text-shadow: 
+    0 0 8px #f97316,
+    0 0 16px #ea580c,
+    0 2px 4px rgba(0, 0, 0, 0.95);
+}
+
+.engraved-toggle[data-active="false"] {
+  color: #52525b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.engraved-toggle[data-active="false"]:hover {
+  color: #a1a1aa;
+}
+
+/* Smoked Glass & Copper PCB Capsule */
+.copper-capsule {
+  position: relative;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, rgba(28, 22, 18, 0.94) 0%, rgba(12, 9, 7, 0.98) 55%, rgba(24, 16, 12, 0.95) 100%);
+  border: 1.5px solid rgba(180, 110, 60, 0.55);
+  box-shadow: 
+    0 6px 18px rgba(0, 0, 0, 0.85),
+    inset 0 2px 3px rgba(255, 220, 180, 0.2),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.9);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.copper-capsule::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, 
+    transparent 10%, 
+    rgba(249, 115, 22, 0.08) 25%, 
+    transparent 50%, 
+    rgba(249, 115, 22, 0.08) 75%, 
+    transparent 90%);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+
+.copper-capsule:hover,
+.copper-capsule[data-selected="true"] {
+  border-color: #fb923c;
+  box-shadow: 
+    0 0 22px rgba(249, 115, 22, 0.45),
+    0 6px 18px rgba(0, 0, 0, 0.9),
+    inset 0 2px 5px rgba(254, 215, 170, 0.35),
+    inset 0 0 14px rgba(234, 88, 12, 0.3);
+  transform: translateX(3px);
+}
+
+/* Glowing Orange Conductor Bus Line */
+.bus-line-vertical {
+  width: 2px;
+  background: linear-gradient(180deg, 
+    rgba(249, 115, 22, 0.15) 0%, 
+    #f97316 15%, 
+    #fb923c 50%, 
+    #f97316 85%, 
+    #ea580c 100%);
+  box-shadow: 0 0 10px #f97316, 0 0 4px #fdba74;
+}
+
+.bus-line-horizontal {
+  height: 2px;
+  background: linear-gradient(90deg, 
+    #f97316 0%, 
+    #fb923c 60%, 
+    rgba(249, 115, 22, 0.1) 100%);
+  box-shadow: 0 0 10px #f97316;
+}
+
+/* Incandescent Plasma Meter (MIN / MAX) */
+.plasma-meter-track {
+  position: relative;
+  height: 22px;
+  background: #080706;
+  border: 1px solid #3f2e21;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.95);
+  overflow: hidden;
+}
+
+.plasma-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, 
+    #7c2d12 0%, 
+    #c2410c 35%, 
+    #ea580c 70%, 
+    #fb923c 92%, 
+    #fef3c7 100%);
+  box-shadow: 0 0 16px rgba(249, 115, 22, 0.8), inset 0 1px 2px rgba(255, 255, 255, 0.45);
+  position: relative;
+}
+
+.plasma-meter-fill::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #ffffff;
+  box-shadow: 0 0 10px #ffffff, 0 0 18px #fb923c;
+}
+
+/* Vacuum Glass Nixie Tube Rack */
+.vacuum-nixie-tube {
+  position: relative;
+  width: 24px;
+  height: 36px;
+  border-radius: 12px 12px 3px 3px;
+  background: 
+    radial-gradient(ellipse at 50% 60%, rgba(249, 115, 22, 0.24), transparent 70%),
+    linear-gradient(90deg, rgba(255,255,255,0.14) 0%, rgba(16,12,10,0.92) 22%, rgba(8,6,5,0.96) 78%, rgba(255,200,150,0.1) 100%);
+  border: 1px solid rgba(180, 120, 70, 0.45);
+  box-shadow: 
+    inset 0 3px 5px rgba(255, 255, 255, 0.18),
+    0 3px 8px rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Honeycombed cathode mesh inside the glass bulb */
+.vacuum-nixie-tube::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.55) 1px, transparent 0);
+  background-size: 3px 3px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Ghost unlit digits stacked behind active filament */
+.nixie-ghost-stack {
+  position: absolute;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1.25rem;
+  color: rgba(120, 90, 70, 0.16);
+  user-select: none;
+  z-index: 1;
+}
+
+/* Active incandescent cathode wire */
+.nixie-cathode-lit {
+  position: relative;
+  z-index: 3;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: #fff7ed;
+  text-shadow: 
+    0 0 3px #fff,
+    0 0 7px #fb923c,
+    0 0 14px #ea580c,
+    0 0 24px #c2410c;
+}
+
+/* Widescreen Brushed Steel Deck with Warm Bronze Edge Patina */
+.widescreen-steel-deck {
+  position: relative;
+  background: 
+    radial-gradient(ellipse at 0% 50%, rgba(234, 88, 12, 0.16), transparent 35%),
+    radial-gradient(ellipse at 100% 50%, rgba(234, 88, 12, 0.16), transparent 35%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px),
+    linear-gradient(180deg, rgba(24, 24, 28, 0.94) 0%, rgba(12, 12, 15, 0.97) 100%);
+  border-top: 1.5px solid rgba(251, 146, 60, 0.5);
+  border-bottom: 1.5px solid rgba(161, 98, 7, 0.45);
+  border-left: 1px solid rgba(251, 146, 60, 0.35);
+  border-right: 1px solid rgba(251, 146, 60, 0.35);
+  box-shadow: 
+    0 -8px 28px rgba(0, 0, 0, 0.85),
+    0 10px 32px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+/* Clockwork Astrolabe & 3D Gimbal Animations */
+@keyframes spin-cw-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes spin-ccw-med {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+@keyframes gimbal-3d {
+  0% { transform: rotateX(55deg) rotateY(15deg) rotateZ(0deg); }
+  50% { transform: rotateX(65deg) rotateY(-15deg) rotateZ(180deg); }
+  100% { transform: rotateX(55deg) rotateY(15deg) rotateZ(360deg); }
+}
+
+.spin-cw-slow { animation: spin-cw-slow 42s linear infinite; }
+.spin-ccw-med { animation: spin-ccw-med 26s linear infinite; }
+.gimbal-ring-3d { animation: gimbal-3d 6s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin-cw-slow, .spin-ccw-med, .gimbal-ring-3d {
+    animation: none !important;
+  }
+}
+
 /* Amadeus Glowing Text and Borders (Nixie Amber & Cyan) */
 .text-glow-nixie,
-.text-glow-green { /* backwards compatibility map */
+.text-glow-green {
   text-shadow: 0 0 10px rgba(245, 158, 11, 0.75), 0 0 24px rgba(217, 119, 6, 0.45);
 }
 
 .box-glow-nixie,
-.box-glow-green { /* backwards compatibility map */
+.box-glow-green {
   box-shadow: 0 0 16px rgba(245, 158, 11, 0.2), inset 0 0 12px rgba(245, 158, 11, 0.05);
 }
 
@@ -75,7 +332,6 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #f59e0b;
 }
-
 
 /* ================= v0.2.0 Immersive Sprite Animations ================= */
 @keyframes amadeus-breathe {
