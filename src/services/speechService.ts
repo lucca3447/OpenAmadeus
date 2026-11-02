@@ -989,7 +989,7 @@ export class SpeechService {
     const reader = body.getReader();
     let remainder: Uint8Array | null = null;
     let nextStartTime = 0;
-    const JITTER_BUFFER_SEC = 0.48; // 480ms jitter buffer to protect against remote tunnel packet latency spikes
+    const JITTER_BUFFER_SEC = 0.24; // 240ms initial jitter buffer to protect against remote tunnel packet latency spikes
     let hasStarted = false;
 
     try {
@@ -1041,8 +1041,11 @@ export class SpeechService {
         source.connect(makeUpGain);
 
         const now = ctx.currentTime;
-        if (nextStartTime <= now) {
+        if (!hasStarted) {
           nextStartTime = now + JITTER_BUFFER_SEC;
+        } else if (nextStartTime < now) {
+          // Mid-stream buffer underrun: resume immediately with 15ms lead to prevent glitch without audible gap
+          nextStartTime = now + 0.015;
         }
 
         source.start(nextStartTime);
