@@ -90,6 +90,59 @@ class TestVoicePipelineResilience(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(results))
             self.assertEqual(spawn_counter, 1)
 
+    async def test_qwen_worker_streaming_generator_resilience(self):
+        """
+        Validates that qwen_worker.synthesize_stream's pcm_generator:
+        1. Properly streams chunks under _gpu_lock.
+        2. Drains model generator on GeneratorExit (client abort) without leaving _gpu_lock held.
+        3. Allows consecutive stream requests to complete without deadlock.
+        """
+        import numpy as np
+        from app.services.qwen_tts import qwen_worker
+
+        class MockModel:
+            def __init__(self):
+                self.drained = False
+
+            def generate_custom_voice_streaming(self, **kwargs):
+                self.drained = False
+                for _ in range(5):
+                    chunk = np.zeros(2400, dtype=np.float32)
+                    yield chunk, 24000, None
+                self.drained = True
+
+        mock_model = MockModel()
+        orig_model = qwen_worker.model
+        orig_backend = qwen_worker.active_backend
+        try:
+            qwen_worker.model = mock_model
+            qwen_worker.active_backend = "faster"
+
+            req = qwen_worker.SynthesizeRequest(text="Teste de geração resiliente 1.")
+            resp = qwen_worker.synthesize_stream(req)
+            gen = resp.body_iterator
+
+            chunk1 = await anext(gen)
+            self.assertGreater(len(chunk1), 0)
+            chunk2 = await anext(gen)
+            self.assertGreater(len(chunk2), 0)
+            await gen.aclose()
+
+            self.assertFalse(qwen_worker._gpu_lock.locked())
+            self.assertTrue(mock_model.drained)
+
+            req2 = qwen_worker.SynthesizeRequest(text="Teste de geração resiliente 2.")
+            resp2 = qwen_worker.synthesize_stream(req2)
+            all_chunks = []
+            async for c in resp2.body_iterator:
+                all_chunks.append(c)
+            self.assertEqual(len(all_chunks), 5)
+            self.assertFalse(qwen_worker._gpu_lock.locked())
+        finally:
+            qwen_worker.model = orig_model
+            qwen_worker.active_backend = orig_backend
+
+
 
 if __name__ == "__main__":
     unittest.main()
