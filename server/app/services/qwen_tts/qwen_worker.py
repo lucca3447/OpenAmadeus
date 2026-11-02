@@ -114,7 +114,7 @@ def sanitize_for_qwen(text: str) -> str:
     return s
 
 
-def prepare_worker_segments(text: str, max_single_pass_chars: int = 130) -> list[str]:
+def prepare_worker_segments(text: str, max_single_pass_chars: int = 175) -> list[str]:
     """
     Sanitizes text and splits long multi-sentence paragraphs into stable sentence segments
     to prevent attention drift, volume collapse, and premature codec EOS on long texts.
@@ -331,7 +331,7 @@ def synthesize_stream(req: SynthesizeRequest):
             if req_seq != _stream_seq:
                 break
             if seg_idx > 0:
-                pause_chunk = np.zeros(int(24000 * 0.18), dtype=np.float32)
+                pause_chunk = np.zeros(int(24000 * 0.05), dtype=np.float32)
                 pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
                 prev_sample = float(pause_chunk[-1])
                 yield (np.clip(pause_chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
@@ -426,7 +426,7 @@ def synthesize(req: SynthesizeRequest):
             with torch.inference_mode():
                 for seg_idx, seg_text in enumerate(segments):
                     if seg_idx > 0:
-                        pause_chunk = np.zeros(int(sr * 0.18), dtype=np.float32)
+                        pause_chunk = np.zeros(int(sr * 0.05), dtype=np.float32)
                         pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
                         prev_sample = float(pause_chunk[-1])
                         assembled_pieces.append(pause_chunk)
