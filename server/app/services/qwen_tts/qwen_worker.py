@@ -331,8 +331,8 @@ def synthesize_stream(req: SynthesizeRequest):
                                     pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
                                     yield pcm16
                             except GeneratorExit:
-                                for _ in stream_gen:
-                                    pass
+                                if torch is not None and torch.cuda.is_available():
+                                    torch.cuda.synchronize()
                                 raise
                     else:
                         with torch.no_grad(), torch.inference_mode():

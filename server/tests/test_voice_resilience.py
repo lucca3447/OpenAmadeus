@@ -129,7 +129,8 @@ class TestVoicePipelineResilience(unittest.IsolatedAsyncioTestCase):
             await gen.aclose()
 
             self.assertFalse(qwen_worker._gpu_lock.locked())
-            self.assertTrue(mock_model.drained)
+            # On client disconnect/barge-in, do not waste GPU cycles draining canceled speech
+            self.assertFalse(mock_model.drained)
 
             req2 = qwen_worker.SynthesizeRequest(text="Teste de geração resiliente 2.")
             resp2 = qwen_worker.synthesize_stream(req2)

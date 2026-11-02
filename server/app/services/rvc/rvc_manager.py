@@ -12,7 +12,14 @@ WORKER_SCRIPT = os.path.join(CURRENT_DIR, "rvc_worker.py")
 WORKER_URL = "http://127.0.0.1:8001"
 
 _worker_process: Optional[subprocess.Popen] = None
-_spawn_lock = asyncio.Lock()
+_spawn_lock: Optional[asyncio.Lock] = None
+
+
+def _get_spawn_lock() -> asyncio.Lock:
+    global _spawn_lock
+    if _spawn_lock is None:
+        _spawn_lock = asyncio.Lock()
+    return _spawn_lock
 
 
 class RVCManager:
@@ -59,7 +66,7 @@ class RVCManager:
         if await cls.is_worker_healthy():
             return True
 
-        async with _spawn_lock:
+        async with _get_spawn_lock():
             # Re-check under lock in case another coroutine just started the worker
             if await cls.is_worker_healthy():
                 return True

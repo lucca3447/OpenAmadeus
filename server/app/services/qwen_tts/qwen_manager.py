@@ -27,7 +27,14 @@ WORKER_SCRIPT = os.path.join(CURRENT_DIR, "qwen_worker.py")
 WORKER_URL = f"http://127.0.0.1:{WORKER_PORT}"
 
 _worker_process: Optional[subprocess.Popen] = None
-_spawn_lock = asyncio.Lock()
+_spawn_lock: Optional[asyncio.Lock] = None
+
+
+def _get_spawn_lock() -> asyncio.Lock:
+    global _spawn_lock
+    if _spawn_lock is None:
+        _spawn_lock = asyncio.Lock()
+    return _spawn_lock
 _client: Optional[httpx.AsyncClient] = None
 
 
@@ -232,7 +239,7 @@ class QwenTTSManager:
         if await cls.is_worker_healthy(url):
             return True
 
-        async with _spawn_lock:
+        async with _get_spawn_lock():
             if await cls.is_worker_healthy(url):
                 return True
 
