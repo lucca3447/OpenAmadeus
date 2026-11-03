@@ -2,7 +2,9 @@ import io
 import os
 import sys
 import re
+import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 try:
     import torch
@@ -16,7 +18,7 @@ try:
 except ImportError:
     sf = None
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, ExitStack
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -28,9 +30,37 @@ device_name = "cpu"
 dtype_used = default_dtype
 active_backend = "unknown"
 _gpu_lock = threading.Lock()
+_gpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qwen_cuda")
+_StopSentinel = object()
+_active_gen_id = 0
+
+
+def _next_or_sentinel(gen):
+    try:
+        return next(gen)
+    except StopIteration:
+        return _StopSentinel
+
+
+def _close_gen_safe(gen):
+    try:
+        gen.close()
+    except Exception:
+        pass
+
+
+def _enter_torch_inference():
+    """Returns a context manager for torch no_grad + inference_mode when torch is installed."""
+    stack = ExitStack()
+    if torch is not None:
+        stack.enter_context(torch.no_grad())
+        stack.enter_context(torch.inference_mode())
+    return stack
+
 
 RAMP_LEN = 120  # 5 ms @ 24 kHz for C0 amplitude continuity across chunk seams
 ramp_weights = np.linspace(1.0, 0.0, RAMP_LEN, dtype=np.float32)
+
 
 def apply_boundary_continuity(chunk: np.ndarray, prev_sample: Optional[float]) -> np.ndarray:
     """
@@ -59,7 +89,7 @@ def sanitize_for_qwen(text: str) -> str:
     """
     s = re.sub(r"<!--[^>]*-->", "", text or "")
     s = re.sub(r"\*[^*]+\*", "", s)
-    s = re.sub(r"[*_~`#\"'«»]", "", s)
+    s = re.sub(r'''[*_~`#"'«»]''', "", s)
     s = re.sub(r"[…‥]", "...", s)
     s = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", s)
     s = re.sub(r"!+", ".", s)
@@ -155,12 +185,12 @@ def _load_model_worker():
     requested_backend = os.environ.get("QWEN_BACKEND", "auto").lower()
     print(f"[Qwen3 Worker] Background thread starting model load (requested backend: '{requested_backend}')...")
 
-    device_name = "cuda:0" if torch.cuda.is_available() else "cpu"
-    if torch.cuda.is_available():
+    device_name = "cuda:0" if (torch is not None and torch.cuda.is_available()) else "cpu"
+    if torch is not None and torch.cuda.is_available():
         major, _ = torch.cuda.get_device_capability(0)
         dtype_used = torch.bfloat16 if major >= 8 else torch.float16
     else:
-        dtype_used = torch.float32
+        dtype_used = default_dtype
 
     print(f"[Qwen3 Worker] Target device: {device_name} ({dtype_used})...")
     model_source = _resolve_model_source()
@@ -168,7 +198,7 @@ def _load_model_worker():
     backend_selected = "stock"
 
     # 1. Attempt FasterQwen3TTS (CUDA Graphs + native streaming) if permitted
-    if requested_backend in ("auto", "faster") and torch.cuda.is_available():
+    if requested_backend in ("auto", "faster") and torch is not None and torch.cuda.is_available():
         try:
             print(f"[Qwen3 Worker] Attempting FasterQwen3TTS runtime with CUDA Graphs on '{model_source}'...")
             from faster_qwen3_tts import FasterQwen3TTS
@@ -179,8 +209,6 @@ def _load_model_worker():
                 attn_implementation="sdpa",
                 max_seq_len=2048,
             )
-            # Calibrate PredictorGraph (RVQ codebooks 1..15) before CUDA Graph capture
-            # Default 0.9/1.0 causes breath/timbre instability across runs
             if hasattr(loaded_model, "predictor_graph") and loaded_model.predictor_graph is not None:
                 loaded_model.predictor_graph.temperature = 0.6
                 loaded_model.predictor_graph.top_p = 0.9
@@ -189,10 +217,9 @@ def _load_model_worker():
             print("[Qwen3 Worker] Warming up Talker & Predictor CUDA Graphs...")
             loaded_model.warmup(prefill_len=100)
 
-            # Mandatory: Full Warm-up of Mimi Audio Decoder (eliminates cold 2.1s delay on 1st call)
             print("[Qwen3 Worker] Priming Mimi audio decoder with disposable initial utterance...")
             try:
-                with _gpu_lock, torch.no_grad(), torch.inference_mode():
+                with _gpu_lock, _enter_torch_inference():
                     warmup_gen = loaded_model.generate_custom_voice_streaming(
                         text="Oi.",
                         speaker="kurisu",
@@ -200,8 +227,8 @@ def _load_model_worker():
                         instruct=None,
                         chunk_size=8,
                     )
-                    next(warmup_gen, None)
-                    warmup_gen.close()
+                    for _ in warmup_gen:
+                        pass
                 print("[Qwen3 Worker] Mimi audio decoder primed and warm! First call will achieve sub-400ms TTFA.")
             except Exception as dec_err:
                 print(f"[Qwen3 Worker] Mimi audio decoder priming note: {dec_err}")
@@ -240,8 +267,8 @@ def _load_model_worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    loader_thread = threading.Thread(target=_load_model_worker, daemon=True)
-    loader_thread.start()
+    # Load and capture CUDA Graphs on the dedicated _gpu_executor thread
+    _gpu_executor.submit(_load_model_worker)
     yield
     print("[Qwen3 Worker] Worker shutting down cleanly.")
 
@@ -261,7 +288,11 @@ class SynthesizeRequest(BaseModel):
 
 @app.get("/health")
 def health_check():
-    vram = torch.cuda.memory_allocated() / (1024**2) if torch.cuda.is_available() else 0
+    vram = (
+        torch.cuda.memory_allocated() / (1024**2)
+        if (torch is not None and torch.cuda.is_available())
+        else 0
+    )
     if load_error:
         status = f"error: {load_error}"
     elif model is not None:
@@ -272,20 +303,30 @@ def health_check():
     return {
         "status": status,
         "device": device_name,
-        "cuda_available": torch.cuda.is_available(),
+        "cuda_available": bool(torch is not None and torch.cuda.is_available()),
         "vram_allocated_mb": round(vram, 2),
         "backend": active_backend,
     }
+
+
+@app.post("/abort")
+def abort_active_generation():
+    """Explicitly preempts any in-flight GPU synthesis so _gpu_lock is freed immediately."""
+    global _active_gen_id
+    _active_gen_id += 1
+    return {"status": "aborted", "active_gen_id": _active_gen_id}
 
 
 @app.post("/synthesize_stream")
 def synthesize_stream(req: SynthesizeRequest):
     """
     Streams raw PCM16 mono 24kHz audio chunks in real-time.
-    Uses CUDA Graphs when active_backend == 'faster' and applies C0 continuity DSP
-    at chunk boundaries to eliminate micro-clicks.
+    Uses a dedicated 1-worker ThreadPoolExecutor (_gpu_executor) + async generator wrapper so that:
+    1. Every CUDA Graph step and `torch.inference_mode()` runs on the exact same OS thread with zero polling sleep.
+    2. On client disconnect/barge-in, the async wrapper's `finally` block explicitly calls `gen.close()` on `_gpu_executor`,
+       releasing `_gpu_lock` immediately without Starlette's `iterate_in_threadpool` leak.
     """
-    global model
+    global model, _active_gen_id
     if model is None:
         raise HTTPException(status_code=503, detail="Qwen3-TTS Worker is still initializing.")
 
@@ -299,11 +340,16 @@ def synthesize_stream(req: SynthesizeRequest):
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
+    _active_gen_id += 1
+    my_id = _active_gen_id
+
     def pcm_generator():
         prev_sample = None
         try:
             with _gpu_lock:
                 for seg_idx, seg_text in enumerate(segments):
+                    if _active_gen_id != my_id:
+                        break
                     if seg_idx > 0:
                         pause_chunk = np.zeros(int(24000 * 0.05), dtype=np.float32)
                         pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
@@ -311,7 +357,7 @@ def synthesize_stream(req: SynthesizeRequest):
                         yield (np.clip(pause_chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 
                     if active_backend == "faster":
-                        with torch.no_grad(), torch.inference_mode():
+                        with _enter_torch_inference():
                             stream_gen = model.generate_custom_voice_streaming(
                                 text=seg_text,
                                 speaker="kurisu",
@@ -325,17 +371,22 @@ def synthesize_stream(req: SynthesizeRequest):
                             )
                             try:
                                 for audio_chunk, sr, _ in stream_gen:
+                                    if _active_gen_id != my_id:
+                                        break
                                     chunk = audio_chunk.copy()
                                     chunk = apply_boundary_continuity(chunk, prev_sample)
                                     prev_sample = float(chunk[-1])
                                     pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
                                     yield pcm16
-                            except GeneratorExit:
+                            finally:
+                                try:
+                                    stream_gen.close()
+                                except Exception:
+                                    pass
                                 if torch is not None and torch.cuda.is_available():
                                     torch.cuda.synchronize()
-                                raise
                     else:
-                        with torch.no_grad(), torch.inference_mode():
+                        with _enter_torch_inference():
                             wavs, sr = model.generate_custom_voice(
                                 text=seg_text,
                                 speaker="kurisu",
@@ -349,6 +400,8 @@ def synthesize_stream(req: SynthesizeRequest):
                         full_audio = wavs[0]
                         chunk_len = int(sr * 0.64)
                         for i in range(0, len(full_audio), chunk_len):
+                            if _active_gen_id != my_id:
+                                break
                             chunk = full_audio[i:i + chunk_len].copy()
                             chunk = apply_boundary_continuity(chunk, prev_sample)
                             prev_sample = float(chunk[-1])
@@ -360,8 +413,24 @@ def synthesize_stream(req: SynthesizeRequest):
             print(f"[Qwen3 Worker] Streaming generation error: {e}")
             raise
 
+    async def safe_async_stream():
+        loop = asyncio.get_running_loop()
+        gen = pcm_generator()
+        try:
+            while True:
+                chunk = await loop.run_in_executor(_gpu_executor, _next_or_sentinel, gen)
+                if chunk is _StopSentinel:
+                    break
+                yield chunk
+        finally:
+            fut = loop.run_in_executor(_gpu_executor, _close_gen_safe, gen)
+            try:
+                await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                pass
+
     return StreamingResponse(
-        pcm_generator(),
+        safe_async_stream(),
         media_type="audio/L16;rate=24000",
         headers={
             "X-Audio-Format": "pcm_s16le",
@@ -372,12 +441,12 @@ def synthesize_stream(req: SynthesizeRequest):
 
 
 @app.post("/synthesize")
-def synthesize(req: SynthesizeRequest):
+async def synthesize(req: SynthesizeRequest):
     """
     Non-streaming backwards-compatible endpoint delivering complete WAV PCM16 bytes.
     Automatically segments multi-sentence paragraphs to prevent EOS truncation and volume decay.
     """
-    global model
+    global model, _active_gen_id
     if model is None:
         raise HTTPException(status_code=503, detail="Qwen3-TTS Worker is still initializing.")
 
@@ -391,54 +460,100 @@ def synthesize(req: SynthesizeRequest):
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
-    with _gpu_lock:
-        try:
+    _active_gen_id += 1
+    my_id = _active_gen_id
+
+    def _run_sync():
+        with _gpu_lock:
             assembled_pieces = []
             prev_sample = None
             sr = 24000
 
-            with torch.inference_mode():
+            with _enter_torch_inference():
                 for seg_idx, seg_text in enumerate(segments):
+                    if _active_gen_id != my_id:
+                        break
                     if seg_idx > 0:
                         pause_chunk = np.zeros(int(sr * 0.05), dtype=np.float32)
                         pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
                         prev_sample = float(pause_chunk[-1])
                         assembled_pieces.append(pause_chunk)
 
-                    wavs, sr = model.generate_custom_voice(
-                        text=seg_text,
-                        speaker="kurisu",
-                        language=req.language or "Portuguese",
-                        instruct=effective_instruct,
-                        temperature=eff_temp,
-                        top_p=eff_top_p,
-                        repetition_penalty=eff_rep,
-                        max_new_tokens=eff_max_tokens,
-                    )
-                    seg_audio = wavs[0].astype(np.float32, copy=True)
-                    seg_audio = apply_boundary_continuity(seg_audio, prev_sample)
-                    if len(seg_audio) > 0:
-                        prev_sample = float(seg_audio[-1])
-                    assembled_pieces.append(seg_audio)
+                    if active_backend == "faster" and hasattr(model, "generate_custom_voice_streaming"):
+                        stream_gen = model.generate_custom_voice_streaming(
+                            text=seg_text,
+                            speaker="kurisu",
+                            language=req.language or "Portuguese",
+                            instruct=effective_instruct,
+                            chunk_size=8,
+                            temperature=eff_temp,
+                            top_p=eff_top_p,
+                            repetition_penalty=eff_rep,
+                            max_new_tokens=eff_max_tokens,
+                        )
+                        try:
+                            for audio_chunk, sr_val, _ in stream_gen:
+                                if _active_gen_id != my_id:
+                                    break
+                                sr = sr_val
+                                chunk = audio_chunk.copy().astype(np.float32)
+                                chunk = apply_boundary_continuity(chunk, prev_sample)
+                                if len(chunk) > 0:
+                                    prev_sample = float(chunk[-1])
+                                assembled_pieces.append(chunk)
+                        finally:
+                            try:
+                                stream_gen.close()
+                            except Exception:
+                                pass
+                            if torch is not None and torch.cuda.is_available():
+                                torch.cuda.synchronize()
+                    else:
+                        wavs, sr = model.generate_custom_voice(
+                            text=seg_text,
+                            speaker="kurisu",
+                            language=req.language or "Portuguese",
+                            instruct=effective_instruct,
+                            temperature=eff_temp,
+                            top_p=eff_top_p,
+                            repetition_penalty=eff_rep,
+                            max_new_tokens=eff_max_tokens,
+                        )
+                        seg_audio = wavs[0].astype(np.float32, copy=True)
+                        seg_audio = apply_boundary_continuity(seg_audio, prev_sample)
+                        if len(seg_audio) > 0:
+                            prev_sample = float(seg_audio[-1])
+                        assembled_pieces.append(seg_audio)
 
+            if not assembled_pieces:
+                return None
             full_audio = np.concatenate(assembled_pieces) if len(assembled_pieces) > 1 else assembled_pieces[0]
             buffer = io.BytesIO()
             sf.write(buffer, full_audio, sr, format="WAV", subtype="PCM_16")
-            return Response(
-                content=buffer.getvalue(),
-                media_type="audio/wav",
-                headers={"X-Backend": active_backend},
-            )
-        except torch.cuda.OutOfMemoryError as oom:
+            return buffer.getvalue()
+
+    try:
+        loop = asyncio.get_running_loop()
+        wav_bytes = await loop.run_in_executor(_gpu_executor, _run_sync)
+        if wav_bytes is None:
+            raise HTTPException(status_code=499, detail="Synthesis preempted by newer utterance.")
+        return Response(
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={"X-Backend": active_backend},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        if torch is not None and hasattr(torch.cuda, "OutOfMemoryError") and isinstance(e, torch.cuda.OutOfMemoryError):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            print(f"[Qwen3 Worker] CUDA Out Of Memory: {oom}")
+            print(f"[Qwen3 Worker] CUDA Out Of Memory: {e}")
             raise HTTPException(status_code=507, detail="GPU memory insufficient for this utterance.")
-        except Exception as e:
-            print(f"[Qwen3 Worker] Synthesis error: {e}")
-            import traceback
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
+        print(f"[Qwen3 Worker] Synthesis error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
 
 if __name__ == "__main__":
