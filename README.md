@@ -1,6 +1,6 @@
 # OpenAmadeus Companion
 
-A full-stack, modular multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), audio-reactive procedural lip-sync, real-time HTML5 Canvas oscilloscope and Nixie Tube divergence telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
+A full-stack, modular multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), audio-reactive procedural lip-sync, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
 
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://semver.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
@@ -47,7 +47,7 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
   - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 480 ms jitter buffer, `1.65x` (+4.3 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-20 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
 - **Visual State Machine & Audio-Reactive HUD**:
   - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across **14 canonical emotions** and camera framings (`AmadeusSpriteView.tsx`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), emotion-aligned blinking (preserving winks and smiles), and native fallback to a procedural holographic silhouette when sprites are absent.
-  - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth flap frames, natural double-blink cycles, an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`), and a **Nixie Tube Worldline Divergence Meter** (`DivergenceMeter.tsx`).
+  - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth flap frames, natural double-blink cycles, and an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`).
 - **Dynamic Few-Shot RAG & Episodic Memory (`server/training/` & [ChromaDB](https://www.trychroma.com/))**:
   - Automatically indexes **86 curated ChatML conversation pairs** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), providing few-shot conditioning for canonical dialogue, visual poses, camera zooms, and learned facts (`<!--remember:...-->`).
 - **Multi-Provider LLM Orchestration (`server/app/services/llm/`)**:
@@ -73,7 +73,6 @@ flowchart TD
         UI["HUD, ChatFeedStream & SettingsModal"]
         SpriteEngine["AmadeusSpriteView (174 Sprite Pack / 58 Portrait Frames / Hologram)"]
         Oscilloscope["AudioOscilloscope (HTML5 Canvas FFT)"]
-        NixieMeter["DivergenceMeter (Nixie Tube Telemetry)"]
         Reader["speechService.ts: PCM16 Stream Reader + Remainder Byte Buffer"]
         DSP["Web Audio DSP: Jitter (+480ms) -> Make-up Gain (1.65x) -> Compressor (-20dB) -> AnalyserNode"]
         UI --> Reader
@@ -83,7 +82,7 @@ flowchart TD
     end
 
     subgraph Server["Backend — FastAPI Core Gateway (:8000)"]
-        Router["API v1 Router (/chat, /tts, /memories, /sessions, /divergence)"]
+        Router["API v1 Router (/chat, /tts, /memories, /sessions)"]
         Orchestrator["Multi-Provider LLM Orchestrator + Lore Phonetic Normalizer"]
         EmotionParser["Emotion Tag Parser & clean_text_for_tts Sanitizer"]
         VoiceManager["voice_service.py (4-Stage Fallback Controller)"]
@@ -274,7 +273,6 @@ docker compose up --build -d
 | `/api/voice/models` | `GET` | Lists discovered RVC checkpoints, Kokoro voices (`pf_dora`), and Edge-TTS voices |
 | `/api/memories` | `GET` / `POST` / `DELETE` | Episodic semantic memory inspection and management (ChromaDB + SQLite) |
 | `/api/sessions` | `GET` / `POST` / `DELETE` | Conversation session persistence and history retrieval |
-| `/api/divergence` | `GET` | Worldline divergence meter telemetry for the Nixie Tube display |
 
 ## 📁 Repository Structure
 
@@ -290,7 +288,7 @@ OpenAmadeus/
 │   └── setup_sprites.py               # Sprite asset pack validator and directory initializer
 ├── server/                            # FastAPI Python Backend
 │   ├── app/
-│   │   ├── api/v1/endpoints/          # Modular route handlers (chat, voice, memory, persona, divergence)
+│   │   ├── api/v1/endpoints/          # Modular route handlers (chat, voice, memory, persona)
 │   │   ├── core/                      # config.py paths, model lists, and FastAPI lifespan
 │   │   ├── db/                        # Hybrid SQLite + ChromaDB vector persistence (memory_store.py)
 │   │   ├── schemas/                   # Pydantic request/response contracts (chat, memory, voice)
@@ -301,7 +299,6 @@ OpenAmadeus/
 │   │       ├── rvc/                   # rvc_manager.py, rvc_worker.py, pipeline.py (HuBERT/RMVPE)
 │   │       ├── voice_service.py       # 4-stage voice cascade & clean_text_for_tts sanitizer
 │   │       ├── emotion_service.py     # Sentiment tag extraction & pose synchronization
-│   │       ├── divergence_service.py  # Worldline divergence state calculator
 │   │       └── offline_simulator.py   # Zero-internet heuristic dialogue fallback
 │   ├── personas/                      # Persona definitions and system prompts (kurisu.json)
 │   ├── training/                      # 86-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
@@ -312,7 +309,7 @@ OpenAmadeus/
 │   ├── requirements.txt               # Universal CPU backend dependencies
 │   └── requirements-qwen.txt          # GPU worker dependencies (faster-qwen3-tts, transformers==5.15.1)
 ├── src/                               # React 19 + TypeScript + Vite Frontend
-│   ├── components/                    # AmadeusSpriteView, AudioOscilloscope, DivergenceMeter, etc.
+│   ├── components/                    # AmadeusSpriteView, AudioOscilloscope, etc.
 │   ├── data/personas/                 # Frontend persona metadata (kurisu.ts)
 │   ├── services/                      # speechService.ts (Web Audio PCM16 DSP), aiService, spriteCatalog
 │   ├── types/                         # TypeScript domain contracts (amadeus.ts)

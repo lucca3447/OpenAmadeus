@@ -197,61 +197,6 @@
   box-shadow: 0 0 10px #ffffff, 0 0 18px #fb923c;
 }
 
-/* Vacuum Glass Nixie Tube Rack */
-.vacuum-nixie-tube {
-  position: relative;
-  width: 24px;
-  height: 36px;
-  border-radius: 12px 12px 3px 3px;
-  background: 
-    radial-gradient(ellipse at 50% 60%, rgba(249, 115, 22, 0.24), transparent 70%),
-    linear-gradient(90deg, rgba(255,255,255,0.14) 0%, rgba(16,12,10,0.92) 22%, rgba(8,6,5,0.96) 78%, rgba(255,200,150,0.1) 100%);
-  border: 1px solid rgba(180, 120, 70, 0.45);
-  box-shadow: 
-    inset 0 3px 5px rgba(255, 255, 255, 0.18),
-    0 3px 8px rgba(0, 0, 0, 0.9);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-/* Honeycombed cathode mesh inside the glass bulb */
-.vacuum-nixie-tube::before {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  background-image: radial-gradient(rgba(0, 0, 0, 0.55) 1px, transparent 0);
-  background-size: 3px 3px;
-  pointer-events: none;
-  z-index: 2;
-}
-
-/* Ghost unlit digits stacked behind active filament */
-.nixie-ghost-stack {
-  position: absolute;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 1.25rem;
-  color: rgba(120, 90, 70, 0.16);
-  user-select: none;
-  z-index: 1;
-}
-
-/* Active incandescent cathode wire */
-.nixie-cathode-lit {
-  position: relative;
-  z-index: 3;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 1.3rem;
-  line-height: 1;
-  color: #fff7ed;
-  text-shadow: 
-    0 0 3px #fff,
-    0 0 7px #fb923c,
-    0 0 14px #ea580c,
-    0 0 24px #c2410c;
-}
-
 /* Widescreen Brushed Steel Deck with Warm Bronze Edge Patina */
 .widescreen-steel-deck {
   position: relative;

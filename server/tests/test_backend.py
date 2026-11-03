@@ -119,15 +119,6 @@ class TestAmadeusBackend(unittest.TestCase):
         self.assertEqual(res_health.status_code, 200)
         self.assertEqual(res_health.json().get("status"), "online")
 
-    def test_09_divergence_endpoint(self):
-        response = self.client.get("/api/divergence")
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn("divergence", data)
-        self.assertIn("worldline", data)
-        self.assertIn("source", data)
-        self.assertIn("timestamp", data)
-
     def test_10_emotion_service_rules(self):
         from app.services.emotion_service import parse_tags
         # Compliment / blushing test

@@ -210,31 +210,6 @@ export class BackendService {
   }
 
   /**
-   * Fetches system telemetry for the Nixie tube rack
-   */
-  static async getDivergence(): Promise<{
-    divergence: string;
-    worldline: string;
-    source: string;
-    timestamp: number;
-  }> {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/divergence`);
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch {
-      // Fallback
-    }
-    return {
-      divergence: '24.000',
-      worldline: 'PCM16 Neural Audio Bus',
-      source: 'local_telemetry',
-      timestamp: Date.now() / 1000,
-    };
-  }
-
-  /**
    * Pings Qwen-TTS worker (remote or local) via backend proxy
    */
   static async pingQwenWorker(remoteUrl?: string): Promise<QwenWorkerStatus> {

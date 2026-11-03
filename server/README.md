@@ -136,7 +136,6 @@ python -m app.services.qwen_tts.qwen_worker
 | `/api/voice/models` | `GET` | Lists discovered RVC checkpoints, Kokoro voices, and Edge-TTS voices |
 | `/api/memories` | `GET` / `POST` / `DELETE` | Semantic episodic memory inspection and management |
 | `/api/sessions` | `GET` / `POST` / `DELETE` | Conversation session persistence and history retrieval |
-| `/api/divergence` | `GET` | Live worldline divergence meter telemetry |
 
 ---
 
