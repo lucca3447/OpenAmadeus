@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict, List, Any
 import httpx
 
@@ -5,7 +6,7 @@ from app.core.config import MAX_HISTORY_MESSAGES
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
-from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera
+from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera, infer_lead_expression
 from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
@@ -14,6 +15,28 @@ from app.services.llm.openrouter import get_openrouter_candidate_models
 _model_cache: Dict[str, str] = {}
 
 SUMMARY_INTERVAL = 10
+
+
+def _build_call_telemetry(turn_count: int, learned_count: int) -> str:
+    now = datetime.now()
+    h = now.hour
+    if h < 6:
+        period = "Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper"
+    elif h < 12:
+        period = "Manhã"
+    elif h < 18:
+        period = "Tarde"
+    else:
+        period = "Noite"
+
+    if learned_count >= 2 or turn_count >= 6:
+        rapport = "Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas"
+    elif learned_count == 1 or turn_count >= 3:
+        rapport = "Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada"
+    else:
+        rapport = "Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora"
+
+    return f"[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: {now.strftime('%H:%M')} ({period}) | Turno #{turn_count} da ligação | Rapport: {rapport}"
 
 
 class LLMOrchestrator:
@@ -27,13 +50,16 @@ class LLMOrchestrator:
         """
         db_msgs = memory_store.get_session_messages(session_id)
         if db_msgs:
-            return [
-                {
-                    "role": "user" if m.get("sender") == "user" else "assistant",
-                    "content": m.get("content", ""),
-                }
-                for m in db_msgs[-MAX_HISTORY_MESSAGES:]
-            ]
+            turns = []
+            for m in db_msgs[-MAX_HISTORY_MESSAGES:]:
+                is_user = m.get("sender") == "user"
+                text = m.get("content", "")
+                emo = m.get("emotion")
+                if not is_user and emo and "<!--emotion:" not in text:
+                    pose_h, cam_h = infer_pose_and_camera(text, emo)
+                    text = f"{text} <!--emotion:{emo},pose:{pose_h},camera:{cam_h}-->"
+                turns.append({"role": "user" if is_user else "assistant", "content": text})
+            return turns
         return [
             {
                 "role": "user" if t.role == "user" else "assistant",
@@ -161,6 +187,7 @@ class LLMOrchestrator:
 
             clean_text, emotion, learned = offline_simulator(req.message, persona, semantic_matches)
             pose, camera = infer_pose_and_camera(clean_text, emotion, req.message)
+            lead_emotion, lead_pose = infer_lead_expression(clean_text, clean_text, emotion, pose, req.message)
             
             if learned:
                 saved = memory_store.add_memory(
@@ -178,6 +205,8 @@ class LLMOrchestrator:
                 emotion=emotion,
                 pose=pose,
                 camera=camera,
+                leadEmotion=lead_emotion,
+                leadPose=lead_pose,
                 recalledMemories=recalled_ids,
                 sessionId=session_id,
                 learnedMemory=learned,
@@ -188,7 +217,8 @@ class LLMOrchestrator:
         kurisu_memories = [m for m in semantic_matches if m.get("source") != "learned"]
         user_memories = memory_store.get_learned_context(req.message)
 
-        memory_ctx_blocks = []
+        turn_count = (len(history_turns) // 2) + 1
+        memory_ctx_blocks = [_build_call_telemetry(turn_count, len(user_memories))]
         if context_summary:
             memory_ctx_blocks.append(f"[RESUMO DO CONTEXTO ANTERIOR DESTA CONVERSA]:\n{context_summary}")
 
@@ -205,7 +235,7 @@ class LLMOrchestrator:
             memory_ctx_blocks.append(block)
 
         # 3. Dynamic Few-Shot Exemplars from Kurisu Fine-Tuning Pack
-        exemplars = memory_store.search_exemplars(req.message, n_results=2)
+        exemplars = memory_store.search_exemplars(req.message, n_results=2, lang=req.lang or "pt")
         if exemplars:
             ex_lines = [f"Operador: \"{ex['user']}\"\nKurisu: \"{ex['assistant']}\"" for ex in exemplars]
             block = "[EXEMPLOS CANÔNICOS DE DIÁLOGO E TOM DA KURISU]:\n" + "\n\n".join(ex_lines)
@@ -450,6 +480,7 @@ class LLMOrchestrator:
             # Parse tags with user message context for action intent mapping
             clean_text, emotion, learned = parse_tags(raw_reply, user_message=req.message)
             pose, camera = infer_pose_and_camera(raw_reply, emotion, user_message=req.message)
+            lead_emotion, lead_pose = infer_lead_expression(raw_reply, clean_text, emotion, pose, user_message=req.message)
 
             if learned:
                 print(f"[OpenAmadeus Core] Auto-consolidating memory: {learned.title}")
@@ -470,6 +501,8 @@ class LLMOrchestrator:
                 emotion=emotion,
                 pose=pose,
                 camera=camera,
+                leadEmotion=lead_emotion,
+                leadPose=lead_pose,
                 recalledMemories=recalled_ids,
                 sessionId=session_id,
                 model=used_model,
