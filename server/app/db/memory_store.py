@@ -97,6 +97,7 @@ class MemoryStore:
     def seed_exemplars(self, dataset_path: Path):
         """
         Seeds dialogue exemplars from the fine-tuning dataset into ChromaDB.
+        Automatically upgrades legacy records that lack 'pose:' directives or 'lang' metadata.
         """
         if not dataset_path.exists():
             return
@@ -105,8 +106,12 @@ class MemoryStore:
             total_lines = sum(1 for line in f if line.strip())
 
         count = self.exemplars_collection.count()
-        if count >= total_lines:
-            return
+        if count >= total_lines and count > 0:
+            sample = self.exemplars_collection.get(ids=["ex_0"], include=["metadatas"]) or {}
+            sample_metas = sample.get("metadatas") or []
+            first_meta = sample_metas[0] if sample_metas else {}
+            if "pose:" in (first_meta.get("assistant") or "") and first_meta.get("lang"):
+                return
 
         ids = []
         documents = []
@@ -122,13 +127,15 @@ class MemoryStore:
                     msgs = data.get("messages", [])
                     user_text = next((m["content"] for m in msgs if m["role"] == "user"), "")
                     asst_text = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
+                    lang = (data.get("lang") or "pt").strip().lower()
                     if user_text and asst_text:
                         ex_id = f"ex_{idx}"
                         ids.append(ex_id)
                         documents.append(user_text)
                         metadatas.append({
                             "user": user_text,
-                            "assistant": asst_text
+                            "assistant": asst_text,
+                            "lang": lang,
                         })
                 except Exception as e:
                     print(f"[Amadeus Core] Error parsing exemplar line {idx}: {e}")
@@ -141,20 +148,30 @@ class MemoryStore:
             )
             print(f"[Amadeus Core] ChromaDB seeded with {len(ids)} Kurisu fine-tuning exemplars.")
 
-    def search_exemplars(self, query: str, n_results: int = 2, max_distance: float = EXEMPLAR_MAX_DISTANCE) -> List[Dict[str, str]]:
+    def search_exemplars(
+        self,
+        query: str,
+        n_results: int = 2,
+        max_distance: float = EXEMPLAR_MAX_DISTANCE,
+        lang: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
         """
         Retrieves the most semantically relevant dialog turns from the fine-tuning dataset
-        within max_distance.
+        within max_distance, optionally filtered by language (PT/EN/JA for v0.3+).
         """
         count = self.exemplars_collection.count()
         if count == 0:
             return []
 
         limit = min(n_results, count)
-        results = self.exemplars_collection.query(
-            query_texts=[query],
-            n_results=limit
-        )
+        query_kwargs: Dict[str, Any] = {"query_texts": [query], "n_results": limit}
+        if lang:
+            query_kwargs["where"] = {"lang": lang.strip().lower()[:2]}
+
+        try:
+            results = self.exemplars_collection.query(**query_kwargs)
+        except Exception:
+            results = self.exemplars_collection.query(query_texts=[query], n_results=limit)
 
         matched: List[Dict[str, str]] = []
         if results and results.get("metadatas") and len(results["metadatas"]) > 0:
@@ -165,7 +182,8 @@ class MemoryStore:
                 if dist <= max_distance:
                     matched.append({
                         "user": meta.get("user", ""),
-                        "assistant": meta.get("assistant", "")
+                        "assistant": meta.get("assistant", ""),
+                        "lang": meta.get("lang", "pt"),
                     })
         return matched
 
