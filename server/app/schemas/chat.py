@@ -15,6 +15,7 @@ class ChatRequest(BaseModel):
     message: str
     sessionId: Optional[str] = None
     personaId: Optional[str] = "kurisu"
+    lang: Optional[str] = "pt"
     apiKey: Optional[str] = None
     history: List[HistoryTurn] = []
     selectedModel: Optional[str] = None
@@ -26,6 +27,8 @@ class ChatResponse(BaseModel):
     emotion: str
     pose: Optional[str] = None
     camera: Optional[str] = None
+    leadEmotion: Optional[str] = None
+    leadPose: Optional[str] = None
     recalledMemories: List[str]
     sessionId: Optional[str] = None
     model: Optional[str] = None

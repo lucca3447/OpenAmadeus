@@ -168,31 +168,33 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
     # Strip asterisks stage directions from dialogue
     clean = re.sub(r"\*[^*]+\*", "", clean)
 
-    # 4. Context-aware inference from user intent & physical command triggers (only when LLM tag was not explicit)
+    # 4. Context-aware inference from user intent & physical command triggers (PT / EN / JA for v0.3 readiness)
     if user_message and (not emotion_match or emotion in ("neutral", "serious")):
         u_lower = user_message.lower()
-        if re.search(r"(?i)\b(barata|fujiko|inseto|insetos)\b", u_lower):
+        if re.search(r"(?i)(\b(?:barata|fujiko|inseto|insetos|cockroach|roach)\b|ゴキブリ|ふじこ)", u_lower):
             emotion = "desperate"
-        elif re.search(r"(?i)\b(christina|assistente|zombie)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:christina|assistente|zombie|assistant)\b|クリスティーナ|助手|ゾンビ)", u_lower):
             emotion = "annoyed"
-        elif re.search(r"(?i)\b(linda|fofa|bonita|maravilhosa|atraente|perfeita|cora|corada|vergonha|envergonhada|t[íi]mida|bochechas)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:linda|fofa|bonita|maravilhosa|atraente|perfeita|cora|corada|vergonha|envergonhada|t[íi]mida|bochechas|cute|pretty|beautiful|gorgeous|blush)\b|かわいい|可愛い|綺麗|美人)", u_lower):
             emotion = "flustered"
-        elif re.search(r"(?i)\b(d[eê]|d[aá]|um)?\s*(sorriso|sorria|sorri)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:piscadinha|pisque|pisca|wink)\b|ウインク)", u_lower):
+            emotion = "wink"
+        elif re.search(r"(?i)(\b(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri|smile)\b|笑って|笑顔)", u_lower):
             if emotion in ("neutral", "serious", "tsundere"):
                 emotion = "smile"
-        elif re.search(r"(?i)\b(pense|pensativa|reflita|m[aã]o no queixo|analise)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:pense|pensativa|reflita|m[aã]o no queixo|analise|think|analyze)\b|考えて)", u_lower):
             if emotion in ("neutral", "serious"):
                 emotion = "thinking"
-        elif re.search(r"(?i)\b(brava|irritada|emburrada|cruze os bra[çc]os|bra[çc]os cruzados)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:brava|irritada|emburrada|cruze os bra[çc]os|bra[çc]os cruzados|cross your arms|crossed arms)\b|腕を組|怒って)", u_lower):
             if emotion in ("neutral", "serious"):
                 emotion = "annoyed"
-        elif re.search(r"(?i)\b(confusa|d[úu]vida|incline a cabe[çc]a)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:confusa|d[úu]vida|incline a cabe[çc]a|confused)\b|どういうこと)", u_lower):
             if emotion in ("neutral", "serious"):
                 emotion = "puzzled"
-        elif re.search(r"(?i)\b(surpresa|assustada|olhos arregalados)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:surpresa|assustada|olhos arregalados|nullpo|surprised)\b|ぬるぽ)", u_lower):
             if emotion in ("neutral", "serious"):
                 emotion = "surprised"
-        elif re.search(r"(?i)\b(triste|chore|chora|l[áa]grimas|mayuri|sacrif[íi]cio)\b", u_lower):
+        elif re.search(r"(?i)(\b(?:triste|chore|chora|l[áa]grimas|mayuri|sacrif[íi]cio|sad|cry)\b|悲しい|泣いて)", u_lower):
             if emotion in ("neutral", "serious"):
                 emotion = "sad"
 
@@ -201,11 +203,11 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
     if emotion in ("neutral", "serious"):
         if re.search(r"\b(n-não|q-quem|c-como|o-o que|b-bem|s-se você|l-linda|f-fofa)\b", lower):
             emotion = "flustered"
-        elif any(w in lower for w in ["barata", "fujiko", "tirem isso de perto", "socorro"]):
+        elif any(w in lower for w in ["barata", "fujiko", "tirem isso de perto", "socorro", "ゴキブリ"]):
             emotion = "desperate"
-        elif any(w in lower for w in ["idiota", "não me entenda mal", "ora essa", "francamente", "baka"]):
+        elif any(w in lower for w in ["idiota", "não me entenda mal", "ora essa", "francamente", "baka", "勘違いしないで"]):
             emotion = "tsundere"
-        elif any(w in lower for w in ["o quê", "como assim", "?!"]):
+        elif any(w in lower for w in ["o quê", "como assim", "?!", "gah!"]):
             emotion = "surprised"
         elif any(w in lower for w in ["óbvio", "elementar", "como previsto", "como esperado", "naturalmente"]):
             emotion = "smug"
@@ -222,7 +224,7 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
 
     # 6. Sanitize robotic action narration phrases and parenthetical stage directions
     clean = re.sub(r"(?i)\((?:sorri|sorrindo|pensativa|pensando|brava|irritada|corada|envergonhada|com a mão no queixo|de braços cruzados)\)", "", clean)
-    clean = re.sub(r"(?i)^(?:claro[,. ]+)?aqui vai um sorriso para voc[eê][.,! ]*", "U-um sorriso? Se você faz tanta questão... mas não se acostume com isso! ", clean)
+    clean = re.sub(r"(?i)^(?:claro[,. ]+)?aqui vai um sorriso para voc[eê][.,! ]*", "Um sorriso? Se você faz tanta questão... mas não se acostume com isso! ", clean)
     clean = re.sub(r"(?i)^(?:aqui est[aá] o meu sorriso|aqui vai o meu sorriso)[.,!:]*", "", clean)
     clean = re.sub(r"(?i)^(?:aqui est[aá] uma express[aã]o pensativa|aqui vai uma pose pensativa)[.,!:]*", "", clean)
     clean = re.sub(r"(?i)^(?:vou cruzar os bra[çc]os|estou de bra[çc]os cruzados)[.,!:]*", "", clean)
@@ -251,53 +253,133 @@ def sanitize_repetitive_openers(text: str) -> str:
     return t
 
 
-def infer_pose_and_camera(raw: Optional[str], emotion: str, user_message: Optional[str] = None) -> Tuple[str, str]:
+def _map_pose_token(tok: str) -> str:
+    if tok in ("crossed_arms", "thinking"):
+        return "crossed_arms"
+    if tok in ("backview", "back"):
+        return "backview"
+    if tok in ("default", "front"):
+        return "default"
+    return ""
+
+
+def _map_camera_token(tok: str) -> str:
+    if tok in ("closeup", "close", "jl"):
+        return "closeup"
+    if tok in ("medium", "jm"):
+        return "medium"
+    if tok in ("full", "far", "js"):
+        return "full"
+    return ""
+
+
+def infer_pose_and_camera(
+    raw: Optional[str],
+    emotion: str,
+    user_message: Optional[str] = None,
+    clean_text: Optional[str] = None,
+) -> Tuple[str, str]:
     text = (raw or "").lower()
     u_low = (user_message or "").lower()
 
     pose = ""
     camera = ""
 
-    pose_m = re.search(r"<!--[^\>]*\bpose\s*:\s*([a-z_]+)", text)
-    if pose_m:
-        tok = pose_m.group(1)
-        if tok in ("crossed_arms", "thinking"):
-            pose = "crossed_arms"
-        elif tok in ("backview", "back"):
-            pose = "backview"
-        elif tok in ("default", "front"):
-            pose = "default"
+    pose_matches = re.findall(r"<!--[^\>]*\bpose\s*:\s*([a-z_]+)", text)
+    for tok in pose_matches:
+        mapped = _map_pose_token(tok)
+        if mapped:
+            pose = mapped
 
-    cam_m = re.search(r"<!--[^\>]*\bcamera\s*:\s*([a-z_]+)", text)
-    if cam_m:
-        tok = cam_m.group(1)
-        if tok in ("closeup", "close", "jl"):
-            camera = "closeup"
-        elif tok in ("medium", "jm"):
-            camera = "medium"
-        elif tok in ("full", "far", "js"):
-            camera = "full"
+    cam_matches = re.findall(r"<!--[^\>]*\bcamera\s*:\s*([a-z_]+)", text)
+    for tok in cam_matches:
+        mapped = _map_camera_token(tok)
+        if mapped:
+            camera = mapped
 
     if not pose:
-        if re.search(r"\b(de costas|vire de costas)\b", u_low):
+        if re.search(r"(\b(?:de costas|vire de costas|virada de costas|turn around|turn your back)\b|後ろを向|そっぽ)", u_low):
             pose = "backview"
-        elif re.search(r"\b(cruze os bra[çc]os|bra[çc]os cruzados)\b", u_low):
+        elif re.search(r"(\b(?:cruze os bra[çc]os|bra[çc]os cruzados|cross your arms|crossed arms)\b|腕を組)", u_low):
             pose = "crossed_arms"
-        elif re.search(r"\b(descruze os bra[çc]os|solte os bra[çc]os)\b", u_low):
+        elif re.search(r"(\b(?:descruze os bra[çc]os|solte os bra[çc]os|uncross)\b)", u_low):
             pose = "default"
+        elif re.search(r"(\b(?:christina|assistente|zombie|assistant)\b|クリスティーナ|助手|ゾンビ)", u_low) and re.search(r"(n[ãa]o olh|de costas|ignorar|esque[çc]a)", text):
+            pose = "backview"
+        elif emotion in ("analytical", "disdain", "smug"):
+            pose = "crossed_arms"
+        elif emotion in ("annoyed", "stern", "tsundere", "serious") and (
+            re.search(r"(\b(?:christina|assistente|zombie|teoria|c[óo]digo|hip[óo]tese|ci[êe]ncia|relatividade|entropia|dados|erro)\b)", f"{u_low} {text}")
+            or len(text) > 70
+        ):
+            pose = "crossed_arms"
+        elif emotion in ("blushing", "flustered") and re.search(r"(n[ãa]o [ée] como se|processador|oscila[çc][ãa]o|sistema nervoso|calor|descaradamente)", text):
+            pose = "crossed_arms"
         else:
             pose = "default"
 
     if not camera:
-        if re.search(r"\b(close-?up|de perto|aproxime|rosto)\b", u_low):
+        if re.search(r"(\b(?:close-?up|de perto|aproxime|rosto)\b|近く)", u_low):
             camera = "closeup"
-        elif re.search(r"\b(corpo inteiro|afaste|de longe)\b", u_low):
+        elif re.search(r"(\b(?:corpo inteiro|afaste|de longe|full body)\b|全身)", u_low):
             camera = "full"
-        elif re.search(r"\b(meio corpo)\b", u_low):
+        elif re.search(r"(\b(?:meio corpo|medium)\b)", u_low):
             camera = "medium"
         elif pose == "backview":
             camera = "full"
+        elif emotion in ("blushing", "flustered", "wink", "surprised", "holding_back_tears", "desperate", "sad", "worried"):
+            camera = "closeup"
+        elif pose == "crossed_arms" or emotion in ("analytical", "disdain", "smug"):
+            camera = "medium"
         else:
             camera = "closeup"
 
     return pose, camera
+
+
+def infer_lead_expression(
+    raw: Optional[str],
+    clean_text: str,
+    final_emotion: str,
+    final_pose: str,
+    user_message: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Determines an optional 1st-beat (lead) expression & pose when a multi-sentence reply
+    either contains multiple <!--emotion:...--> tags or opens with a sudden reaction before settling.
+    """
+    if not raw or not clean_text:
+        return None, None
+
+    # 1. Explicit multi-tag sequence: first tag = lead, last tag = final
+    comment_matches = re.findall(r"<!--([\s\S]*?)(?:-->|-+>|>+|$)", raw, re.IGNORECASE)
+    emo_tags = []
+    for c in comment_matches:
+        if re.match(r"(?i)^remember(?:\s*:|\s)", c.strip()):
+            continue
+        emo_m = re.search(r"(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)", c, re.IGNORECASE)
+        if emo_m:
+            tok = re.split(r"[\s|,;/]+", emo_m.group(1).lower().strip())[0]
+            if tok in VALID_EMOTIONS:
+                pose_m = re.search(r"\bpose\s*:\s*([a-z_]+)", c, re.IGNORECASE)
+                p_tok = _map_pose_token(pose_m.group(1).lower()) if pose_m else ""
+                emo_tags.append((tok, p_tok))
+
+    if len(emo_tags) >= 2:
+        first_emo, first_pose = emo_tags[0]
+        if not first_pose:
+            first_pose = "crossed_arms" if first_emo in ("analytical", "disdain", "smug") else "default"
+        if first_emo != final_emotion or first_pose != final_pose:
+            return first_emo, first_pose
+
+    # 2. Natural 2-beat shift on multi-sentence replies with a strong reaction opener
+    if len(clean_text) >= 55:
+        first_clause = clean_text[:45].lower()
+        if re.search(r"^(?:o qu[êe]\b|gah\b|h[ãa]\b|espere\b|como assim\b|what\b|huh\b|えっ|は？)", first_clause):
+            if final_emotion not in ("surprised", "neutral"):
+                return "surprised", "default"
+        if re.search(r"^(?:francamente\b|ora\b|suspiro\b|francamente,|sério isso)", first_clause):
+            if final_emotion not in ("eyes_closed", "neutral"):
+                return "eyes_closed", "crossed_arms"
+
+    return None, None

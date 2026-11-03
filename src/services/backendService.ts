@@ -19,6 +19,8 @@ export interface BackendChatResponse {
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
+  leadEmotion?: Emotion;
+  leadPose?: CharacterPose;
   recalledMemories: string[];
   sessionId?: string;
   model?: string;
@@ -89,7 +91,7 @@ export class BackendService {
       role: msg.sender === 'user' ? 'user' : 'model',
       content:
         msg.sender !== 'user' && msg.emotion
-          ? `${msg.content} <!--emotion:${msg.emotion}-->`
+          ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'},camera:${msg.camera || 'closeup'}-->`
           : msg.content,
     }));
 

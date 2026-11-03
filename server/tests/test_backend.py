@@ -263,6 +263,69 @@ class TestAmadeusBackend(unittest.TestCase):
         self.assertEqual(pose, "crossed_arms")
         self.assertEqual(cam, "closeup")
 
+    def test_16_naturalness_poses_trilingual_and_lead_expression(self):
+        import json
+        from app.core.config import TRAINING_DIR
+        from app.services.emotion_service import parse_tags, infer_pose_and_camera, infer_lead_expression
+        from app.services.voice_service import clean_text_for_tts
+
+        # 1. Organic Pose E (crossed_arms) and Camera JM (medium) inference without explicit pose/camera tag
+        raw_analytical = "Do ponto de vista termodinâmico, enviar matéria ao passado criaria paradoxos causais. <!--emotion:analytical-->"
+        clean_a, emo_a, _ = parse_tags(raw_analytical)
+        pose_a, cam_a = infer_pose_and_camera(raw_analytical, emo_a, clean_text=clean_a)
+        self.assertEqual(emo_a, "analytical")
+        self.assertEqual(pose_a, "crossed_arms")
+        self.assertEqual(cam_a, "medium")
+
+        # 2. Organic Pose F (backview) and Camera JS (full) on nickname offense + turning away
+        raw_back = "Humpf! Vou ignorar você e virar de costas se continuar me chamando assim! <!--emotion:annoyed-->"
+        clean_b, emo_b, _ = parse_tags(raw_back, user_message="Ei Christina!")
+        pose_b, cam_b = infer_pose_and_camera(raw_back, emo_b, user_message="Ei Christina!", clean_text=clean_b)
+        self.assertEqual(pose_b, "backview")
+        self.assertEqual(cam_b, "full")
+
+        # 3. Trilingual user triggers (JA / EN / PT)
+        _, emo_ja_bug, _ = parse_tags("Kyaa!", user_message="ゴキブリがいるよ！")
+        self.assertEqual(emo_ja_bug, "desperate")
+        _, emo_ja_nullpo, _ = parse_tags("Gah!", user_message="ぬるぽ")
+        self.assertEqual(emo_ja_nullpo, "surprised")
+        _, emo_en_nick, _ = parse_tags("Stop calling me that.", user_message="Hey Assistant Christina")
+        self.assertEqual(emo_en_nick, "annoyed")
+
+        # 4. 2-Beat lead expression inference (semantic shock -> blushing & multi-tag)
+        raw_blush = "O quê?! E-eu só fiz café porque sobrou pó na cafeteira do laboratório! Não me entenda mal! <!--emotion:blushing,pose:crossed_arms,camera:closeup-->"
+        clean_bl, emo_bl, _ = parse_tags(raw_blush)
+        pose_bl, _ = infer_pose_and_camera(raw_blush, emo_bl, clean_text=clean_bl)
+        lead_emo, lead_pose = infer_lead_expression(raw_blush, clean_bl, emo_bl, pose_bl)
+        self.assertEqual(lead_emo, "surprised")
+        self.assertEqual(lead_pose, "default")
+
+        raw_two_tags = "<!--emotion:surprised,pose:default--> Francamente, você me assustou! <!--emotion:annoyed,pose:crossed_arms-->"
+        clean_tt, emo_tt, _ = parse_tags(raw_two_tags)
+        pose_tt, _ = infer_pose_and_camera(raw_two_tags, emo_tt, clean_text=clean_tt)
+        lead_emo_tt, lead_pose_tt = infer_lead_expression(raw_two_tags, clean_tt, emo_tt, pose_tt)
+        self.assertEqual(lead_emo_tt, "surprised")
+        self.assertEqual(emo_tt, "annoyed")
+        self.assertEqual(pose_tt, "crossed_arms")
+
+        # 5. Language-aware TTS cleaner (PT converts '!' -> '.' and strips 'Hmm', JA preserves '!')
+        pt_tts = clean_text_for_tts("Hmm, relatório concluído!", lang="pt")
+        self.assertEqual(pt_tts, "Relatório concluído.")
+        ja_tts = clean_text_for_tts("クリスティーナって呼ぶな!", lang="ja")
+        self.assertIn("!", ja_tts)
+
+        # 6. Verify all 125 exemplars have pose:, camera:, lang, and zero 4th-wall breaks
+        ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
+        with open(ds_file, "r", encoding="utf-8") as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        self.assertEqual(len(rows), 125)
+        for row in rows:
+            self.assertEqual(row.get("lang"), "pt")
+            assistant_txt = row["messages"][-1]["content"]
+            self.assertIn("pose:", assistant_txt)
+            self.assertIn("camera:", assistant_txt)
+            self.assertNotIn("No universo de STEINS;GATE", assistant_txt)
+
 if __name__ == "__main__":
     unittest.main()
 

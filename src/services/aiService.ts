@@ -197,6 +197,8 @@ export interface AIResult {
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
+  leadEmotion?: Emotion;
+  leadPose?: CharacterPose;
   recalledMemories?: string[];
   status: AIStatus;
   /** true when the response is an error report, not something Amadeus "said" */
@@ -712,6 +714,8 @@ export class AIService {
           emotion: backendRes.emotion,
           pose: backendRes.pose,
           camera: backendRes.camera,
+          leadEmotion: backendRes.leadEmotion,
+          leadPose: backendRes.leadPose,
           recalledMemories: backendRes.recalledMemories || [],
           status: backendRes.error
             ? { kind: 'error', message: backendRes.error }
@@ -738,13 +742,15 @@ export class AIService {
     // 3. Browser-Mode: Groq Cloud (Ultra-fast LPU)
     if (isGroqKey(key)) {
       try {
-        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
+        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
           await this.queryGroq(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
         return {
           response,
           emotion,
           pose,
           camera,
+          leadEmotion,
+          leadPose,
           status: { kind: 'online', model },
           isError: false,
           learnedMemory,
@@ -763,13 +769,15 @@ export class AIService {
     // 4. Browser-Mode: OpenRouter
     if (isOpenRouterKey(key)) {
       try {
-        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
+        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
           await this.queryOpenRouter(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
         return {
           response,
           emotion,
           pose,
           camera,
+          leadEmotion,
+          leadPose,
           status: { kind: 'online', model },
           isError: false,
           learnedMemory,
@@ -787,13 +795,15 @@ export class AIService {
 
     // 5. Browser-Mode: Google Gemini
     try {
-      const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
+      const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
         await this.queryGemini(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
       return {
         response,
         emotion,
         pose,
         camera,
+        leadEmotion,
+        leadPose,
         status: { kind: 'online', model },
         isError: false,
         learnedMemory,
@@ -809,13 +819,28 @@ export class AIService {
     }
   }
 
-  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile): string {
+  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0): string {
     const kurisuMemories = recalledMemories.filter((m) => m.source !== 'learned');
     const recentLearned = (persona?.memories || []).filter((m) => m.source === 'learned').slice(-12);
     const seen = new Set(recentLearned.map((m) => m.id));
     const userMemories = [...recentLearned, ...recalledMemories.filter((m) => m.source === 'learned' && !seen.has(m.id))];
 
-    const blocks: string[] = [];
+    const now = new Date();
+    const h = now.getHours();
+    const timeStr = `${String(h).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const period = h < 6
+      ? 'Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper'
+      : h < 12 ? 'Manhã' : h < 18 ? 'Tarde' : 'Noite';
+    const turnCount = Math.floor(historyCount / 2) + 1;
+    const rapport = (userMemories.length >= 2 || turnCount >= 6)
+      ? 'Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas'
+      : (userMemories.length === 1 || turnCount >= 3)
+        ? 'Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada'
+        : 'Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora';
+
+    const blocks: string[] = [
+      `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Rapport: ${rapport}`,
+    ];
 
     if (kurisuMemories.length > 0) {
       blocks.push(
@@ -831,7 +856,7 @@ export class AIService {
       );
     }
 
-    return blocks.length > 0 ? `\n\n${blocks.join('\n\n')}` : '';
+    return `\n\n${blocks.join('\n\n')}`;
   }
 
   private static async queryGroq(
@@ -846,21 +871,23 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
       ...history.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion}-->` : msg.content,
+        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->` : msg.content,
       })),
       { role: 'user', content: userMessage },
     ];
@@ -984,21 +1011,23 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
       ...history.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion}-->` : msg.content,
+        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->` : msg.content,
       })),
       { role: 'user', content: userMessage },
     ];
@@ -1122,7 +1151,7 @@ export class AIService {
       if (msg.sender === 'system') continue;
       const role = msg.sender === 'user' ? 'user' : 'model';
       const text = role === 'model' && msg.emotion
-        ? `${msg.content} <!--emotion:${msg.emotion}-->`
+        ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->`
         : msg.content;
 
       const last = turns[turns.length - 1];
@@ -1151,14 +1180,16 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
 
     const body = {
       contents: this.buildContents(history, userMessage),
@@ -1330,8 +1361,10 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     learnedMemory?: LearnedMemoryInfo;
   } {
     let emotion: Emotion = 'neutral';
@@ -1359,37 +1392,41 @@ export class AIService {
     }
 
     // 2. Extract directives from all comment tags <!-- ... -->
-    // Handles isolated tags (<!--emotion:happy--> <!--pose:crossed_arms--> <!--camera:medium-->)
-    // and composite tags (<!--emotion:tsundere,pose:crossed_arms,camera:medium-->)
+    // Track first emotion/pose if multiple tags exist for 2-beat transition
+    let firstTagEmotion: Emotion | undefined = undefined;
+    let firstTagPose: CharacterPose | undefined = undefined;
     const commentMatches = cleanText.match(/<!--([\s\S]*?)(?:-->|-+>|>+|$)/g);
     if (commentMatches) {
       for (const comment of commentMatches) {
         const inner = comment.replace(/^<!--|-->$/g, '').trim();
         if (/^remember(?:\s*:|\s)/i.test(inner)) continue;
 
-        // Emotion
         const emoMatch = inner.match(/(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)/i);
         if (emoMatch) {
           const rawVal = emoMatch[1].toLowerCase().trim();
           const tokens = rawVal.split(/[\s|,;/]+/);
           for (const tok of tokens) {
             if (VALID_EMOTIONS.includes(tok as Emotion)) {
+              if (!firstTagEmotion) firstTagEmotion = tok as Emotion;
               emotion = tok as Emotion;
               break;
             }
           }
         }
 
-        // Pose
         const pMatch = inner.match(/(?:^|[,;|\s])pose\s*:\s*([^,;|\s>]+)/i);
         if (pMatch) {
           const pTok = pMatch[1].toLowerCase().trim();
-          if (pTok === 'crossed_arms' || pTok === 'thinking') pose = 'crossed_arms';
-          else if (pTok === 'backview' || pTok === 'back') pose = 'backview';
-          else if (pTok === 'default' || pTok === 'front') pose = 'default';
+          let parsedPose: CharacterPose | undefined = undefined;
+          if (pTok === 'crossed_arms' || pTok === 'thinking') parsedPose = 'crossed_arms';
+          else if (pTok === 'backview' || pTok === 'back') parsedPose = 'backview';
+          else if (pTok === 'default' || pTok === 'front') parsedPose = 'default';
+          if (parsedPose) {
+            if (!firstTagPose) firstTagPose = parsedPose;
+            pose = parsedPose;
+          }
         }
 
-        // Camera
         const cMatch = inner.match(/(?:^|[,;|\s])camera\s*:\s*([^,;|\s>]+)/i);
         if (cMatch) {
           const cTok = cMatch[1].toLowerCase().trim();
@@ -1408,51 +1445,53 @@ export class AIService {
     if (asterisks && (emotion === 'neutral' || emotion === 'serious')) {
       for (const act of asterisks) {
         const aLow = act.toLowerCase();
-        if (/pisca|piscad/.test(aLow)) emotion = 'wink';
-        else if (/sorri|sorriso|alegre|risad/.test(aLow)) emotion = 'happy';
-        else if (/cruza os bra[çc]os|bra[çc]os cruzados|pensa|pensativ/.test(aLow)) {
+        if (/pisca|piscad|wink|ウインク/.test(aLow)) emotion = 'wink';
+        else if (/sorri|sorriso|alegre|risad|smil|laugh|笑/.test(aLow)) emotion = 'happy';
+        else if (/cruza os bra[çc]os|bra[çc]os cruzados|pensa|pensativ|cross.*arm|think|腕.*組|考/.test(aLow)) {
           emotion = 'thinking';
           pose = 'crossed_arms';
         }
-        else if (/brava|irritad|emburrad/.test(aLow)) emotion = 'annoyed';
-        else if (/cora|vergonha|t[íi]mid/.test(aLow)) emotion = 'blushing';
-        else if (/olha para o lado|desvia o olhar|soslaio/.test(aLow)) emotion = 'look_side';
-        else if (/olhos fechados|repouso/.test(aLow)) emotion = 'eyes_closed';
-        else if (/analis|ci[êe]ncia|teoria/.test(aLow)) emotion = 'analytical';
-        else if (/triste|chora|l[áa]grima/.test(aLow)) emotion = 'holding_back_tears';
-        else if (/preocupad|aflit/.test(aLow)) emotion = 'worried';
-        else if (/desd[ée]m|t[ée]dio/.test(aLow)) emotion = 'disdain';
+        else if (/brava|irritad|emburrad|angr|annoy|怒/.test(aLow)) emotion = 'annoyed';
+        else if (/cora|vergonha|t[íi]mid|blush|embarrass|照|赤面/.test(aLow)) emotion = 'blushing';
+        else if (/olha para o lado|desvia o olhar|soslaio|look.*away|目をそら/.test(aLow)) emotion = 'look_side';
+        else if (/olhos fechados|repouso|close.*eye|目を閉/.test(aLow)) emotion = 'eyes_closed';
+        else if (/analis|ci[êe]ncia|teoria|analy|分析/.test(aLow)) emotion = 'analytical';
+        else if (/triste|chora|l[áa]grima|tear|cry|泣|涙/.test(aLow)) emotion = 'holding_back_tears';
+        else if (/preocupad|aflit|worr|心配/.test(aLow)) emotion = 'worried';
+        else if (/desd[ée]m|t[ée]dio|disdain|sigh|呆/.test(aLow)) emotion = 'disdain';
       }
     }
-    // Strip asterisks stage directions from dialogue
     cleanText = cleanText.replace(/\*[^*]+\*/g, '');
 
-    // 5. Context-aware inference from user intent (if emotion is neutral/unresolved)
+    // 5. Context-aware inference from user intent (PT / EN / JA)
+    const uLow = (userMessage || '').toLowerCase();
     if (userMessage && (emotion === 'neutral' || emotion === 'serious')) {
-      const uLow = userMessage.toLowerCase();
-      if (/(?:d[eê]|d[aá]|uma)?\s*(?:piscad|pisque|pisca)/i.test(uLow)) emotion = 'wink';
-      else if (/(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri|alegre)/i.test(uLow)) emotion = 'happy';
-      else if (/(?:cruze os bra[çc]os|bra[çc]os cruzados)/i.test(uLow)) {
+      if (/(?:d[eê]|d[aá]|uma)?\s*(?:piscad|pisque|pisca|wink|ウインク)/i.test(uLow)) emotion = 'wink';
+      else if (/(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri|alegre|smile|笑って)/i.test(uLow)) emotion = 'happy';
+      else if (/(?:cruze os bra[çc]os|bra[çc]os cruzados|cross.*arms|腕を組)/i.test(uLow)) {
         emotion = 'thinking';
         pose = 'crossed_arms';
       }
-      else if (/(?:pense|pensativa|reflita|analise)/i.test(uLow)) {
+      else if (/(?:pense|pensativa|reflita|analise|think|analyze|考えて)/i.test(uLow)) {
         emotion = 'thinking';
         pose = 'crossed_arms';
       }
-      else if (/(?:brava|irritada|emburrada)/i.test(uLow)) emotion = 'annoyed';
-      else if (/(?:cora|corada|vergonha|envergonhada|t[íi]mida|fofa|linda)/i.test(uLow)) emotion = 'blushing';
-      else if (/(?:olhe para o lado|olhe de lado|desvie o olhar)/i.test(uLow)) emotion = 'look_side';
-      else if (/(?:feche os olhos|olhos fechados|descanse)/i.test(uLow)) emotion = 'eyes_closed';
-      else if (/(?:triste|chore|chora|l[áa]grimas)/i.test(uLow)) emotion = 'holding_back_tears';
-      else if (/(?:preocupada|aflita)/i.test(uLow)) emotion = 'worried';
-      else if (/(?:de costas|vire de costas)/i.test(uLow)) pose = 'backview';
+      else if (/(?:brava|irritada|emburrada|angry|annoyed|怒って)/i.test(uLow)) emotion = 'annoyed';
+      else if (/(?:cora|corada|vergonha|envergonhada|t[íi]mida|fofa|linda|cute|pretty|beautiful|かわいい|可愛い|綺麗|きれい)/i.test(uLow)) emotion = 'blushing';
+      else if (/(?:olhe para o lado|olhe de lado|desvie o olhar|look away|横を向)/i.test(uLow)) emotion = 'look_side';
+      else if (/(?:feche os olhos|olhos fechados|descanse|close.*eyes|目を閉じ)/i.test(uLow)) emotion = 'eyes_closed';
+      else if (/(?:triste|chore|chora|l[áa]grimas|sad|cry|泣いて)/i.test(uLow)) emotion = 'holding_back_tears';
+      else if (/(?:preocupada|aflita|worried|心配)/i.test(uLow)) emotion = 'worried';
+      else if (/(?:de costas|vire de costas|turn around|backview|後ろを向|背中)/i.test(uLow)) pose = 'backview';
+      else if (/\b(?:christina|assistente|zombie|celebcas|pervertida|assistant)|クリスティーナ|助手|ゾンビ|セレセブ|変態/i.test(uLow)) emotion = 'annoyed';
+      else if (/\b(?:nullpo|nurupo)\b|ぬるぽ/i.test(uLow)) emotion = 'surprised';
+      else if (/\b(?:barata|fujiko|inseto|cockroach|bug)\b|ゴキブリ|ふじこ/i.test(uLow)) emotion = 'surprised';
     }
 
     // 6. Inferred sentiment fallback from assistant words
     const lower = cleanText.toLowerCase();
     if (emotion === 'neutral' || emotion === 'serious') {
-      if (lower.includes('baka') || lower.includes('idiota') || lower.includes('não me entenda mal') || lower.includes('christina')) {
+      if (lower.includes('baka') || lower.includes('idiota') || lower.includes('não me entenda mal') || lower.includes('christina') || lower.includes('バカ') || lower.includes('あんた')) {
         emotion = 'stern';
       } else if (lower.includes('o quê') || lower.includes('como assim') || lower.includes('?!')) {
         emotion = 'worried';
@@ -1473,14 +1512,79 @@ export class AIService {
     cleanText = cleanText.replace(/[:;]-?[)(DPpOdD]/g, '');
     cleanText = cleanText.replace(/\s+/g, ' ').trim();
 
-    // Default pose is natural (default) unless explicitly set by tag or command
-    if (!camera && userMessage) {
-      const uLow = userMessage.toLowerCase();
-      if (/close-?up|de perto|aproxime/.test(uLow)) camera = 'closeup';
-      else if (/corpo inteiro|afaste|de longe/.test(uLow)) camera = 'full';
-      else if (/meio corpo/.test(uLow)) camera = 'medium';
+    // 8. Organic Pose & Camera inference
+    if (!pose) {
+      if (/(?:de costas|vire de costas|virar de costas|turn around|backview|後ろを向|背中)/i.test(uLow)) {
+        pose = 'backview';
+      } else if (/(?:cruze os bra[çc]os|bra[çc]os cruzados|cross.*arms|腕を組)/i.test(uLow)) {
+        pose = 'crossed_arms';
+      } else if (
+        /\b(?:christina|zombie|celebcas|pervertida)\b|クリスティーナ|ゾンビ|セレセブ|変態/i.test(uLow) &&
+        /\b(?:ignorar|não olho|não vou olhar|virar|costas|humpf)\b/i.test(lower)
+      ) {
+        pose = 'backview';
+      } else if (emotion === 'thinking' || emotion === 'analytical' || emotion === 'disdain' || emotion === 'smug') {
+        pose = 'crossed_arms';
+      } else if (
+        (emotion === 'annoyed' || emotion === 'stern' || emotion === 'tsundere') &&
+        (/\b(?:christina|assistente|zombie|baka|idiota|hipótese|lógica|dados|evidência|teoria|cientista)\b|クリスティーナ|助手|バカ/i.test(lower) ||
+          /\b(?:christina|assistente|zombie|assistant)\b|クリスティーナ|助手|ゾンビ/i.test(uLow))
+      ) {
+        pose = 'crossed_arms';
+      } else if (
+        (emotion === 'blushing' || emotion === 'flustered') &&
+        /\b(?:não me entenda mal|não é como se|baka|idiota|profissionalismo|calor dos servidores)\b|勘違いしないで|バカ/i.test(lower)
+      ) {
+        pose = 'crossed_arms';
+      } else {
+        pose = 'default';
+      }
     }
-    return { response: cleanText, emotion, pose, camera, learnedMemory };
+
+    if (!camera) {
+      if (/close-?up|de perto|aproxime|chegue mais perto|get closer|近づいて/.test(uLow)) {
+        camera = 'closeup';
+      } else if (/corpo inteiro|afaste|de longe|full body|step back|離れて|全身/.test(uLow)) {
+        camera = 'full';
+      } else if (/meio corpo|medium shot|half body/.test(uLow)) {
+        camera = 'medium';
+      } else if (pose === 'backview') {
+        camera = 'full';
+      } else if (
+        pose === 'crossed_arms' &&
+        (emotion === 'analytical' || emotion === 'thinking' || emotion === 'disdain' || emotion === 'smug' || emotion === 'stern')
+      ) {
+        camera = 'medium';
+      } else if ((emotion === 'surprised' || emotion === 'annoyed') && cleanText.includes('?!')) {
+        camera = 'medium';
+      } else {
+        camera = 'closeup';
+      }
+    }
+
+    // 9. Infer 2-beat lead expression for natural VN sprite transition
+    let leadEmotion: Emotion | undefined = undefined;
+    let leadPose: CharacterPose | undefined = undefined;
+    if (firstTagEmotion && (firstTagEmotion !== emotion || (firstTagPose && firstTagPose !== pose))) {
+      leadEmotion = firstTagEmotion;
+      leadPose = firstTagPose || 'default';
+    } else if (cleanText.length >= 45) {
+      if ((emotion === 'blushing' || emotion === 'flustered') && (/^(?:o qu[êe]|e-ei|hã|q-quem|c-como|espere)/i.test(lower) || cleanText.slice(0, 35).includes('?!'))) {
+        leadEmotion = 'surprised';
+        leadPose = 'default';
+      } else if ((emotion === 'annoyed' || emotion === 'stern' || emotion === 'blushing') && /\b(?:gah|nullpo|nurupo)\b|ぬるぽ|ガッ/i.test(lower.slice(0, 35))) {
+        leadEmotion = 'surprised';
+        leadPose = 'default';
+      } else if ((emotion === 'analytical' || emotion === 'happy' || emotion === 'wink') && /^(?:espere um instante|pensando bem|deixe-me pensar|se analisarmos|vejamos)/i.test(lower)) {
+        leadEmotion = 'thinking';
+        leadPose = 'crossed_arms';
+      } else if ((emotion === 'happy' || emotion === 'wink') && /\b(?:christina|assistente|baka|idiota)\b/i.test(lower.slice(0, 50))) {
+        leadEmotion = 'annoyed';
+        leadPose = 'crossed_arms';
+      }
+    }
+
+    return { response: cleanText, emotion, pose, camera, leadEmotion, leadPose, learnedMemory };
   }
 
   /**

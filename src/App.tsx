@@ -113,6 +113,7 @@ export const App: React.FC = () => {
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>('neutral');
   const [currentPose, setCurrentPose] = useState<CharacterPose>('default');
   const [currentCamera, setCurrentCamera] = useState<CameraFraming | undefined>(undefined);
+  const leadTransitionTimerRef = useRef<number | null>(null);
   const [defaultCamera, setDefaultCamera] = useState<'auto' | 'closeup' | 'medium' | 'full'>(() => {
     const saved = localStorage.getItem('amadeus_default_camera');
     return saved === 'closeup' || saved === 'medium' || saved === 'full' ? saved : 'auto';
@@ -436,12 +437,29 @@ export const App: React.FC = () => {
 
       setAiStatus(result.status);
       setCurrentSubtitle(result.response);
-      setCurrentEmotion(result.emotion);
-      setCurrentCamera(result.camera);
-      if (result.pose) {
-        setCurrentPose(result.pose);
+      if (leadTransitionTimerRef.current !== null) {
+        window.clearTimeout(leadTransitionTimerRef.current);
+        leadTransitionTimerRef.current = null;
+      }
+
+      const finalPose = result.pose || 'default';
+      if (result.leadEmotion && (result.leadEmotion !== result.emotion || (result.leadPose && result.leadPose !== finalPose))) {
+        const initialPose = result.leadPose || 'default';
+        preloadEmotionSprites(result.leadEmotion, initialPose, result.camera);
+        preloadEmotionSprites(result.emotion, finalPose, result.camera);
+        setCurrentEmotion(result.leadEmotion);
+        setCurrentPose(initialPose);
+        setCurrentCamera(result.camera);
+        leadTransitionTimerRef.current = window.setTimeout(() => {
+          setCurrentEmotion(result.emotion);
+          setCurrentPose(finalPose);
+          setCurrentCamera(result.camera);
+          leadTransitionTimerRef.current = null;
+        }, 1500);
       } else {
-        setCurrentPose('default');
+        setCurrentEmotion(result.emotion);
+        setCurrentPose(finalPose);
+        setCurrentCamera(result.camera);
       }
 
       if (result.decommissionNotice) {
@@ -483,6 +501,7 @@ export const App: React.FC = () => {
         timestamp: Date.now(),
         emotion: result.emotion,
         pose: result.pose,
+        camera: result.camera,
         recalledMemories: finalRecalledIds,
       };
 
@@ -508,6 +527,10 @@ export const App: React.FC = () => {
 
   // Start new clean conversation
   const handleNewSession = () => {
+    if (leadTransitionTimerRef.current !== null) {
+      window.clearTimeout(leadTransitionTimerRef.current);
+      leadTransitionTimerRef.current = null;
+    }
     SpeechService.stopSpeaking();
     setIsSpeaking(false);
     setErrorNotice(null);
