@@ -7,7 +7,6 @@ from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
 from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera
 from app.services.offline_simulator import offline_simulator
-from app.services.divergence_service import get_worldline_divergence
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.openrouter import get_openrouter_candidate_models

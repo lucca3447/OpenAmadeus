@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { AIStatus } from '../services/aiService';
 import { BackendHealth } from '../services/backendService';
-import { DivergenceMeter } from './DivergenceMeter';
 import { LLMFallbackSettings, SettingsSectionId, VoiceSettings } from '../types/amadeus';
 
 interface CallHeaderProps {
@@ -128,7 +127,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
         </div>
       </div>
 
-      {/* Center: View Mode Switcher & Vacuum Nixie Telemetry Rack */}
+      {/* Center: View Mode Switcher */}
       <div className="flex items-center gap-3">
         {onSwitchViewMode && (
           <div className="flex items-center p-0.5 rounded border border-amber-900/50 bg-[#080706]">
@@ -158,8 +157,6 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
             </button>
           </div>
         )}
-
-        <DivergenceMeter />
       </div>
 
       {/* Right: Interactive Subsystem Status Pills & Workbench Controls */}
