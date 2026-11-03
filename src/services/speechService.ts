@@ -987,6 +987,7 @@ export class SpeechService {
     masterGain.gain.setValueAtTime(options.volume ?? 1.0, ctx.currentTime);
 
     const reader = body.getReader();
+    signal.addEventListener('abort', () => { reader.cancel().catch(() => {}); }, { once: true });
     let remainder: Uint8Array | null = null;
     let nextStartTime = 0;
     const JITTER_BUFFER_SEC = 0.24; // 240ms initial jitter buffer to protect against remote tunnel packet latency spikes
