@@ -92,24 +92,32 @@ class TestVoicePipelineResilience(unittest.IsolatedAsyncioTestCase):
 
     async def test_qwen_worker_streaming_generator_resilience(self):
         """
-        Validates that qwen_worker.synthesize_stream's pcm_generator:
-        1. Properly streams chunks under _gpu_lock.
-        2. Drains model generator on GeneratorExit (client abort) without leaving _gpu_lock held.
-        3. Allows consecutive stream requests to complete without deadlock.
+        Validates that qwen_worker.synthesize_stream:
+        1. Streams chunks generated under _gpu_lock.
+        2. On barge-in, a new request preempts the old stream even if the client never closed it
+           (Starlette/cloudflared do not close abandoned bodies promptly), without deadlock.
+        3. On client close, stops generation and releases _gpu_lock.
         """
+        import time
         import numpy as np
         from app.services.qwen_tts import qwen_worker
 
         class MockModel:
             def __init__(self):
-                self.drained = False
+                self.drained = 0
 
             def generate_custom_voice_streaming(self, **kwargs):
-                self.drained = False
                 for _ in range(5):
-                    chunk = np.zeros(2400, dtype=np.float32)
-                    yield chunk, 24000, None
-                self.drained = True
+                    time.sleep(0.02)
+                    yield np.zeros(2400, dtype=np.float32), 24000, None
+                self.drained += 1
+
+        async def wait_unlocked():
+            for _ in range(100):
+                if not qwen_worker._gpu_lock.locked():
+                    return True
+                await asyncio.sleep(0.02)
+            return False
 
         mock_model = MockModel()
         orig_model = qwen_worker.model
@@ -119,26 +127,24 @@ class TestVoicePipelineResilience(unittest.IsolatedAsyncioTestCase):
             qwen_worker.active_backend = "faster"
 
             req = qwen_worker.SynthesizeRequest(text="Teste de geração resiliente 1.")
-            resp = qwen_worker.synthesize_stream(req)
-            gen = resp.body_iterator
+            gen1 = (await qwen_worker.synthesize_stream(req)).body_iterator
+            self.assertGreater(len(await anext(gen1)), 0)
 
-            chunk1 = await anext(gen)
-            self.assertGreater(len(chunk1), 0)
-            chunk2 = await anext(gen)
-            self.assertGreater(len(chunk2), 0)
-            await gen.aclose()
-
-            self.assertFalse(qwen_worker._gpu_lock.locked())
-            # On client disconnect/barge-in, do not waste GPU cycles draining canceled speech
-            self.assertFalse(mock_model.drained)
-
+            # Barge-in: gen1 is left suspended (never closed), second request must still complete
             req2 = qwen_worker.SynthesizeRequest(text="Teste de geração resiliente 2.")
-            resp2 = qwen_worker.synthesize_stream(req2)
-            all_chunks = []
-            async for c in resp2.body_iterator:
-                all_chunks.append(c)
+            resp2 = await qwen_worker.synthesize_stream(req2)
+            all_chunks = [c async for c in resp2.body_iterator]
             self.assertEqual(len(all_chunks), 5)
-            self.assertFalse(qwen_worker._gpu_lock.locked())
+            self.assertEqual(mock_model.drained, 1)  # only the second utterance ran to the end
+            self.assertTrue(await wait_unlocked())
+
+            # Client close stops generation and frees the GPU
+            gen3 = (await qwen_worker.synthesize_stream(req)).body_iterator
+            await anext(gen3)
+            await gen3.aclose()
+            self.assertTrue(await wait_unlocked())
+            self.assertEqual(mock_model.drained, 1)
+            await gen1.aclose()
         finally:
             qwen_worker.model = orig_model
             qwen_worker.active_backend = orig_backend

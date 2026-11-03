@@ -1044,8 +1044,8 @@ export class SpeechService {
         if (!hasStarted) {
           nextStartTime = now + JITTER_BUFFER_SEC;
         } else if (nextStartTime < now) {
-          // Mid-stream buffer underrun: resume immediately with 15ms lead to prevent glitch without audible gap
-          nextStartTime = now + 0.015;
+          // Underrun: rebuffer with a real cushion; a 15ms lead just underruns again on every late chunk (stutter)
+          nextStartTime = now + JITTER_BUFFER_SEC;
         }
 
         source.start(nextStartTime);
