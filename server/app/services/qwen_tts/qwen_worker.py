@@ -78,7 +78,7 @@ def apply_boundary_continuity(chunk: np.ndarray, prev_sample: Optional[float]) -
 
 def sanitize_for_qwen(text: str) -> str:
     """
-    Worker-level safety sanitizer for starrydark/Kurisu_Qwen3_TTS:
+    Worker-level safety sanitizer for starrydark/Makise_Kurisu_Qwen3_TTS:
     - Strips HTML comments, markdown, and emotes
     - Converts interrobangs ('?!', '!?') to '?'
     - Converts exclamation marks ('!') to '.' to prevent Japanese glottal-stop syllable clipping
@@ -148,7 +148,7 @@ def prepare_worker_segments(text: str, max_single_pass_chars: int = 175) -> list
 
 def _resolve_effective_instruct(instruct: Optional[str]) -> Optional[str]:
     """
-    starrydark/Kurisu_Qwen3_TTS is a 12Hz Base SFT model (spk_id=3000) not trained with
+    starrydark/Makise_Kurisu_Qwen3_TTS is a 12Hz Base SFT model (spk_id=3000) not trained with
     CustomVoice instruct system prompts. Ignore instruct unless QWEN_USE_EMOTION_INSTRUCT=true.
     """
     use_instruct = os.environ.get("QWEN_USE_EMOTION_INSTRUCT", "false").lower() in ("1", "true", "yes")
@@ -158,26 +158,50 @@ def _resolve_effective_instruct(instruct: Optional[str]) -> Optional[str]:
 
 
 def _resolve_model_source() -> str:
+    """
+    Resolves the model directory with automatic upstream sync:
+    1. Local override in weights/kurisu_qwen3 or Kurisu_Qwen3_TTS
+    2. Hugging Face Hub latest snapshot for starrydark/Makise_Kurisu_Qwen3_TTS (auto-syncs on startup)
+    3. Offline fallback to local cached snapshots in ~/.cache/huggingface/hub/
+    """
+    model_id = os.environ.get("QWEN_MODEL_ID", "starrydark/Makise_Kurisu_Qwen3_TTS")
     current_file_dir = os.path.dirname(os.path.abspath(__file__))
     server_root = os.path.abspath(os.path.join(current_file_dir, "..", "..", ".."))
-    local_candidates = [
+
+    for local_dir in [
         os.path.join(server_root, "weights", "kurisu_qwen3"),
         os.path.join(server_root, "Kurisu_Qwen3_TTS"),
-    ]
-    hf_cache_dir = os.path.expanduser(r"~/.cache/huggingface/hub/models--starrydark--Kurisu_Qwen3_TTS/snapshots")
-    if os.path.isdir(hf_cache_dir):
-        for snap in sorted(os.listdir(hf_cache_dir), reverse=True):
-            local_candidates.append(os.path.join(hf_cache_dir, snap))
+    ]:
+        if os.path.isdir(local_dir) and any(fname.endswith(".safetensors") for fname in os.listdir(local_dir)):
+            print(f"[Qwen3 Worker] Found local model override: {local_dir}")
+            return local_dir
 
-    for candidate in local_candidates:
-        if os.path.isdir(candidate) and (
-            os.path.exists(os.path.join(candidate, "config.json"))
-            or any(fname.endswith(".safetensors") for fname in os.listdir(candidate))
-        ):
-            print(f"[Qwen3 Worker] Found local model directory: {candidate}")
-            return candidate
+    try:
+        from huggingface_hub import snapshot_download
+        cached = snapshot_download(model_id, ignore_patterns=["training_*", "eval/*"])
+        print(f"[Qwen3 Worker] Synced model snapshot from HF Hub: {cached}")
+        return cached
+    except Exception as e:
+        print(f"[Qwen3 Worker] Online HF sync skipped ({e}), falling back to local cache...")
 
-    return "starrydark/Kurisu_Qwen3_TTS"
+    try:
+        from huggingface_hub import snapshot_download
+        return snapshot_download(model_id, local_files_only=True)
+    except Exception:
+        pass
+
+    for hub_dir in [
+        os.path.expanduser(r"~/.cache/huggingface/hub/models--starrydark--Makise_Kurisu_Qwen3_TTS/snapshots"),
+        os.path.expanduser(r"~/.cache/huggingface/hub/models--starrydark--Kurisu_Qwen3_TTS/snapshots"),
+    ]:
+        if os.path.isdir(hub_dir):
+            for snap in sorted(os.listdir(hub_dir), reverse=True):
+                candidate = os.path.join(hub_dir, snap)
+                if any(fname.endswith(".safetensors") for fname in os.listdir(candidate)):
+                    print(f"[Qwen3 Worker] Found cached snapshot fallback: {candidate}")
+                    return candidate
+
+    return model_id
 
 
 def _load_model_worker():
@@ -279,8 +303,9 @@ app = FastAPI(title="Amadeus Kurisu Qwen3-TTS Worker", version="0.1.0", lifespan
 class SynthesizeRequest(BaseModel):
     text: str
     language: Optional[str] = "Portuguese"
+    speaker: Optional[str] = "kurisu"
     instruct: Optional[str] = None
-    temperature: Optional[float] = 0.65
+    temperature: Optional[float] = 0.90  # Padrão v3 atualizado para 0.90
     top_p: Optional[float] = 0.90
     repetition_penalty: Optional[float] = 1.05
     max_new_tokens: Optional[int] = 2048
@@ -335,8 +360,9 @@ def synthesize_stream(req: SynthesizeRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
     effective_instruct = _resolve_effective_instruct(req.instruct)
-    eff_temp = min(req.temperature if req.temperature is not None else 0.65, 0.65)
-    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.92)
+    # Promove 0.65 legado para 0.90 (padrão oficial v3) ou respeita valores customizados
+    eff_temp = 0.90 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
+    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.95)
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
@@ -360,7 +386,7 @@ def synthesize_stream(req: SynthesizeRequest):
                         with _enter_torch_inference():
                             stream_gen = model.generate_custom_voice_streaming(
                                 text=seg_text,
-                                speaker="kurisu",
+                                speaker=req.speaker or "kurisu",
                                 language=req.language or "Portuguese",
                                 instruct=effective_instruct,
                                 chunk_size=8,
@@ -389,7 +415,7 @@ def synthesize_stream(req: SynthesizeRequest):
                         with _enter_torch_inference():
                             wavs, sr = model.generate_custom_voice(
                                 text=seg_text,
-                                speaker="kurisu",
+                                speaker=req.speaker or "kurisu",
                                 language=req.language or "Portuguese",
                                 instruct=effective_instruct,
                                 temperature=eff_temp,
@@ -455,8 +481,9 @@ async def synthesize(req: SynthesizeRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
     effective_instruct = _resolve_effective_instruct(req.instruct)
-    eff_temp = min(req.temperature if req.temperature is not None else 0.65, 0.65)
-    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.92)
+    # Promove 0.65 legado para 0.90 (padrão oficial v3) ou respeita valores customizados
+    eff_temp = 0.90 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
+    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.95)
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
@@ -482,7 +509,7 @@ async def synthesize(req: SynthesizeRequest):
                     if active_backend == "faster" and hasattr(model, "generate_custom_voice_streaming"):
                         stream_gen = model.generate_custom_voice_streaming(
                             text=seg_text,
-                            speaker="kurisu",
+                            speaker=req.speaker or "kurisu",
                             language=req.language or "Portuguese",
                             instruct=effective_instruct,
                             chunk_size=8,
@@ -511,7 +538,7 @@ async def synthesize(req: SynthesizeRequest):
                     else:
                         wavs, sr = model.generate_custom_voice(
                             text=seg_text,
-                            speaker="kurisu",
+                            speaker=req.speaker or "kurisu",
                             language=req.language or "Portuguese",
                             instruct=effective_instruct,
                             temperature=eff_temp,

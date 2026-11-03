@@ -276,6 +276,7 @@ class QwenTTSManager:
         emotion: Optional[str] = None,
         custom_instruct: Optional[str] = None,
         language: str = "Portuguese",
+        speaker: str = "kurisu",
         qwen_mode: Optional[str] = "remote",
         qwen_remote_url: Optional[str] = None,
     ) -> Optional[bytes]:
@@ -312,8 +313,9 @@ class QwenTTSManager:
                 json={
                     "text": text,
                     "language": language or "Portuguese",
+                    "speaker": speaker or "kurisu",
                     "instruct": instruct,
-                    "temperature": 0.65,
+                    "temperature": 0.9,
                     "top_p": 0.90,
                     "repetition_penalty": 1.05,
                     "max_new_tokens": 2048,
@@ -337,6 +339,7 @@ class QwenTTSManager:
         emotion: Optional[str] = None,
         custom_instruct: Optional[str] = None,
         language: str = "Portuguese",
+        speaker: str = "kurisu",
         qwen_mode: Optional[str] = "remote",
         qwen_remote_url: Optional[str] = None,
     ) -> Tuple[str, AsyncGenerator[bytes, None]]:
@@ -363,8 +366,9 @@ class QwenTTSManager:
             json={
                 "text": text,
                 "language": language or "Portuguese",
+                "speaker": speaker or "kurisu",
                 "instruct": instruct,
-                "temperature": 0.65,
+                "temperature": 0.9,
                 "top_p": 0.90,
                 "repetition_penalty": 1.05,
                 "max_new_tokens": 2048,
