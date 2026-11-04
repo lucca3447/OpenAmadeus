@@ -2,7 +2,7 @@
 
 A full-stack, modular multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), audio-reactive procedural lip-sync, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://semver.org/)
+[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](https://semver.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -19,16 +19,16 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
 
 | Conversational HUD & Active Sprite | Immersive Visual Novel Mode |
 | :---: | :---: |
-| ![Chat Interface - Good Night Sign-off](docs/screenshots/01_chat_goodnight.png)<br><sub>*Conversational chat interface featuring audio-reactive sprite rendering, session history, and natural contextual sign-off ("Good night")*</sub> | ![Visual Novel Mode - Late-Night Greeting](docs/screenshots/03_vn_mode_late_night.png)<br><sub>*Full-screen Visual Novel mode with atmospheric backlighting, retro dialogue box, and time-aware late-night greeting*</sub> |
+| ![Chat Interface - Workbench HUD](docs/screenshots/01_workbench_terminal_hud.png)<br><sub>*Conversational Workbench HUD featuring session history, audio-reactive Kurisu sprite stage, and real-time oscilloscope*</sub> | ![Visual Novel Call Mode](docs/screenshots/02_call_mode_visual_novel.png)<br><sub>*Full-screen Visual Novel call mode with warm backlighting, retro dialogue bar, and circadian sign-off*</sub> |
 
 | Cortex & Episodic Memory Inspector (RAG) | System Configuration (LLM & Neural TTS) |
 | :---: | :---: |
-| ![Cortex & Memory Inspector](docs/screenshots/02_cortex_memory_inspector.png)<br><sub>*Real-time inspection and management of semantic vector memory blocks (ChromaDB vector store + persistent SQLite sessions)*</sub> | ![System Settings Modal](docs/screenshots/05_system_settings_llm_tts.png)<br><sub>*Multi-provider LLM credentials and universal speech synthesis calibration*</sub> |
+| ![Cortex & Synaptic Inspector](docs/screenshots/03_cortex_synaptic_inspector.png)<br><sub>*Real-time inspection and management of semantic vector memory blocks (ChromaDB vector store + persistent SQLite sessions)*</sub> | ![System Settings Modal](docs/screenshots/06_settings_neural_voice_tts.png)<br><sub>*Neural voice synthesis calibration: Qwen3-TTS 1.7B streaming, Kokoro-TTS 82M, and Edge-TTS + RVC v2*</sub> |
 
 <p align="center">
-  <img src="docs/screenshots/04_tsundere_patience_test.png" alt="Dynamic Tsundere Persona & Adaptive Mood" width="880">
+  <img src="docs/screenshots/05_settings_llm_credentials.png" alt="Cortex LLM Credentials & Impatience Telemetry" width="880">
   <br>
-  <em>Adaptive Tsundere persona & dynamic mood shifts — Kurisu playfully questioning the user's repetitive greetings ("Testing my patience")</em>
+  <em>Cortex Configuration Modal — Multi-provider LLM routing (Groq, Gemini, OpenRouter), strict model pinning, and 2-stage contextual impatience telemetry.</em>
 </p>
 
 ## 🔬 Overview
@@ -46,10 +46,18 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
   - Server-side $C^0$ boundary continuity ramp (120-sample / 5 ms linear interpolation across 24 kHz chunk borders) eliminating inter-chunk clicks, paired with `clean_text_for_tts` punctuation sanitization, pure-weight SFT acoustic stability (`QWEN_USE_EMOTION_INSTRUCT=false` by default to prevent attention glitches), and 21 empirical acoustic reference targets (`emotion_mapper.py`).
   - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 480 ms jitter buffer, `1.65x` (+4.3 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-20 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
 - **Visual State Machine & Audio-Reactive HUD**:
-  - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across **14 canonical emotions** and camera framings (`AmadeusSpriteView.tsx`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), emotion-aligned blinking (preserving winks and smiles), and native fallback to a procedural holographic silhouette when sprites are absent.
+  - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across poses (`default`, `crossed_arms`, `backview`) and camera framings (`closeup`, `medium`, `full`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), organic inference, 2-beat expression shifts, emotion-aligned blinking (preserving winks and smiles), and native fallback to a procedural holographic silhouette when sprites are absent.
   - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth flap frames, natural double-blink cycles, and an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`).
+- **Hands-Free Bidirectional Voice Call & Real Barge-In (`src/services/speechService.ts`)**:
+  - High-speed STT powered by **Groq Whisper Turbo** (`whisper-large-v3-turbo`) with Web Audio VAD, echo cancellation, domain prompt biasing, and real-time **barge-in** interruption.
+  - Configurable 3-mode call behavior (`OFF` / `SILENT` / `ACTIVE VOICE`) with Push-to-Talk or hands-free toggle.
+- **Temporal Hiatus Telemetry ($\Delta t$), Live Call Greeting & Contextual Impatience**:
+  - Injects dynamic `[TELEMETRIA DA CHAMADA AMADEUS]` tracking local time, elapsed absence since last contact ($\Delta t$), circadian banter, turn count, dynamic live AI call greeting, and 2-stage mid-call impatience.
+  - Cross-session episodic bridge (`[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]`) so Kurisu naturally follows up on previous conversations.
+- **Trilingual Foundation (PT-BR / EN / JA Ready)**:
+  - Language-aware phonetic sanitization (`clean_text_for_tts(text, lang)`), multilingual regex intent triggers, and language-filtered Few-Shot exemplar retrieval.
 - **Dynamic Few-Shot RAG & Episodic Memory (`server/training/` & [ChromaDB](https://www.trychroma.com/))**:
-  - Automatically indexes **86 curated ChatML conversation pairs** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), providing few-shot conditioning for canonical dialogue, visual poses, camera zooms, and learned facts (`<!--remember:...-->`).
+  - Automatically indexes **130 curated ChatML dialogue exemplars** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), providing few-shot conditioning for canonical dialogue, visual poses, camera zooms, and learned facts (`<!--remember:...-->`).
 - **Multi-Provider LLM Orchestration (`server/app/services/llm/`)**:
   - Fault-tolerant routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`gemma-4-31b-it:free`, `nemotron-3.5-lightning:free`), local **Ollama**, and an offline **Heuristic Simulator** (`offline_simulator.py`).
 
@@ -111,7 +119,7 @@ flowchart TD
 
     subgraph Persistence["Hybrid Memory & Fine-Tuning Layer"]
         SQLite[("SQLite: amadeus.db")]
-        ChromaDB[("ChromaDB: memory_db + 86 Few-Shot Kurisu Dialogues")]
+        ChromaDB[("ChromaDB: memory_db + 130 Few-Shot Kurisu Dialogues")]
     end
 
     subgraph ExternalLLMs["LLM Inference Providers"]
@@ -159,7 +167,7 @@ Switch between voice engines dynamically at runtime via the in-app **Settings Mo
   ```
 
 ### 3. Visual Novel Sprite Pack Setup (Optional)
-To respect intellectual property, commercial *Steins;Gate* game assets are not distributed in this repository. OpenAmadeus includes a fully functional **procedural holographic silhouette** (`CyberHologramCanvas`) out of the box, requiring zero external assets.
+To respect intellectual property, commercial *Steins;Gate* game assets are not distributed in this repository. OpenAmadeus includes a fully functional **procedural holographic silhouette** (`AmadeusSpriteView.tsx`) out of the box, requiring zero external assets.
 
 If you wish to enable the authentic 174-sprite visual novel expressions locally:
 - **Method A (Official Steam Extraction)**: Extract `chara.mpk` from your purchased Steam/GOG copy of *Steins;Gate 0* using open-source extraction tools such as [GARbro](https://github.com/morkt/GARbro).
@@ -233,7 +241,13 @@ python -m app.services.qwen_tts.qwen_worker
 ## 🧠 Kurisu Fine-Tuning & Dynamic Few-Shot RAG Pack (`server/training/`)
 
 The `server/training/` directory ships with a complete persona alignment toolkit:
-- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (86 refined multi-turn dialogues with `<!--emotion:...-->`, `<!--pose:...-->`, `<!--camera:...-->` and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/), injecting the most semantically relevant canon responses into every LLM prompt.
+- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (130 refined canonical dialogue exemplars with `<!--emotion:...-->`, `<!--pose:...-->`, `<!--camera:...-->` and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/), injecting the most semantically relevant canon responses into every LLM prompt.
+
+<p align="center">
+  <img src="docs/screenshots/04_cortex_memory_injection.png" alt="Synaptic Memory Block Injection" width="880">
+  <br>
+  <em>Cortex Synaptic Injector — Injecting structured episodic memories into ChromaDB with cognitive domains, emotional valence, and lexical triggers.</em>
+</p>
 - **Local Ollama Model Creation**:
   ```bash
   cd server/training
@@ -301,7 +315,7 @@ OpenAmadeus/
 │   │       ├── emotion_service.py     # Sentiment tag extraction & pose synchronization
 │   │       └── offline_simulator.py   # Zero-internet heuristic dialogue fallback
 │   ├── personas/                      # Persona definitions and system prompts (kurisu.json)
-│   ├── training/                      # 86-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
+│   ├── training/                      # 130-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
 │   ├── tests/                         # Unit, benchmark & E2E suites (test_qwen_tts.py, test_backend.py)
 │   ├── weights/                       # Local model directory (kurisu_rvc/, kurisu_qwen3/, models/)
 │   ├── main.py                        # FastAPI gateway entry point
@@ -337,8 +351,10 @@ npm run build
 
 OpenAmadeus follows [Semantic Versioning 2.0.0](https://semver.org/) (`MAJOR.MINOR.PATCH`). Below is our planned evolutionary track:
 
-- **`v0.1.0` (Current)**: Real-time Qwen3-TTS CUDA Graphs streaming (~391ms TTFA), $C^0$ boundary DSP ramp, Web Audio compressor, and 4-stage voice fallback cascade.
-- **`v0.2.0` (In Progress)**: Qwen3-TTS acoustic calibration & streaming toggle [Done], 174-sprite SC3 bytecode ground truth mapping & visual directives [Done], hands-free Groq Whisper Turbo STT & barge-in [Next], and dev/tech persona naturalness tuning.
+- **`v0.1.0` (Released)**: Real-time Qwen3-TTS CUDA Graphs streaming (~391ms TTFA), $C^0$ boundary DSP ramp, Web Audio compressor, and 4-stage voice fallback cascade.
+- **`v0.2.0` (Completed)**: Acoustic calibration, 174-sprite SC3 bytecode ground truth mapping, autonomous eye-blink alignment, and hands-free Groq Whisper Turbo STT with instant barge-in.
+- **`v0.2.1` (Current — Released)**: Conversational naturalness, body grammar & organic pose/camera inference (`crossed_arms`, `backview`), circadian call telemetry ($\Delta t$), episodic bridge, 130 canonical Few-Shot exemplars, and trilingual foundation (`pt`, `en`, `ja`).
+- **`v0.2.2` (Next Step)**: LLM &rarr; TTS sentence-level streaming for sub-600ms total latency and pre-LLM listening micro-reactions.
 - **`v0.3.0`**: Multilingual expansion, persona cultural variants (PT-BR, EN, JA), and dynamic code-switching TTS.
 - **`v0.4.0`**: Multimodal screen vision (`getDisplayMedia`) with on-demand snapshot inspection and region analysis.
 - **`v0.5.0`**: Floating desktop pop-up / overlay (*Always-on-Top* companion) and continuous co-pilot monitoring.

@@ -114,7 +114,7 @@ def main():
         print("-" * 70)
         print("INFORMAÇÕES E ORIENTAÇÕES:")
         print("1. O OpenAmadeus Companion é 100% funcional sem qualquer sprite proprietário.")
-        print("   Por padrão, ele utiliza a silhueta holográfica vetorial (CyberHologramCanvas).")
+        print("   Por padrão, ele utiliza a silhueta holográfica vetorial de fallback.")
         print()
         print("2. Caso deseje habilitar o visual completo de Makise Kurisu localmente:")
         print("   • Método A (Oficial via Steam/GOG):")

@@ -1,4 +1,4 @@
-# 🧠 OpenAmadeus Backend Core (`v0.1.0`)
+# 🧠 OpenAmadeus Backend Core (`v0.2.1`)
 
 High-performance Python backend server for the **Amadeus System**, orchestrating continuous episodic memory (RAG), psychological persona simulation, multi-provider LLM routing, and a 4-stage neural voice cascade with CUDA Graphs acceleration.
 
@@ -36,7 +36,7 @@ The backend operates as a decoupled, fault-tolerant multi-service pipeline:
 
 ### Key Subsystems:
 1. **FastAPI Core Gateway (`:8000`)**:
-   - **Hybrid RAG Memory Engine**: Persistent **ChromaDB** (`server/data/memory_db`) storing semantic embeddings and 63 curated ChatML dialogue exemplars (`server/training/kurisu_finetuning_dataset_enhanced.jsonl`), coupled with **SQLite** (`server/data/amadeus.db`) for multi-turn session persistence.
+   - **Hybrid RAG Memory Engine**: Persistent **ChromaDB** (`server/data/memory_db`) storing semantic embeddings and 130 curated ChatML dialogue exemplars (`server/training/kurisu_finetuning_dataset_enhanced.jsonl`), coupled with **SQLite** (`server/data/amadeus.db`) for multi-turn session persistence.
    - **Multi-Provider LLM Orchestrator**: Dynamic routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`google/gemma-4-31b-it:free`, `nvidia/nemotron-3.5-lightning:free`), and a local deterministic **Heuristic Offline Simulator** (`offline_simulator.py`).
    - **Voice Service (`voice_service.py`)**: 4-stage automated fallback cascade with health diagnostics, round-trip pinging, and text sanitization (`clean_text_for_tts`).
 

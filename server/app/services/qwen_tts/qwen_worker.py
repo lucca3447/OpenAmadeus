@@ -297,7 +297,7 @@ async def lifespan(app: FastAPI):
     print("[Qwen3 Worker] Worker shutting down cleanly.")
 
 
-app = FastAPI(title="Amadeus Kurisu Qwen3-TTS Worker", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Amadeus Kurisu Qwen3-TTS Worker", version="0.2.1", lifespan=lifespan)
 
 
 class SynthesizeRequest(BaseModel):
