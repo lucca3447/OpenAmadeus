@@ -36,9 +36,13 @@ export type SttKeyMode = 'unified' | 'separate';
 export type TtsFallbackEngine = 'qwen_local' | 'kokoro' | 'edge_rvc' | 'web_speech';
 export type SettingsSectionId = 'cortex' | 'voice' | 'whisper' | 'display' | 'system';
 
+export type IdleInitiativeMode = 'off' | 'silent' | 'voice';
+export type AutonomousEventType = 'call_greeting' | 'idle_stage_1' | 'idle_stage_2';
+
 export interface LLMFallbackSettings {
   allowModelFallback: boolean;
   allowOfflineSimulatorFallback: boolean;
+  idleInitiativeMode?: IdleInitiativeMode;
 }
 
 export interface SpriteExpressionFrames {

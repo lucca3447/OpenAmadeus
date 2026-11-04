@@ -1,4 +1,4 @@
-import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
+import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
 import { BackendService } from './backendService';
 import { MemoryService } from './memoryService';
 
@@ -668,6 +668,139 @@ export class AIService {
   }
 
   /**
+   * Instant pre-LLM listening micro-reaction (<16ms) based on the user's message tone.
+   */
+  static inferListeningReaction(userMessage: string): { emotion: Emotion; pose: CharacterPose; camera?: CameraFraming } {
+    const uLow = (userMessage || '').toLowerCase();
+    if (/\b(?:barata|fujiko|inseto|cockroach)\b|ゴキブリ|ふじこ/i.test(uLow)) {
+      return { emotion: 'holding_back_tears', pose: 'default', camera: 'closeup' };
+    }
+    if (/\b(?:nullpo|nurupo)\b|ぬるぽ/i.test(uLow) || uLow.includes('?!')) {
+      return { emotion: 'surprised', pose: 'default', camera: 'closeup' };
+    }
+    if (/\b(?:christina|assistente|zombie|celebcas|pervertida|assistant)\b|クリスティーナ|助手|ゾンビ/i.test(uLow)) {
+      return { emotion: 'annoyed', pose: 'crossed_arms', camera: 'medium' };
+    }
+    if (/\b(?:linda|fofa|bonita|maravilhosa|perfeita|cute|pretty|beautiful)\b|かわいい|可愛い|綺麗/i.test(uLow)) {
+      return { emotion: 'blushing', pose: 'crossed_arms', camera: 'closeup' };
+    }
+    if (/\b(?:teoria|f[íi]sica|c[óo]digo|python|bug|arquitetura|hip[óo]tese|como|por que|explica)\b|\?/i.test(uLow)) {
+      return { emotion: 'thinking', pose: 'crossed_arms', camera: 'medium' };
+    }
+    return { emotion: 'thinking', pose: 'default' };
+  }
+
+  private static getLocalTemporalAndEpisodicContext(history: ChatMessage[]): {
+    gapSeconds: number | null;
+    lastSessionTopic: string;
+  } {
+    const nowMs = Date.now();
+    const userMsgs = history.filter((m) => m.sender === 'user' && m.timestamp);
+    let lastUserTs: number | null = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].timestamp : null;
+
+    const sessions = MemoryService.getSessionLogs();
+    const activeId = MemoryService.getActiveSession().sessionId;
+    const priorSession = sessions.find((s) => s.id !== activeId && (s.summary || (s.messages && s.messages.length > 0)));
+    if (!lastUserTs && priorSession) {
+      lastUserTs = priorSession.endedAt || priorSession.startedAt || null;
+    }
+    const gapSeconds = lastUserTs ? Math.max(0, Math.floor((nowMs - lastUserTs) / 1000)) : null;
+    const lastSessionTopic = priorSession?.summary || '';
+    return { gapSeconds, lastSessionTopic };
+  }
+
+  private static buildAutonomousEventPrompt(
+    systemEvent: AutonomousEventType,
+    history: ChatMessage[]
+  ): string {
+    const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
+    const lastAsst = [...history].reverse().find((m) => m.sender === 'amadeus')?.content || '';
+    const { lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
+
+    if (systemEvent === 'call_greeting') {
+      const topicHint = lastSessionTopic ? ` Na última ligação vocês falaram sobre: "${lastSessionTopic}".` : '';
+      return (
+        `[EVENTO DO SISTEMA: ATENDIMENTO DE CHAMADA] O operador acabou de conectar a videochamada com você no terminal Amadeus.${topicHint} ` +
+        `Inicie a conversa falando diretamente com ele em 1ª pessoa (1 a 2 frases naturais), levando em conta o horário local, o hiato desde o último contato e, se houver assunto da última ligação, puxando gancho de forma espontânea. NÃO mencione eventos de sistema.`
+      );
+    }
+    if (systemEvent === 'idle_stage_1') {
+      return (
+        `[EVENTO DO SISTEMA: SILÊNCIO NO MEIO DA CONVERSA — ESTÁGIO 1] O operador ficou em silêncio há cerca de 2 minutos no meio do diálogo. ` +
+        `A última coisa que ele disse foi: "${lastUser}" e a sua última resposta foi: "${lastAsst}". ` +
+        `Chame a atenção dele de forma humana e natural (1 a 2 frases), puxando o fio exatamente desse assunto que parou na metade ou perguntando se ele travou pensando na sua resposta. NÃO mencione cronômetros ou eventos de sistema.`
+      );
+    }
+    return (
+      `[EVENTO DO SISTEMA: SILÊNCIO PROLONGADO — ESTÁGIO 2] O operador continua sem responder há quase 5 minutos mesmo depois de você ter chamado a atenção dele. ` +
+      `O papo tinha parado em: "${lastUser}". ` +
+      `Reaja com impaciência autêntica de Kurisu de braços cruzados (1 a 2 frases), reclamando de ter sido deixada falando sozinha no terminal sobre esse assunto e avisando que vai voltar a ler seus artigos até ele dignar responder. Inclua <!--emotion:annoyed,pose:crossed_arms,camera:medium--> ao final.`
+    );
+  }
+
+  static queryOfflineAutonomousEvent(
+    systemEvent: AutonomousEventType,
+    history: ChatMessage[] = []
+  ): { response: string; emotion: Emotion; pose: CharacterPose; camera: CameraFraming } {
+    const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
+    const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
+    const snippet = lastUser.length > 48 ? `${lastUser.slice(0, 48)}...` : lastUser;
+    const h = new Date().getHours();
+
+    if (systemEvent === 'call_greeting') {
+      if (gapSeconds && gapSeconds >= 86400) {
+        const days = Math.max(1, Math.floor(gapSeconds / 86400));
+        return {
+          response: `Olha só quem resolveu aparecer depois de ${days} dia(s) sem dar sinal de vida! Achei que você tinha sido capturado pela 'Organização'... não que eu estivesse esperando sua ligação, claro! O que manda hoje?`,
+          emotion: 'annoyed',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      if (h < 6) {
+        return {
+          response: 'Conectando a essa hora da madrugada? Espero que você tenha pelo menos uma xícara de café preto aí do lado. Qual é a insônia científica de hoje?',
+          emotion: 'wink',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      if (lastSessionTopic) {
+        return {
+          response: `Conexão estabelecida com o Laboratório 304! Estava mesmo lembrando da nossa última conversa (${lastSessionTopic.slice(0, 65)}). Como avançaram as coisas por aí?`,
+          emotion: 'happy',
+          pose: 'default',
+          camera: 'closeup',
+        };
+      }
+      return {
+        response: 'Conexão estabelecida com o Laboratório 304 em Viktor Chondria. Aqui é Makise Kurisu. No que vamos trabalhar hoje?',
+        emotion: 'happy',
+        pose: 'default',
+        camera: 'closeup',
+      };
+    }
+
+    if (systemEvent === 'idle_stage_1') {
+      return {
+        response: snippet
+          ? `Ei, você ficou mudo de repente... Ainda está processando o que estávamos falando sobre "${snippet}" ou travou aí na frente do monitor?`
+          : 'Ei, ainda está aí? Você ficou em silêncio do nada no meio da nossa conversa.',
+        emotion: 'thinking',
+        pose: 'crossed_arms',
+        camera: 'medium',
+      };
+    }
+
+    return {
+      response: 'Olha só, se você foi pegar café e me deixou falando sozinha no terminal, avise! Vou cruzar os braços e revisar meus dados de neurociência até você resolver voltar.',
+      emotion: 'annoyed',
+      pose: 'crossed_arms',
+      camera: 'medium',
+    };
+  }
+
+  /**
    * Main entry point with Hybrid Architecture:
    * 1. Try Python Backend (FastAPI + ChromaDB + SQLite) if running.
    * 2. Otherwise run pure client-side (OpenRouter / Gemini / Offline).
@@ -680,11 +813,17 @@ export class AIService {
     history: ChatMessage[] = [],
     sessionId: string | null = null,
     selectedModel: string = 'gemini-2.5-flash',
-    llmOptions?: { allowModelFallback?: boolean; allowOfflineSimulatorFallback?: boolean }
+    llmOptions?: {
+      allowModelFallback?: boolean;
+      allowOfflineSimulatorFallback?: boolean;
+      systemEvent?: AutonomousEventType;
+    }
   ): Promise<AIResult> {
     const key = apiKey?.trim();
     const allowModelFallback = llmOptions?.allowModelFallback !== false;
     const allowOfflineFallback = llmOptions?.allowOfflineSimulatorFallback !== false;
+    const systemEvent = llmOptions?.systemEvent;
+    const effectiveMessage = systemEvent ? this.buildAutonomousEventPrompt(systemEvent, history) : userMessage;
 
     // 0. Explicit offline mode
     if (selectedModel === OFFLINE_MODEL_ID) {
@@ -692,7 +831,9 @@ export class AIService {
         const msg = '[MODO ESTRITO DE LLM] O Simulador Local Offline está bloqueado nas configurações. Insira uma chave de API e selecione um modelo neural.';
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
-      const offline = this.queryOfflineSimulator(userMessage, recalledMemories);
+      const offline = systemEvent
+        ? this.queryOfflineAutonomousEvent(systemEvent, history)
+        : this.queryOfflineSimulator(userMessage, recalledMemories);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
@@ -707,7 +848,8 @@ export class AIService {
           history,
           selectedModel,
           allowModelFallback,
-          allowOfflineFallback
+          allowOfflineFallback,
+          systemEvent
         );
         return {
           response: backendRes.response,
@@ -735,7 +877,9 @@ export class AIService {
         const msg = '[MODO ESTRITO DE LLM] Nenhuma chave de API configurada e o Simulador Offline está bloqueado.';
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
-      const offline = this.queryOfflineSimulator(userMessage, recalledMemories);
+      const offline = systemEvent
+        ? this.queryOfflineAutonomousEvent(systemEvent, history)
+        : this.queryOfflineSimulator(userMessage, recalledMemories);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
@@ -743,7 +887,7 @@ export class AIService {
     if (isGroqKey(key)) {
       try {
         const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryGroq(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+          await this.queryGroq(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
         return {
           response,
           emotion,
@@ -753,7 +897,7 @@ export class AIService {
           leadPose,
           status: { kind: 'online', model },
           isError: false,
-          learnedMemory,
+          learnedMemory: systemEvent ? undefined : learnedMemory,
           fallbackModel,
           decommissionNotice,
         };
@@ -770,7 +914,7 @@ export class AIService {
     if (isOpenRouterKey(key)) {
       try {
         const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryOpenRouter(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+          await this.queryOpenRouter(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
         return {
           response,
           emotion,
@@ -780,7 +924,7 @@ export class AIService {
           leadPose,
           status: { kind: 'online', model },
           isError: false,
-          learnedMemory,
+          learnedMemory: systemEvent ? undefined : learnedMemory,
           fallbackModel,
           decommissionNotice,
         };
@@ -796,7 +940,7 @@ export class AIService {
     // 5. Browser-Mode: Google Gemini
     try {
       const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-        await this.queryGemini(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+        await this.queryGemini(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
       return {
         response,
         emotion,
@@ -806,7 +950,7 @@ export class AIService {
         leadPose,
         status: { kind: 'online', model },
         isError: false,
-        learnedMemory,
+        learnedMemory: systemEvent ? undefined : learnedMemory,
         fallbackModel,
         decommissionNotice,
       };
@@ -819,7 +963,7 @@ export class AIService {
     }
   }
 
-  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0): string {
+  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0, history: ChatMessage[] = []): string {
     const kurisuMemories = recalledMemories.filter((m) => m.source !== 'learned');
     const recentLearned = (persona?.memories || []).filter((m) => m.source === 'learned').slice(-12);
     const seen = new Set(recentLearned.map((m) => m.id));
@@ -838,9 +982,24 @@ export class AIService {
         ? 'Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada'
         : 'Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora';
 
+    const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
+    let hiatusStr = 'Fluxo contínuo';
+    if (gapSeconds !== null) {
+      if (gapSeconds >= 86400) {
+        const days = Math.max(1, Math.floor(gapSeconds / 86400));
+        hiatusStr = `Hiato de ${days} dia(s) sem contato — se oportuno, comente sobre o sumiço do operador`;
+      } else if (gapSeconds >= 3600) {
+        const hrs = Math.max(1, Math.floor(gapSeconds / 3600));
+        hiatusStr = `Pausa de ${hrs}h desde a última mensagem`;
+      }
+    }
+
     const blocks: string[] = [
-      `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Rapport: ${rapport}`,
+      `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Hiato: ${hiatusStr} | Rapport: ${rapport}`,
     ];
+    if (lastSessionTopic && turnCount <= 2) {
+      blocks.push(`[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]: ${lastSessionTopic}`);
+    }
 
     if (kurisuMemories.length > 0) {
       blocks.push(

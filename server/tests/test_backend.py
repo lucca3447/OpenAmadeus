@@ -314,17 +314,72 @@ class TestAmadeusBackend(unittest.TestCase):
         ja_tts = clean_text_for_tts("クリスティーナって呼ぶな!", lang="ja")
         self.assertIn("!", ja_tts)
 
-        # 6. Verify all 125 exemplars have pose:, camera:, lang, and zero 4th-wall breaks
+        # 6. Verify all 130 exemplars have pose:, camera:, lang, and zero 4th-wall breaks
         ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
         with open(ds_file, "r", encoding="utf-8") as f:
             rows = [json.loads(line) for line in f if line.strip()]
-        self.assertEqual(len(rows), 125)
+        self.assertEqual(len(rows), 130)
         for row in rows:
             self.assertEqual(row.get("lang"), "pt")
             assistant_txt = row["messages"][-1]["content"]
             self.assertIn("pose:", assistant_txt)
             self.assertIn("camera:", assistant_txt)
             self.assertNotIn("No universo de STEINS;GATE", assistant_txt)
+
+    def test_17_temporal_hiatus_and_autonomous_system_events(self):
+        from app.services.llm.orchestrator import _build_call_telemetry, _offline_system_event_reply
+        from app.db.memory_store import memory_store
+
+        # 1. Telemetry formats multi-day hiatus and prior session topic
+        tel = _build_call_telemetry(
+            turn_count=1,
+            learned_count=2,
+            gap_seconds=4 * 86400,
+            last_session_topic="Debate sobre buracos negros de Kerr e código Python.",
+        )
+        self.assertIn("Hiato longo de 4 dias", tel)
+        self.assertIn("MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR", tel)
+        self.assertIn("buracos negros de Kerr", tel)
+
+        # 2. Offline autonomous event replies reference prior topic and mid-call context
+        greet_txt, greet_emo = _offline_system_event_reply("call_greeting", [], 3 * 86400, "Teste de CUDA")
+        self.assertIn("3 dia(s)", greet_txt)
+        self.assertEqual(greet_emo, "annoyed")
+
+        idle1_txt, idle1_emo = _offline_system_event_reply(
+            "idle_stage_1",
+            [{"role": "user", "content": "Como funcionam os tensores no PyTorch?"}],
+            120,
+            "",
+        )
+        self.assertIn("tensores no PyTorch", idle1_txt)
+        self.assertEqual(idle1_emo, "thinking")
+
+        # 3. Verify systemEvent in handle_chat does NOT save fake user message in SQLite
+        import asyncio
+        from unittest.mock import patch
+        from app.schemas.chat import ChatRequest
+        import app.services.llm.orchestrator as orch_mod
+
+        sess_id = memory_store.create_session()
+        try:
+            with patch.object(memory_store, "search_memories", return_value=[]):
+                resp = asyncio.run(
+                    orch_mod.orchestrator.handle_chat(
+                        ChatRequest(
+                            message="[SILENCIO]",
+                            sessionId=sess_id,
+                            personaId="kurisu",
+                            systemEvent="idle_stage_2",
+                        )
+                    )
+                )
+            self.assertEqual(resp.pose, "crossed_arms")
+            msgs = memory_store.get_session_messages(sess_id)
+            self.assertEqual(len(msgs), 1)
+            self.assertEqual(msgs[0]["sender"], "amadeus")
+        finally:
+            memory_store.delete_session(sess_id)
 
 if __name__ == "__main__":
     unittest.main()

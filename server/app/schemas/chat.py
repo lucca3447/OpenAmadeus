@@ -16,6 +16,7 @@ class ChatRequest(BaseModel):
     sessionId: Optional[str] = None
     personaId: Optional[str] = "kurisu"
     lang: Optional[str] = "pt"
+    systemEvent: Optional[str] = None
     apiKey: Optional[str] = None
     history: List[HistoryTurn] = []
     selectedModel: Optional[str] = None

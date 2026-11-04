@@ -590,5 +590,37 @@ class MemoryStore:
                 for row in rows
             ]
 
+    def get_temporal_and_episodic_context(self, current_session_id: str, is_system_event: bool = False) -> Dict[str, Any]:
+        """
+        Returns elapsed seconds since the operator's previous message and the summary
+        of the most recent prior session for cross-session continuity.
+        """
+        now = time.time()
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT timestamp, session_id FROM messages WHERE sender = 'user' ORDER BY timestamp DESC LIMIT 2"
+            )
+            user_rows = cursor.fetchall()
+            if is_system_event:
+                prev_row = user_rows[0] if len(user_rows) >= 1 else None
+            else:
+                prev_row = user_rows[1] if len(user_rows) >= 2 else None
+            gap_seconds = max(0.0, now - float(prev_row["timestamp"])) if prev_row and prev_row["timestamp"] else None
+
+            cursor.execute(
+                """
+                SELECT context_summary, summary FROM sessions
+                WHERE id != ? AND (context_summary IS NOT NULL OR summary IS NOT NULL)
+                ORDER BY started_at DESC LIMIT 1
+                """,
+                (current_session_id or "",),
+            )
+            sess_row = cursor.fetchone()
+            last_topic = (sess_row["context_summary"] or sess_row["summary"] or "").strip() if sess_row else ""
+
+        return {"gapSeconds": gap_seconds, "lastSessionTopic": last_topic}
+
 # Global singleton instance
 memory_store = MemoryStore()
