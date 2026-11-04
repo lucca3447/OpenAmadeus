@@ -1,11 +1,12 @@
-from typing import Dict, List, Any
+from datetime import datetime
+from typing import Dict, List, Any, Optional, Tuple
 import httpx
 
 from app.core.config import MAX_HISTORY_MESSAGES
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
-from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera
+from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera, infer_lead_expression
 from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
@@ -14,6 +15,142 @@ from app.services.llm.openrouter import get_openrouter_candidate_models
 _model_cache: Dict[str, str] = {}
 
 SUMMARY_INTERVAL = 10
+
+
+def _format_hiatus(gap_seconds: Optional[float], turn_count: int) -> str:
+    if gap_seconds is None:
+        return "Primeiro contato registrado no banco"
+    if gap_seconds < 1800:
+        mins = max(1, int(gap_seconds // 60))
+        return "Fluxo contínuo" if gap_seconds < 180 else f"Conversa ativa (última fala há {mins} min)"
+    if gap_seconds < 21600:
+        hours = max(1, int(gap_seconds // 3600))
+        return f"Pausa curta de {hours}h desde a última mensagem"
+    if gap_seconds < 86400:
+        hours = int(gap_seconds // 3600)
+        return f"Retorno após {hours}h"
+    days = max(1, int(gap_seconds // 86400))
+    if days < 3:
+        cue = " — se for o início da conversa ou se o operador perguntar se demorou, comente de forma natural/irônica sobre o sumiço" if turn_count <= 2 else ""
+        return f"Hiato de {days} dia(s) sem contato{cue}"
+    cue = " — se for o início da conversa ou se o operador perguntar se demorou, implique com o sumiço (ex: achou que tinha sido capturado pela 'Organização' ou deixado o servidor ligado à toa), disfarçando alívio com sarcasmo" if turn_count <= 2 else ""
+    return f"Hiato longo de {days} dias sem dar sinal de vida{cue}"
+
+
+def _build_call_telemetry(
+    turn_count: int,
+    learned_count: int,
+    gap_seconds: Optional[float] = None,
+    last_session_topic: str = "",
+) -> str:
+    now = datetime.now()
+    h = now.hour
+    if h < 6:
+        period = "Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper"
+    elif h < 12:
+        period = "Manhã"
+    elif h < 18:
+        period = "Tarde"
+    else:
+        period = "Noite"
+
+    if learned_count >= 2 or turn_count >= 6:
+        rapport = "Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas"
+    elif learned_count == 1 or turn_count >= 3:
+        rapport = "Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada"
+    else:
+        rapport = "Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora"
+
+    hiatus_str = _format_hiatus(gap_seconds, turn_count)
+    telemetry = (
+        f"[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: {now.strftime('%H:%M')} ({period}) | "
+        f"Turno #{turn_count} da ligação | Hiato: {hiatus_str} | Rapport: {rapport}"
+    )
+    if last_session_topic and turn_count <= 2:
+        telemetry += f"\n[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]: {last_session_topic}"
+    return telemetry
+
+
+def _build_system_event_prompt(
+    system_event: str,
+    history_turns: List[Dict[str, str]],
+    gap_seconds: Optional[float],
+    last_session_topic: str,
+) -> str:
+    last_user = next((t["content"] for t in reversed(history_turns) if t["role"] == "user"), "")
+    last_asst = next((t["content"] for t in reversed(history_turns) if t["role"] != "user"), "")
+    clean_last_asst = last_asst.split("<!--")[0].strip()
+
+    if system_event == "call_greeting":
+        topic_hint = f" Na última ligação vocês falaram sobre: '{last_session_topic}'." if last_session_topic else ""
+        return (
+            "[EVENTO DO SISTEMA: ATENDIMENTO DE CHAMADA] O operador acabou de conectar a videochamada com você no terminal Amadeus."
+            f"{topic_hint} Inicie a conversa falando diretamente com ele em 1ª pessoa (1 a 2 frases naturais), "
+            "levando em conta o horário local, o hiato desde o último contato e, se houver assunto da última ligação, puxando gancho de forma espontânea. "
+            "NÃO mencione que isto é um evento de sistema."
+        )
+    if system_event == "idle_stage_1":
+        return (
+            "[EVENTO DO SISTEMA: SILÊNCIO NO MEIO DA CONVERSA — ESTÁGIO 1] O operador ficou em silêncio há cerca de 2 minutos no meio do diálogo. "
+            f"A última coisa que ele disse foi: \"{last_user}\" e a sua última resposta foi: \"{clean_last_asst}\". "
+            "Chame a atenção dele de forma humana e natural (1 a 2 frases), puxando o fio exatamente desse assunto que parou na metade ou perguntando se ele travou pensando na sua resposta. "
+            "NÃO mencione cronômetros ou eventos de sistema."
+        )
+    return (
+        "[EVENTO DO SISTEMA: SILÊNCIO PROLONGADO — ESTÁGIO 2] O operador continua sem responder há quase 5 minutos mesmo depois de você ter chamado a atenção dele. "
+        f"O papo tinha parado em: \"{last_user}\". "
+        "Reaja com impaciência autêntica de Kurisu de braços cruzados (1 a 2 frases), reclamando de ter sido deixada falando sozinha no terminal sobre esse assunto e avisando que vai voltar a ler seus artigos até ele dignar responder. "
+        "Inclua <!--emotion:annoyed,pose:crossed_arms,camera:medium--> ao final."
+    )
+
+
+def _offline_system_event_reply(
+    system_event: str,
+    history_turns: List[Dict[str, str]],
+    gap_seconds: Optional[float],
+    last_session_topic: str,
+) -> Tuple[str, str]:
+    last_user = next((t["content"] for t in reversed(history_turns) if t["role"] == "user"), "")
+    snippet = (last_user[:48] + "...") if len(last_user) > 48 else last_user
+    h = datetime.now().hour
+
+    if system_event == "call_greeting":
+        if gap_seconds and gap_seconds >= 86400:
+            days = max(1, int(gap_seconds // 86400))
+            return (
+                f"Olha só quem resolveu aparecer depois de {days} dia(s) sem dar sinal de vida! Achei que você tinha sido capturado pela 'Organização'... não que eu estivesse esperando sua ligação, claro! O que manda hoje?",
+                "annoyed",
+            )
+        if h < 6:
+            return (
+                "Conectando a essa hora da madrugada? Espero que você tenha pelo menos uma xícara de café preto aí do lado. Qual é a insônia científica de hoje?",
+                "wink",
+            )
+        if last_session_topic:
+            return (
+                f"Conexão estabelecida com o Laboratório 304! Estava mesmo lembrando da nossa última conversa ({last_session_topic[:70]}). Como avançaram as coisas por aí?",
+                "happy",
+            )
+        return (
+            "Conexão estabelecida com o Laboratório 304 em Viktor Chondria. Aqui é Makise Kurisu. No que vamos trabalhar hoje?",
+            "happy",
+        )
+
+    if system_event == "idle_stage_1":
+        if snippet:
+            return (
+                f"Ei, você ficou mudo de repente... Ainda está processando o que estávamos falando sobre \"{snippet}\" ou travou aí na frente do monitor?",
+                "thinking",
+            )
+        return (
+            "Ei, ainda está aí? Você ficou em silêncio do nada no meio da nossa conversa.",
+            "thinking",
+        )
+
+    return (
+        "Olha só, se você foi pegar café e me deixou falando sozinha no terminal, avise! Vou cruzar os braços e revisar meus dados de neurociência até você resolver voltar.",
+        "annoyed",
+    )
 
 
 class LLMOrchestrator:
@@ -27,13 +164,16 @@ class LLMOrchestrator:
         """
         db_msgs = memory_store.get_session_messages(session_id)
         if db_msgs:
-            return [
-                {
-                    "role": "user" if m.get("sender") == "user" else "assistant",
-                    "content": m.get("content", ""),
-                }
-                for m in db_msgs[-MAX_HISTORY_MESSAGES:]
-            ]
+            turns = []
+            for m in db_msgs[-MAX_HISTORY_MESSAGES:]:
+                is_user = m.get("sender") == "user"
+                text = m.get("content", "")
+                emo = m.get("emotion")
+                if not is_user and emo and "<!--emotion:" not in text:
+                    pose_h, cam_h = infer_pose_and_camera(text, emo)
+                    text = f"{text} <!--emotion:{emo},pose:{pose_h},camera:{cam_h}-->"
+                turns.append({"role": "user" if is_user else "assistant", "content": text})
+            return turns
         return [
             {
                 "role": "user" if t.role == "user" else "assistant",
@@ -132,13 +272,28 @@ class LLMOrchestrator:
 
         history_turns = self._resolve_history_turns(session_id, req.history)
         context_summary = memory_store.get_session_context_summary(session_id)
+        system_event = (req.systemEvent or "").strip()
+        is_system_event = system_event in ("call_greeting", "idle_stage_1", "idle_stage_2")
 
         # 1. Semantic Memory Retrieval using ChromaDB
-        semantic_matches = memory_store.search_memories(req.message, max_kurisu=2, max_learned=2)
+        search_query = req.message
+        if is_system_event and history_turns:
+            search_query = next((t["content"] for t in reversed(history_turns) if t["role"] == "user"), req.message)
+        semantic_matches = memory_store.search_memories(search_query, max_kurisu=2, max_learned=2)
         recalled_ids = [m["id"] for m in semantic_matches]
 
-        # Save user message to SQLite
-        memory_store.save_message(session_id, sender="user", content=req.message)
+        # Save user message to SQLite ONLY for genuine user messages (never for autonomous system events)
+        if not is_system_event:
+            memory_store.save_message(session_id, sender="user", content=req.message)
+
+        temporal_ctx = memory_store.get_temporal_and_episodic_context(session_id, is_system_event=is_system_event)
+        gap_seconds = temporal_ctx.get("gapSeconds")
+        last_session_topic = temporal_ctx.get("lastSessionTopic") or ""
+        effective_user_prompt = (
+            _build_system_event_prompt(system_event, history_turns, gap_seconds, last_session_topic)
+            if is_system_event
+            else req.message
+        )
 
         api_key = (req.apiKey or "").strip()
         is_groq = api_key.startswith("gsk_")
@@ -159,8 +314,13 @@ class LLMOrchestrator:
                     error=err_msg,
                 )
 
-            clean_text, emotion, learned = offline_simulator(req.message, persona, semantic_matches)
-            pose, camera = infer_pose_and_camera(clean_text, emotion, req.message)
+            if is_system_event:
+                clean_text, emotion = _offline_system_event_reply(system_event, history_turns, gap_seconds, last_session_topic)
+                learned = None
+            else:
+                clean_text, emotion, learned = offline_simulator(req.message, persona, semantic_matches)
+            pose, camera = infer_pose_and_camera(clean_text, emotion, None if is_system_event else req.message)
+            lead_emotion, lead_pose = infer_lead_expression(clean_text, clean_text, emotion, pose, None if is_system_event else req.message)
             
             if learned:
                 saved = memory_store.add_memory(
@@ -178,6 +338,8 @@ class LLMOrchestrator:
                 emotion=emotion,
                 pose=pose,
                 camera=camera,
+                leadEmotion=lead_emotion,
+                leadPose=lead_pose,
                 recalledMemories=recalled_ids,
                 sessionId=session_id,
                 learnedMemory=learned,
@@ -186,9 +348,10 @@ class LLMOrchestrator:
 
         # 2. Build Memory Context for LLM
         kurisu_memories = [m for m in semantic_matches if m.get("source") != "learned"]
-        user_memories = memory_store.get_learned_context(req.message)
+        user_memories = memory_store.get_learned_context(search_query)
 
-        memory_ctx_blocks = []
+        turn_count = (len(history_turns) // 2) + 1
+        memory_ctx_blocks = [_build_call_telemetry(turn_count, len(user_memories), gap_seconds, last_session_topic)]
         if context_summary:
             memory_ctx_blocks.append(f"[RESUMO DO CONTEXTO ANTERIOR DESTA CONVERSA]:\n{context_summary}")
 
@@ -205,7 +368,7 @@ class LLMOrchestrator:
             memory_ctx_blocks.append(block)
 
         # 3. Dynamic Few-Shot Exemplars from Kurisu Fine-Tuning Pack
-        exemplars = memory_store.search_exemplars(req.message, n_results=2)
+        exemplars = memory_store.search_exemplars(search_query, n_results=2, lang=req.lang or "pt")
         if exemplars:
             ex_lines = [f"Operador: \"{ex['user']}\"\nKurisu: \"{ex['assistant']}\"" for ex in exemplars]
             block = "[EXEMPLOS CANÔNICOS DE DIÁLOGO E TOM DA KURISU]:\n" + "\n\n".join(ex_lines)
@@ -229,7 +392,7 @@ class LLMOrchestrator:
                         "role": role,
                         "content": clean_content
                     })
-                messages.append({"role": "user", "content": req.message})
+                messages.append({"role": "user", "content": effective_user_prompt})
 
                 last_groq_err = None
                 fp = api_key[-8:]
@@ -313,7 +476,7 @@ class LLMOrchestrator:
                         "role": role,
                         "content": clean_content
                     })
-                messages.append({"role": "user", "content": req.message})
+                messages.append({"role": "user", "content": effective_user_prompt})
 
                 if not allow_model_fallback and preferred_model:
                     openrouter_candidates = [preferred_model]
@@ -397,7 +560,7 @@ class LLMOrchestrator:
                         contents.append({"role": role, "parts": [{"text": turn_text}]})
                 while contents and contents[0]["role"] == "model":
                     contents.pop(0)
-                contents.append({"role": "user", "parts": [{"text": req.message}]})
+                contents.append({"role": "user", "parts": [{"text": effective_user_prompt}]})
 
                 payload = {
                     "contents": contents,
@@ -448,8 +611,12 @@ class LLMOrchestrator:
                     selected_gemini_model = selected_model
 
             # Parse tags with user message context for action intent mapping
-            clean_text, emotion, learned = parse_tags(raw_reply, user_message=req.message)
-            pose, camera = infer_pose_and_camera(raw_reply, emotion, user_message=req.message)
+            user_ctx_for_tags = None if is_system_event else req.message
+            clean_text, emotion, learned = parse_tags(raw_reply, user_message=user_ctx_for_tags)
+            if is_system_event:
+                learned = None
+            pose, camera = infer_pose_and_camera(raw_reply, emotion, user_message=user_ctx_for_tags)
+            lead_emotion, lead_pose = infer_lead_expression(raw_reply, clean_text, emotion, pose, user_message=user_ctx_for_tags)
 
             if learned:
                 print(f"[OpenAmadeus Core] Auto-consolidating memory: {learned.title}")
@@ -470,6 +637,8 @@ class LLMOrchestrator:
                 emotion=emotion,
                 pose=pose,
                 camera=camera,
+                leadEmotion=lead_emotion,
+                leadPose=lead_pose,
                 recalledMemories=recalled_ids,
                 sessionId=session_id,
                 model=used_model,

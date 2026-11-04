@@ -1,4 +1,4 @@
-import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
+import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
 
 export const BACKEND_URL =
   ((import.meta as any).env?.VITE_API_URL as string) || 'http://localhost:8000';
@@ -19,6 +19,8 @@ export interface BackendChatResponse {
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
+  leadEmotion?: Emotion;
+  leadPose?: CharacterPose;
   recalledMemories: string[];
   sessionId?: string;
   model?: string;
@@ -83,13 +85,14 @@ export class BackendService {
     history: ChatMessage[],
     selectedModel?: string,
     allowModelFallback: boolean = true,
-    allowOfflineSimulatorFallback: boolean = true
+    allowOfflineSimulatorFallback: boolean = true,
+    systemEvent?: AutonomousEventType
   ): Promise<BackendChatResponse> {
     const formattedHistory = history.slice(-20).map((msg) => ({
       role: msg.sender === 'user' ? 'user' : 'model',
       content:
         msg.sender !== 'user' && msg.emotion
-          ? `${msg.content} <!--emotion:${msg.emotion}-->`
+          ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'},camera:${msg.camera || 'closeup'}-->`
           : msg.content,
     }));
 
@@ -100,6 +103,7 @@ export class BackendService {
         message,
         sessionId,
         personaId: 'kurisu',
+        systemEvent: systemEvent || null,
         apiKey: apiKey || null,
         history: formattedHistory,
         selectedModel: selectedModel || null,

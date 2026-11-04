@@ -536,6 +536,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Quando <strong>ON</strong>, nunca responde com frases pré-programadas do simulador caso a API falhe.
                   </p>
                 </div>
+
+                {/* Spontaneous Initiative & Impatience Mode */}
+                <div className="space-y-2 pt-3 border-t border-amber-900/30">
+                  <span className="engraved-label block">
+                    Iniciativa Espontânea & Impaciência em Silêncio
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {(
+                      [
+                        { id: 'off', label: 'OFF (DESATIVADO)' },
+                        { id: 'silent', label: 'SILENCIOSO (TEXTO + SPRITE)' },
+                        { id: 'voice', label: 'VOZ ATIVA (TEXTO + TTS)' },
+                      ] as const
+                    ).map((opt) => {
+                      const activeMode = llmSettings.idleInitiativeMode || 'voice';
+                      const isSelected = activeMode === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() =>
+                            onSaveLlmSettings?.({
+                              ...llmSettings,
+                              idleInitiativeMode: opt.id,
+                            })
+                          }
+                          className={`py-2 px-3 border text-center font-bold text-[11px] transition-all ${
+                            isSelected
+                              ? 'border-orange-400 bg-orange-500/20 text-amber-100'
+                              : 'border-amber-900/40 bg-black/50 text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-zinc-400 font-sans">
+                    Quando ativa, a Kurisu puxa assunto se você parar de responder no meio da conversa (em 2 estágios) e comenta seu tempo de ausência ao atender.
+                  </p>
+                </div>
               </div>
             )}
 

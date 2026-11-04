@@ -9,6 +9,7 @@ from app.db.memory_store import memory_store
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup ---
+    canonical_count = 0
     kurisu_file = PERSONAS_DIR / "kurisu.json"
     if kurisu_file.exists():
         try:
@@ -17,7 +18,7 @@ async def lifespan(app: FastAPI):
                 memories = data.get("memories", [])
                 if memories:
                     memory_store.seed_canonical_memories(memories)
-                    print(f"[Amadeus Core] ChromaDB + SQLite seeded with {len(memories)} canonical memories.")
+                    canonical_count = len(memories)
         except Exception as e:
             print(f"[Amadeus Core] Error seeding memories: {e}")
 
@@ -34,6 +35,17 @@ async def lifespan(app: FastAPI):
             memory_store.seed_exemplars(ft_pack)
         except Exception as e:
             print(f"[Amadeus Core] Error seeding fine-tuning exemplars: {e}")
+
+    try:
+        all_mems = memory_store.get_all_memories()
+        learned_count = sum(1 for m in all_mems if m.get("source") != "canonical")
+        exemplar_count = memory_store.exemplars_collection.count()
+        print(
+            f"[Amadeus Core] ChromaDB + SQLite ready: {canonical_count} canonical + "
+            f"{learned_count} learned memories | {exemplar_count} dialog exemplars."
+        )
+    except Exception as e:
+        print(f"[Amadeus Core] Startup status check error: {e}")
 
     yield
 

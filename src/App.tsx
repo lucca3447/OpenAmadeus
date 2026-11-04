@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  AutonomousEventType,
   CameraFraming,
   CharacterPose,
   ChatMessage,
@@ -45,9 +46,6 @@ import { CompanionPanel } from './components/CompanionPanel';
 import { PromptBar } from './components/PromptBar';
 import { Phone, MicOff, X, Sparkles } from 'lucide-react';
 
-const INITIAL_GREETING =
-  'Olá! Conexão neural estabelecida com o OpenAmadeus. Aqui é Makise Kurisu. O que você gostaria de analisar ou discutir hoje?';
-
 const newId = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 export const App: React.FC = () => {
@@ -84,6 +82,7 @@ export const App: React.FC = () => {
     return {
       allowModelFallback: true,
       allowOfflineSimulatorFallback: true,
+      idleInitiativeMode: 'voice',
     };
   });
 
@@ -113,6 +112,10 @@ export const App: React.FC = () => {
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>('neutral');
   const [currentPose, setCurrentPose] = useState<CharacterPose>('default');
   const [currentCamera, setCurrentCamera] = useState<CameraFraming | undefined>(undefined);
+  const leadTransitionTimerRef = useRef<number | null>(null);
+  const idleStageRef = useRef<number>(0);
+  const idleTimerRef = useRef<number | null>(null);
+  const [typingActivityTick, setTypingActivityTick] = useState<number>(0);
   const [defaultCamera, setDefaultCamera] = useState<'auto' | 'closeup' | 'medium' | 'full'>(() => {
     const saved = localStorage.getItem('amadeus_default_camera');
     return saved === 'closeup' || saved === 'medium' || saved === 'full' ? saved : 'auto';
@@ -397,6 +400,12 @@ export const App: React.FC = () => {
   const handleSendMessage = async (text: string) => {
     if (!text.trim() || isProcessing) return;
 
+    idleStageRef.current = 0;
+    if (idleTimerRef.current !== null) {
+      window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+
     const matched = MemoryService.matchMemories(text, persona);
 
     SpeechService.stopSpeaking();
@@ -416,7 +425,10 @@ export const App: React.FC = () => {
     setSessions(MemoryService.getSessionLogs());
     setErrorNotice(null);
     setIsProcessing(true);
-    setCurrentEmotion('thinking');
+    const preReaction = AIService.inferListeningReaction(text);
+    setCurrentEmotion(preReaction.emotion);
+    setCurrentPose(preReaction.pose);
+    if (preReaction.camera) setCurrentCamera(preReaction.camera);
 
     try {
       const result = await AIService.queryAmadeus(
@@ -436,12 +448,29 @@ export const App: React.FC = () => {
 
       setAiStatus(result.status);
       setCurrentSubtitle(result.response);
-      setCurrentEmotion(result.emotion);
-      setCurrentCamera(result.camera);
-      if (result.pose) {
-        setCurrentPose(result.pose);
+      if (leadTransitionTimerRef.current !== null) {
+        window.clearTimeout(leadTransitionTimerRef.current);
+        leadTransitionTimerRef.current = null;
+      }
+
+      const finalPose = result.pose || 'default';
+      if (result.leadEmotion && (result.leadEmotion !== result.emotion || (result.leadPose && result.leadPose !== finalPose))) {
+        const initialPose = result.leadPose || 'default';
+        preloadEmotionSprites(result.leadEmotion, initialPose, result.camera);
+        preloadEmotionSprites(result.emotion, finalPose, result.camera);
+        setCurrentEmotion(result.leadEmotion);
+        setCurrentPose(initialPose);
+        setCurrentCamera(result.camera);
+        leadTransitionTimerRef.current = window.setTimeout(() => {
+          setCurrentEmotion(result.emotion);
+          setCurrentPose(finalPose);
+          setCurrentCamera(result.camera);
+          leadTransitionTimerRef.current = null;
+        }, 1500);
       } else {
-        setCurrentPose('default');
+        setCurrentEmotion(result.emotion);
+        setCurrentPose(finalPose);
+        setCurrentCamera(result.camera);
       }
 
       if (result.decommissionNotice) {
@@ -483,6 +512,7 @@ export const App: React.FC = () => {
         timestamp: Date.now(),
         emotion: result.emotion,
         pose: result.pose,
+        camera: result.camera,
         recalledMemories: finalRecalledIds,
       };
 
@@ -506,8 +536,87 @@ export const App: React.FC = () => {
     }
   };
 
+  const triggerCallGreeting = async (targetSessionId: string, shouldSpeak: boolean) => {
+    const localGreet = AIService.queryOfflineAutonomousEvent('call_greeting', []);
+    const initialMsgId = newId();
+    const initialMsgs: ChatMessage[] = [
+      {
+        id: initialMsgId,
+        sender: 'amadeus',
+        content: localGreet.response,
+        timestamp: Date.now(),
+        emotion: localGreet.emotion,
+        pose: localGreet.pose,
+        camera: localGreet.camera,
+      },
+    ];
+    setHistory(initialMsgs);
+    setCurrentSubtitle(localGreet.response);
+    setCurrentEmotion(localGreet.emotion);
+    setCurrentPose(localGreet.pose);
+    setCurrentCamera(localGreet.camera);
+    MemoryService.saveActiveSession(targetSessionId, initialMsgs, true);
+    setSessions(MemoryService.getSessionLogs());
+
+    const canQueryOnline =
+      (llmSettings.idleInitiativeMode || 'voice') !== 'off' &&
+      Boolean(apiKey.trim()) &&
+      currentModel !== OFFLINE_MODEL_ID;
+
+    if (!canQueryOnline) {
+      if (shouldSpeak) speak(localGreet.response, localGreet.emotion);
+      return;
+    }
+
+    try {
+      const result = await AIService.queryAmadeus(
+        '[ATENDIMENTO]',
+        persona,
+        [],
+        apiKey,
+        [],
+        targetSessionId,
+        currentModel,
+        { ...llmSettings, systemEvent: 'call_greeting' }
+      );
+      if (!result.isError && result.response) {
+        const liveMsg: ChatMessage = {
+          id: initialMsgId,
+          sender: 'amadeus',
+          content: result.response,
+          timestamp: Date.now(),
+          emotion: result.emotion,
+          pose: result.pose || 'default',
+          camera: result.camera,
+        };
+        setAiStatus(result.status);
+        setHistory((prev) => (prev.length <= 1 ? [liveMsg] : prev));
+        setCurrentSubtitle(result.response);
+        setCurrentEmotion(result.emotion);
+        setCurrentPose(result.pose || 'default');
+        setCurrentCamera(result.camera);
+        MemoryService.saveActiveSession(targetSessionId, [liveMsg], true);
+        setSessions(MemoryService.getSessionLogs());
+        if (shouldSpeak) speak(result.response, result.emotion);
+        return;
+      }
+    } catch (e) {
+      console.warn('[OpenAmadeus] Dynamic call greeting fallback:', e);
+    }
+    if (shouldSpeak) speak(localGreet.response, localGreet.emotion);
+  };
+
   // Start new clean conversation
   const handleNewSession = () => {
+    idleStageRef.current = 0;
+    if (idleTimerRef.current !== null) {
+      window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+    if (leadTransitionTimerRef.current !== null) {
+      window.clearTimeout(leadTransitionTimerRef.current);
+      leadTransitionTimerRef.current = null;
+    }
     SpeechService.stopSpeaking();
     setIsSpeaking(false);
     setErrorNotice(null);
@@ -516,23 +625,7 @@ export const App: React.FC = () => {
     }
     const newSessionId = MemoryService.archiveAndStartNewSession(history);
     setSessionId(newSessionId);
-
-    const initialMsgs: ChatMessage[] = [
-      {
-        id: newId(),
-        sender: 'amadeus',
-        content: INITIAL_GREETING,
-        timestamp: Date.now(),
-        emotion: 'neutral',
-        pose: 'default',
-      },
-    ];
-    setHistory(initialMsgs);
-    setCurrentSubtitle(INITIAL_GREETING);
-    setCurrentEmotion('neutral');
-    setCurrentPose('default');
-    MemoryService.saveActiveSession(newSessionId, initialMsgs, true);
-    setSessions(MemoryService.getSessionLogs());
+    void triggerCallGreeting(newSessionId, false);
   };
 
   // Switch to a previous session from the sidebar (without altering list order)
@@ -664,27 +757,115 @@ export const App: React.FC = () => {
     SpeechService.toggleListening();
   };
 
+  // Reset impatience timer while the operator is actively typing
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        setTypingActivityTick((t) => t + 1);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // 2-Stage Contextual Impatience when conversation stops mid-way
+  useEffect(() => {
+    if (idleTimerRef.current !== null) {
+      window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+
+    const initiativeMode = llmSettings.idleInitiativeMode || 'voice';
+    const hasUserSpoken = history.some((m) => m.sender === 'user');
+    if (
+      callState !== 'connected' ||
+      initiativeMode === 'off' ||
+      !hasUserSpoken ||
+      isProcessing ||
+      isSpeaking ||
+      isListening ||
+      idleStageRef.current >= 2
+    ) {
+      return;
+    }
+
+    const nextStage: AutonomousEventType =
+      idleStageRef.current === 0 ? 'idle_stage_1' : 'idle_stage_2';
+    const delayMs =
+      idleStageRef.current === 0
+        ? 95_000 + Math.floor(Math.random() * 25_000)
+        : 145_000 + Math.floor(Math.random() * 25_000);
+
+    idleTimerRef.current = window.setTimeout(async () => {
+      idleTimerRef.current = null;
+      idleStageRef.current += 1;
+      try {
+        const result = await AIService.queryAmadeus(
+          '[SILENCIO]',
+          persona,
+          [],
+          apiKey,
+          history,
+          sessionId,
+          currentModel,
+          { ...llmSettings, systemEvent: nextStage }
+        );
+        if (!result.isError && result.response) {
+          const finalPose = result.pose || 'crossed_arms';
+          preloadEmotionSprites(result.emotion, finalPose, result.camera);
+          setCurrentSubtitle(result.response);
+          setCurrentEmotion(result.emotion);
+          setCurrentPose(finalPose);
+          setCurrentCamera(result.camera);
+
+          const idleMsg: ChatMessage = {
+            id: newId(),
+            sender: 'amadeus',
+            content: result.response,
+            timestamp: Date.now(),
+            emotion: result.emotion,
+            pose: finalPose,
+            camera: result.camera,
+          };
+          setHistory((prev) => {
+            const updated = [...prev, idleMsg];
+            MemoryService.saveActiveSession(sessionId, updated);
+            return updated;
+          });
+          setSessions(MemoryService.getSessionLogs());
+
+          if (initiativeMode === 'voice') {
+            speak(result.response, result.emotion);
+          }
+        }
+      } catch (err) {
+        console.warn('[OpenAmadeus] Idle initiative skipped:', err);
+      }
+    }, delayMs);
+
+    return () => {
+      if (idleTimerRef.current !== null) {
+        window.clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [
+    callState,
+    llmSettings.idleInitiativeMode,
+    history,
+    isProcessing,
+    isSpeaking,
+    isListening,
+    typingActivityTick,
+  ]);
+
   // Connect Call Handler
   const handleAcceptCall = () => {
+    idleStageRef.current = 0;
     setCallState('connected');
     if (history.length === 0) {
-      setCurrentSubtitle(INITIAL_GREETING);
-      setCurrentEmotion('neutral');
-      setCurrentPose('default');
-      const initialMsgs: ChatMessage[] = [
-        {
-          id: newId(),
-          sender: 'amadeus',
-          content: INITIAL_GREETING,
-          timestamp: Date.now(),
-          emotion: 'neutral',
-          pose: 'default',
-        },
-      ];
-      setHistory(initialMsgs);
-      MemoryService.saveActiveSession(sessionId, initialMsgs);
-      setSessions(MemoryService.getSessionLogs());
-      speak(INITIAL_GREETING);
+      void triggerCallGreeting(sessionId, true);
     } else {
       const lastMsg = [...history].reverse().find((m) => m.sender === 'amadeus');
       if (lastMsg) {

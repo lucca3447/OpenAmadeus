@@ -44,31 +44,33 @@ def clean_speech_text(text: str) -> str:
     return clean_text
 
 
-def clean_text_for_tts(text: str) -> str:
+def clean_text_for_tts(text: str, lang: str = "pt") -> str:
     """
     Sanitizes text specifically for neural TTS (Qwen3-TTS) without altering the frontend transcript:
     - Normalizes Unicode ellipsis (\u2026 '…' and \u2025 '‥') and replaces mid-sentence '...' with ', '
       to prevent multi-second dead pauses and VN vocal sighs/groans
     - Converts interrobangs ('?!', '!?', '?!!', etc.) to a single clean '?'
-    - Converts exclamation marks ('!', '!!', '!!!') to '.' to prevent Japanese glottal-stop
+    - When lang starts with 'pt', converts exclamation marks ('!', '!!', '!!!') to '.' to prevent Japanese glottal-stop
       clipping of final unstressed Portuguese syllables (e.g. 'relatório!' -> 'relató-')
     - Removes non-lexical anime hesitation vocables ('Hum', 'Hmm', 'U-um', 'Uhm') that trigger moans
     - De-stutters single-letter prefixes ('Q-quem' -> 'Quem', 'L-linda' -> 'Linda', 'N-não' -> 'Não')
     """
     clean_text = clean_speech_text(text)
+    is_pt = (lang or "pt").lower().startswith("pt")
     # 1. Replace combined punctuation (?!, !?, etc.) with a single question mark
     clean_text = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", clean_text)
-    # 2. Replace exclamation marks with '.' to prevent glottal-stop syllable truncation
-    clean_text = re.sub(r"!+", ".", clean_text)
-    clean_text = re.sub(r"([.,])\s*\.", r"\1", clean_text)
+    if is_pt:
+        # 2. Replace exclamation marks with '.' to prevent glottal-stop syllable truncation in PT-BR
+        clean_text = re.sub(r"!+", ".", clean_text)
+        clean_text = re.sub(r"([.,])\s*\.", r"\1", clean_text)
 
-    # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum)
-    # that trigger Japanese VN vocal sighs/moans ("gemidos")
-    clean_text = re.sub(
-        r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
-        "",
-        clean_text,
-    )
+        # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum)
+        # that trigger Japanese VN vocal sighs/moans ("gemidos")
+        clean_text = re.sub(
+            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+            "",
+            clean_text,
+        )
 
     # 4. General single-letter stutters: Q-quem -> Quem, Q... quem -> Quem, L-linda -> Linda, N-não -> Não
     def _un_stutter(m: re.Match) -> str:

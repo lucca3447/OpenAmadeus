@@ -1,4 +1,4 @@
-import { CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
+import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
 import { BackendService } from './backendService';
 import { MemoryService } from './memoryService';
 
@@ -197,6 +197,8 @@ export interface AIResult {
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
+  leadEmotion?: Emotion;
+  leadPose?: CharacterPose;
   recalledMemories?: string[];
   status: AIStatus;
   /** true when the response is an error report, not something Amadeus "said" */
@@ -666,6 +668,139 @@ export class AIService {
   }
 
   /**
+   * Instant pre-LLM listening micro-reaction (<16ms) based on the user's message tone.
+   */
+  static inferListeningReaction(userMessage: string): { emotion: Emotion; pose: CharacterPose; camera?: CameraFraming } {
+    const uLow = (userMessage || '').toLowerCase();
+    if (/\b(?:barata|fujiko|inseto|cockroach)\b|ゴキブリ|ふじこ/i.test(uLow)) {
+      return { emotion: 'holding_back_tears', pose: 'default', camera: 'closeup' };
+    }
+    if (/\b(?:nullpo|nurupo)\b|ぬるぽ/i.test(uLow) || uLow.includes('?!')) {
+      return { emotion: 'surprised', pose: 'default', camera: 'closeup' };
+    }
+    if (/\b(?:christina|assistente|zombie|celebcas|pervertida|assistant)\b|クリスティーナ|助手|ゾンビ/i.test(uLow)) {
+      return { emotion: 'annoyed', pose: 'crossed_arms', camera: 'medium' };
+    }
+    if (/\b(?:linda|fofa|bonita|maravilhosa|perfeita|cute|pretty|beautiful)\b|かわいい|可愛い|綺麗/i.test(uLow)) {
+      return { emotion: 'blushing', pose: 'crossed_arms', camera: 'closeup' };
+    }
+    if (/\b(?:teoria|f[íi]sica|c[óo]digo|python|bug|arquitetura|hip[óo]tese|como|por que|explica)\b|\?/i.test(uLow)) {
+      return { emotion: 'thinking', pose: 'crossed_arms', camera: 'medium' };
+    }
+    return { emotion: 'thinking', pose: 'default' };
+  }
+
+  private static getLocalTemporalAndEpisodicContext(history: ChatMessage[]): {
+    gapSeconds: number | null;
+    lastSessionTopic: string;
+  } {
+    const nowMs = Date.now();
+    const userMsgs = history.filter((m) => m.sender === 'user' && m.timestamp);
+    let lastUserTs: number | null = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].timestamp : null;
+
+    const sessions = MemoryService.getSessionLogs();
+    const activeId = MemoryService.getActiveSession().sessionId;
+    const priorSession = sessions.find((s) => s.id !== activeId && (s.summary || (s.messages && s.messages.length > 0)));
+    if (!lastUserTs && priorSession) {
+      lastUserTs = priorSession.endedAt || priorSession.startedAt || null;
+    }
+    const gapSeconds = lastUserTs ? Math.max(0, Math.floor((nowMs - lastUserTs) / 1000)) : null;
+    const lastSessionTopic = priorSession?.summary || '';
+    return { gapSeconds, lastSessionTopic };
+  }
+
+  private static buildAutonomousEventPrompt(
+    systemEvent: AutonomousEventType,
+    history: ChatMessage[]
+  ): string {
+    const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
+    const lastAsst = [...history].reverse().find((m) => m.sender === 'amadeus')?.content || '';
+    const { lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
+
+    if (systemEvent === 'call_greeting') {
+      const topicHint = lastSessionTopic ? ` Na última ligação vocês falaram sobre: "${lastSessionTopic}".` : '';
+      return (
+        `[EVENTO DO SISTEMA: ATENDIMENTO DE CHAMADA] O operador acabou de conectar a videochamada com você no terminal Amadeus.${topicHint} ` +
+        `Inicie a conversa falando diretamente com ele em 1ª pessoa (1 a 2 frases naturais), levando em conta o horário local, o hiato desde o último contato e, se houver assunto da última ligação, puxando gancho de forma espontânea. NÃO mencione eventos de sistema.`
+      );
+    }
+    if (systemEvent === 'idle_stage_1') {
+      return (
+        `[EVENTO DO SISTEMA: SILÊNCIO NO MEIO DA CONVERSA — ESTÁGIO 1] O operador ficou em silêncio há cerca de 2 minutos no meio do diálogo. ` +
+        `A última coisa que ele disse foi: "${lastUser}" e a sua última resposta foi: "${lastAsst}". ` +
+        `Chame a atenção dele de forma humana e natural (1 a 2 frases), puxando o fio exatamente desse assunto que parou na metade ou perguntando se ele travou pensando na sua resposta. NÃO mencione cronômetros ou eventos de sistema.`
+      );
+    }
+    return (
+      `[EVENTO DO SISTEMA: SILÊNCIO PROLONGADO — ESTÁGIO 2] O operador continua sem responder há quase 5 minutos mesmo depois de você ter chamado a atenção dele. ` +
+      `O papo tinha parado em: "${lastUser}". ` +
+      `Reaja com impaciência autêntica de Kurisu de braços cruzados (1 a 2 frases), reclamando de ter sido deixada falando sozinha no terminal sobre esse assunto e avisando que vai voltar a ler seus artigos até ele dignar responder. Inclua <!--emotion:annoyed,pose:crossed_arms,camera:medium--> ao final.`
+    );
+  }
+
+  static queryOfflineAutonomousEvent(
+    systemEvent: AutonomousEventType,
+    history: ChatMessage[] = []
+  ): { response: string; emotion: Emotion; pose: CharacterPose; camera: CameraFraming } {
+    const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
+    const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
+    const snippet = lastUser.length > 48 ? `${lastUser.slice(0, 48)}...` : lastUser;
+    const h = new Date().getHours();
+
+    if (systemEvent === 'call_greeting') {
+      if (gapSeconds && gapSeconds >= 86400) {
+        const days = Math.max(1, Math.floor(gapSeconds / 86400));
+        return {
+          response: `Olha só quem resolveu aparecer depois de ${days} dia(s) sem dar sinal de vida! Achei que você tinha sido capturado pela 'Organização'... não que eu estivesse esperando sua ligação, claro! O que manda hoje?`,
+          emotion: 'annoyed',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      if (h < 6) {
+        return {
+          response: 'Conectando a essa hora da madrugada? Espero que você tenha pelo menos uma xícara de café preto aí do lado. Qual é a insônia científica de hoje?',
+          emotion: 'wink',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      if (lastSessionTopic) {
+        return {
+          response: `Conexão estabelecida com o Laboratório 304! Estava mesmo lembrando da nossa última conversa (${lastSessionTopic.slice(0, 65)}). Como avançaram as coisas por aí?`,
+          emotion: 'happy',
+          pose: 'default',
+          camera: 'closeup',
+        };
+      }
+      return {
+        response: 'Conexão estabelecida com o Laboratório 304 em Viktor Chondria. Aqui é Makise Kurisu. No que vamos trabalhar hoje?',
+        emotion: 'happy',
+        pose: 'default',
+        camera: 'closeup',
+      };
+    }
+
+    if (systemEvent === 'idle_stage_1') {
+      return {
+        response: snippet
+          ? `Ei, você ficou mudo de repente... Ainda está processando o que estávamos falando sobre "${snippet}" ou travou aí na frente do monitor?`
+          : 'Ei, ainda está aí? Você ficou em silêncio do nada no meio da nossa conversa.',
+        emotion: 'thinking',
+        pose: 'crossed_arms',
+        camera: 'medium',
+      };
+    }
+
+    return {
+      response: 'Olha só, se você foi pegar café e me deixou falando sozinha no terminal, avise! Vou cruzar os braços e revisar meus dados de neurociência até você resolver voltar.',
+      emotion: 'annoyed',
+      pose: 'crossed_arms',
+      camera: 'medium',
+    };
+  }
+
+  /**
    * Main entry point with Hybrid Architecture:
    * 1. Try Python Backend (FastAPI + ChromaDB + SQLite) if running.
    * 2. Otherwise run pure client-side (OpenRouter / Gemini / Offline).
@@ -678,11 +813,17 @@ export class AIService {
     history: ChatMessage[] = [],
     sessionId: string | null = null,
     selectedModel: string = 'gemini-2.5-flash',
-    llmOptions?: { allowModelFallback?: boolean; allowOfflineSimulatorFallback?: boolean }
+    llmOptions?: {
+      allowModelFallback?: boolean;
+      allowOfflineSimulatorFallback?: boolean;
+      systemEvent?: AutonomousEventType;
+    }
   ): Promise<AIResult> {
     const key = apiKey?.trim();
     const allowModelFallback = llmOptions?.allowModelFallback !== false;
     const allowOfflineFallback = llmOptions?.allowOfflineSimulatorFallback !== false;
+    const systemEvent = llmOptions?.systemEvent;
+    const effectiveMessage = systemEvent ? this.buildAutonomousEventPrompt(systemEvent, history) : userMessage;
 
     // 0. Explicit offline mode
     if (selectedModel === OFFLINE_MODEL_ID) {
@@ -690,7 +831,9 @@ export class AIService {
         const msg = '[MODO ESTRITO DE LLM] O Simulador Local Offline está bloqueado nas configurações. Insira uma chave de API e selecione um modelo neural.';
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
-      const offline = this.queryOfflineSimulator(userMessage, recalledMemories);
+      const offline = systemEvent
+        ? this.queryOfflineAutonomousEvent(systemEvent, history)
+        : this.queryOfflineSimulator(userMessage, recalledMemories);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
@@ -705,13 +848,16 @@ export class AIService {
           history,
           selectedModel,
           allowModelFallback,
-          allowOfflineFallback
+          allowOfflineFallback,
+          systemEvent
         );
         return {
           response: backendRes.response,
           emotion: backendRes.emotion,
           pose: backendRes.pose,
           camera: backendRes.camera,
+          leadEmotion: backendRes.leadEmotion,
+          leadPose: backendRes.leadPose,
           recalledMemories: backendRes.recalledMemories || [],
           status: backendRes.error
             ? { kind: 'error', message: backendRes.error }
@@ -731,23 +877,27 @@ export class AIService {
         const msg = '[MODO ESTRITO DE LLM] Nenhuma chave de API configurada e o Simulador Offline está bloqueado.';
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
-      const offline = this.queryOfflineSimulator(userMessage, recalledMemories);
+      const offline = systemEvent
+        ? this.queryOfflineAutonomousEvent(systemEvent, history)
+        : this.queryOfflineSimulator(userMessage, recalledMemories);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
     // 3. Browser-Mode: Groq Cloud (Ultra-fast LPU)
     if (isGroqKey(key)) {
       try {
-        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryGroq(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+          await this.queryGroq(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
         return {
           response,
           emotion,
           pose,
           camera,
+          leadEmotion,
+          leadPose,
           status: { kind: 'online', model },
           isError: false,
-          learnedMemory,
+          learnedMemory: systemEvent ? undefined : learnedMemory,
           fallbackModel,
           decommissionNotice,
         };
@@ -763,16 +913,18 @@ export class AIService {
     // 4. Browser-Mode: OpenRouter
     if (isOpenRouterKey(key)) {
       try {
-        const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryOpenRouter(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+          await this.queryOpenRouter(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
         return {
           response,
           emotion,
           pose,
           camera,
+          leadEmotion,
+          leadPose,
           status: { kind: 'online', model },
           isError: false,
-          learnedMemory,
+          learnedMemory: systemEvent ? undefined : learnedMemory,
           fallbackModel,
           decommissionNotice,
         };
@@ -787,16 +939,18 @@ export class AIService {
 
     // 5. Browser-Mode: Google Gemini
     try {
-      const { response, emotion, pose, camera, model, learnedMemory, fallbackModel, decommissionNotice } =
-        await this.queryGemini(userMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+      const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+        await this.queryGemini(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
       return {
         response,
         emotion,
         pose,
         camera,
+        leadEmotion,
+        leadPose,
         status: { kind: 'online', model },
         isError: false,
-        learnedMemory,
+        learnedMemory: systemEvent ? undefined : learnedMemory,
         fallbackModel,
         decommissionNotice,
       };
@@ -809,13 +963,43 @@ export class AIService {
     }
   }
 
-  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile): string {
+  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0, history: ChatMessage[] = []): string {
     const kurisuMemories = recalledMemories.filter((m) => m.source !== 'learned');
     const recentLearned = (persona?.memories || []).filter((m) => m.source === 'learned').slice(-12);
     const seen = new Set(recentLearned.map((m) => m.id));
     const userMemories = [...recentLearned, ...recalledMemories.filter((m) => m.source === 'learned' && !seen.has(m.id))];
 
-    const blocks: string[] = [];
+    const now = new Date();
+    const h = now.getHours();
+    const timeStr = `${String(h).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const period = h < 6
+      ? 'Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper'
+      : h < 12 ? 'Manhã' : h < 18 ? 'Tarde' : 'Noite';
+    const turnCount = Math.floor(historyCount / 2) + 1;
+    const rapport = (userMemories.length >= 2 || turnCount >= 6)
+      ? 'Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas'
+      : (userMemories.length === 1 || turnCount >= 3)
+        ? 'Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada'
+        : 'Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora';
+
+    const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
+    let hiatusStr = 'Fluxo contínuo';
+    if (gapSeconds !== null) {
+      if (gapSeconds >= 86400) {
+        const days = Math.max(1, Math.floor(gapSeconds / 86400));
+        hiatusStr = `Hiato de ${days} dia(s) sem contato — se oportuno, comente sobre o sumiço do operador`;
+      } else if (gapSeconds >= 3600) {
+        const hrs = Math.max(1, Math.floor(gapSeconds / 3600));
+        hiatusStr = `Pausa de ${hrs}h desde a última mensagem`;
+      }
+    }
+
+    const blocks: string[] = [
+      `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Hiato: ${hiatusStr} | Rapport: ${rapport}`,
+    ];
+    if (lastSessionTopic && turnCount <= 2) {
+      blocks.push(`[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]: ${lastSessionTopic}`);
+    }
 
     if (kurisuMemories.length > 0) {
       blocks.push(
@@ -831,7 +1015,7 @@ export class AIService {
       );
     }
 
-    return blocks.length > 0 ? `\n\n${blocks.join('\n\n')}` : '';
+    return `\n\n${blocks.join('\n\n')}`;
   }
 
   private static async queryGroq(
@@ -846,21 +1030,23 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
       ...history.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion}-->` : msg.content,
+        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->` : msg.content,
       })),
       { role: 'user', content: userMessage },
     ];
@@ -984,21 +1170,23 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
       ...history.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion}-->` : msg.content,
+        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->` : msg.content,
       })),
       { role: 'user', content: userMessage },
     ];
@@ -1122,7 +1310,7 @@ export class AIService {
       if (msg.sender === 'system') continue;
       const role = msg.sender === 'user' ? 'user' : 'model';
       const text = role === 'model' && msg.emotion
-        ? `${msg.content} <!--emotion:${msg.emotion}-->`
+        ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->`
         : msg.content;
 
       const last = turns[turns.length - 1];
@@ -1151,14 +1339,16 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     model: string;
     learnedMemory?: LearnedMemoryInfo;
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
 
     const body = {
       contents: this.buildContents(history, userMessage),
@@ -1330,8 +1520,10 @@ export class AIService {
     response: string;
     emotion: Emotion;
     pose?: CharacterPose;
-  camera?: CameraFraming;
-  recalledMemories?: string[];
+    camera?: CameraFraming;
+    leadEmotion?: Emotion;
+    leadPose?: CharacterPose;
+    recalledMemories?: string[];
     learnedMemory?: LearnedMemoryInfo;
   } {
     let emotion: Emotion = 'neutral';
@@ -1359,37 +1551,41 @@ export class AIService {
     }
 
     // 2. Extract directives from all comment tags <!-- ... -->
-    // Handles isolated tags (<!--emotion:happy--> <!--pose:crossed_arms--> <!--camera:medium-->)
-    // and composite tags (<!--emotion:tsundere,pose:crossed_arms,camera:medium-->)
+    // Track first emotion/pose if multiple tags exist for 2-beat transition
+    let firstTagEmotion: Emotion | undefined = undefined;
+    let firstTagPose: CharacterPose | undefined = undefined;
     const commentMatches = cleanText.match(/<!--([\s\S]*?)(?:-->|-+>|>+|$)/g);
     if (commentMatches) {
       for (const comment of commentMatches) {
         const inner = comment.replace(/^<!--|-->$/g, '').trim();
         if (/^remember(?:\s*:|\s)/i.test(inner)) continue;
 
-        // Emotion
         const emoMatch = inner.match(/(?:^|[,;|\s])emotion\s*:\s*([^,;|\s>]+)/i);
         if (emoMatch) {
           const rawVal = emoMatch[1].toLowerCase().trim();
           const tokens = rawVal.split(/[\s|,;/]+/);
           for (const tok of tokens) {
             if (VALID_EMOTIONS.includes(tok as Emotion)) {
+              if (!firstTagEmotion) firstTagEmotion = tok as Emotion;
               emotion = tok as Emotion;
               break;
             }
           }
         }
 
-        // Pose
         const pMatch = inner.match(/(?:^|[,;|\s])pose\s*:\s*([^,;|\s>]+)/i);
         if (pMatch) {
           const pTok = pMatch[1].toLowerCase().trim();
-          if (pTok === 'crossed_arms' || pTok === 'thinking') pose = 'crossed_arms';
-          else if (pTok === 'backview' || pTok === 'back') pose = 'backview';
-          else if (pTok === 'default' || pTok === 'front') pose = 'default';
+          let parsedPose: CharacterPose | undefined = undefined;
+          if (pTok === 'crossed_arms' || pTok === 'thinking') parsedPose = 'crossed_arms';
+          else if (pTok === 'backview' || pTok === 'back') parsedPose = 'backview';
+          else if (pTok === 'default' || pTok === 'front') parsedPose = 'default';
+          if (parsedPose) {
+            if (!firstTagPose) firstTagPose = parsedPose;
+            pose = parsedPose;
+          }
         }
 
-        // Camera
         const cMatch = inner.match(/(?:^|[,;|\s])camera\s*:\s*([^,;|\s>]+)/i);
         if (cMatch) {
           const cTok = cMatch[1].toLowerCase().trim();
@@ -1408,51 +1604,53 @@ export class AIService {
     if (asterisks && (emotion === 'neutral' || emotion === 'serious')) {
       for (const act of asterisks) {
         const aLow = act.toLowerCase();
-        if (/pisca|piscad/.test(aLow)) emotion = 'wink';
-        else if (/sorri|sorriso|alegre|risad/.test(aLow)) emotion = 'happy';
-        else if (/cruza os bra[çc]os|bra[çc]os cruzados|pensa|pensativ/.test(aLow)) {
+        if (/pisca|piscad|wink|ウインク/.test(aLow)) emotion = 'wink';
+        else if (/sorri|sorriso|alegre|risad|smil|laugh|笑/.test(aLow)) emotion = 'happy';
+        else if (/cruza os bra[çc]os|bra[çc]os cruzados|pensa|pensativ|cross.*arm|think|腕.*組|考/.test(aLow)) {
           emotion = 'thinking';
           pose = 'crossed_arms';
         }
-        else if (/brava|irritad|emburrad/.test(aLow)) emotion = 'annoyed';
-        else if (/cora|vergonha|t[íi]mid/.test(aLow)) emotion = 'blushing';
-        else if (/olha para o lado|desvia o olhar|soslaio/.test(aLow)) emotion = 'look_side';
-        else if (/olhos fechados|repouso/.test(aLow)) emotion = 'eyes_closed';
-        else if (/analis|ci[êe]ncia|teoria/.test(aLow)) emotion = 'analytical';
-        else if (/triste|chora|l[áa]grima/.test(aLow)) emotion = 'holding_back_tears';
-        else if (/preocupad|aflit/.test(aLow)) emotion = 'worried';
-        else if (/desd[ée]m|t[ée]dio/.test(aLow)) emotion = 'disdain';
+        else if (/brava|irritad|emburrad|angr|annoy|怒/.test(aLow)) emotion = 'annoyed';
+        else if (/cora|vergonha|t[íi]mid|blush|embarrass|照|赤面/.test(aLow)) emotion = 'blushing';
+        else if (/olha para o lado|desvia o olhar|soslaio|look.*away|目をそら/.test(aLow)) emotion = 'look_side';
+        else if (/olhos fechados|repouso|close.*eye|目を閉/.test(aLow)) emotion = 'eyes_closed';
+        else if (/analis|ci[êe]ncia|teoria|analy|分析/.test(aLow)) emotion = 'analytical';
+        else if (/triste|chora|l[áa]grima|tear|cry|泣|涙/.test(aLow)) emotion = 'holding_back_tears';
+        else if (/preocupad|aflit|worr|心配/.test(aLow)) emotion = 'worried';
+        else if (/desd[ée]m|t[ée]dio|disdain|sigh|呆/.test(aLow)) emotion = 'disdain';
       }
     }
-    // Strip asterisks stage directions from dialogue
     cleanText = cleanText.replace(/\*[^*]+\*/g, '');
 
-    // 5. Context-aware inference from user intent (if emotion is neutral/unresolved)
+    // 5. Context-aware inference from user intent (PT / EN / JA)
+    const uLow = (userMessage || '').toLowerCase();
     if (userMessage && (emotion === 'neutral' || emotion === 'serious')) {
-      const uLow = userMessage.toLowerCase();
-      if (/(?:d[eê]|d[aá]|uma)?\s*(?:piscad|pisque|pisca)/i.test(uLow)) emotion = 'wink';
-      else if (/(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri|alegre)/i.test(uLow)) emotion = 'happy';
-      else if (/(?:cruze os bra[çc]os|bra[çc]os cruzados)/i.test(uLow)) {
+      if (/(?:d[eê]|d[aá]|uma)?\s*(?:piscad|pisque|pisca|wink|ウインク)/i.test(uLow)) emotion = 'wink';
+      else if (/(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri|alegre|smile|笑って)/i.test(uLow)) emotion = 'happy';
+      else if (/(?:cruze os bra[çc]os|bra[çc]os cruzados|cross.*arms|腕を組)/i.test(uLow)) {
         emotion = 'thinking';
         pose = 'crossed_arms';
       }
-      else if (/(?:pense|pensativa|reflita|analise)/i.test(uLow)) {
+      else if (/(?:pense|pensativa|reflita|analise|think|analyze|考えて)/i.test(uLow)) {
         emotion = 'thinking';
         pose = 'crossed_arms';
       }
-      else if (/(?:brava|irritada|emburrada)/i.test(uLow)) emotion = 'annoyed';
-      else if (/(?:cora|corada|vergonha|envergonhada|t[íi]mida|fofa|linda)/i.test(uLow)) emotion = 'blushing';
-      else if (/(?:olhe para o lado|olhe de lado|desvie o olhar)/i.test(uLow)) emotion = 'look_side';
-      else if (/(?:feche os olhos|olhos fechados|descanse)/i.test(uLow)) emotion = 'eyes_closed';
-      else if (/(?:triste|chore|chora|l[áa]grimas)/i.test(uLow)) emotion = 'holding_back_tears';
-      else if (/(?:preocupada|aflita)/i.test(uLow)) emotion = 'worried';
-      else if (/(?:de costas|vire de costas)/i.test(uLow)) pose = 'backview';
+      else if (/(?:brava|irritada|emburrada|angry|annoyed|怒って)/i.test(uLow)) emotion = 'annoyed';
+      else if (/(?:cora|corada|vergonha|envergonhada|t[íi]mida|fofa|linda|cute|pretty|beautiful|かわいい|可愛い|綺麗|きれい)/i.test(uLow)) emotion = 'blushing';
+      else if (/(?:olhe para o lado|olhe de lado|desvie o olhar|look away|横を向)/i.test(uLow)) emotion = 'look_side';
+      else if (/(?:feche os olhos|olhos fechados|descanse|close.*eyes|目を閉じ)/i.test(uLow)) emotion = 'eyes_closed';
+      else if (/(?:triste|chore|chora|l[áa]grimas|sad|cry|泣いて)/i.test(uLow)) emotion = 'holding_back_tears';
+      else if (/(?:preocupada|aflita|worried|心配)/i.test(uLow)) emotion = 'worried';
+      else if (/(?:de costas|vire de costas|turn around|backview|後ろを向|背中)/i.test(uLow)) pose = 'backview';
+      else if (/\b(?:christina|assistente|zombie|celebcas|pervertida|assistant)|クリスティーナ|助手|ゾンビ|セレセブ|変態/i.test(uLow)) emotion = 'annoyed';
+      else if (/\b(?:nullpo|nurupo)\b|ぬるぽ/i.test(uLow)) emotion = 'surprised';
+      else if (/\b(?:barata|fujiko|inseto|cockroach|bug)\b|ゴキブリ|ふじこ/i.test(uLow)) emotion = 'surprised';
     }
 
     // 6. Inferred sentiment fallback from assistant words
     const lower = cleanText.toLowerCase();
     if (emotion === 'neutral' || emotion === 'serious') {
-      if (lower.includes('baka') || lower.includes('idiota') || lower.includes('não me entenda mal') || lower.includes('christina')) {
+      if (lower.includes('baka') || lower.includes('idiota') || lower.includes('não me entenda mal') || lower.includes('christina') || lower.includes('バカ') || lower.includes('あんた')) {
         emotion = 'stern';
       } else if (lower.includes('o quê') || lower.includes('como assim') || lower.includes('?!')) {
         emotion = 'worried';
@@ -1473,14 +1671,79 @@ export class AIService {
     cleanText = cleanText.replace(/[:;]-?[)(DPpOdD]/g, '');
     cleanText = cleanText.replace(/\s+/g, ' ').trim();
 
-    // Default pose is natural (default) unless explicitly set by tag or command
-    if (!camera && userMessage) {
-      const uLow = userMessage.toLowerCase();
-      if (/close-?up|de perto|aproxime/.test(uLow)) camera = 'closeup';
-      else if (/corpo inteiro|afaste|de longe/.test(uLow)) camera = 'full';
-      else if (/meio corpo/.test(uLow)) camera = 'medium';
+    // 8. Organic Pose & Camera inference
+    if (!pose) {
+      if (/(?:de costas|vire de costas|virar de costas|turn around|backview|後ろを向|背中)/i.test(uLow)) {
+        pose = 'backview';
+      } else if (/(?:cruze os bra[çc]os|bra[çc]os cruzados|cross.*arms|腕を組)/i.test(uLow)) {
+        pose = 'crossed_arms';
+      } else if (
+        /\b(?:christina|zombie|celebcas|pervertida)\b|クリスティーナ|ゾンビ|セレセブ|変態/i.test(uLow) &&
+        /\b(?:ignorar|não olho|não vou olhar|virar|costas|humpf)\b/i.test(lower)
+      ) {
+        pose = 'backview';
+      } else if (emotion === 'thinking' || emotion === 'analytical' || emotion === 'disdain' || emotion === 'smug') {
+        pose = 'crossed_arms';
+      } else if (
+        (emotion === 'annoyed' || emotion === 'stern' || emotion === 'tsundere') &&
+        (/\b(?:christina|assistente|zombie|baka|idiota|hipótese|lógica|dados|evidência|teoria|cientista)\b|クリスティーナ|助手|バカ/i.test(lower) ||
+          /\b(?:christina|assistente|zombie|assistant)\b|クリスティーナ|助手|ゾンビ/i.test(uLow))
+      ) {
+        pose = 'crossed_arms';
+      } else if (
+        (emotion === 'blushing' || emotion === 'flustered') &&
+        /\b(?:não me entenda mal|não é como se|baka|idiota|profissionalismo|calor dos servidores)\b|勘違いしないで|バカ/i.test(lower)
+      ) {
+        pose = 'crossed_arms';
+      } else {
+        pose = 'default';
+      }
     }
-    return { response: cleanText, emotion, pose, camera, learnedMemory };
+
+    if (!camera) {
+      if (/close-?up|de perto|aproxime|chegue mais perto|get closer|近づいて/.test(uLow)) {
+        camera = 'closeup';
+      } else if (/corpo inteiro|afaste|de longe|full body|step back|離れて|全身/.test(uLow)) {
+        camera = 'full';
+      } else if (/meio corpo|medium shot|half body/.test(uLow)) {
+        camera = 'medium';
+      } else if (pose === 'backview') {
+        camera = 'full';
+      } else if (
+        pose === 'crossed_arms' &&
+        (emotion === 'analytical' || emotion === 'thinking' || emotion === 'disdain' || emotion === 'smug' || emotion === 'stern')
+      ) {
+        camera = 'medium';
+      } else if ((emotion === 'surprised' || emotion === 'annoyed') && cleanText.includes('?!')) {
+        camera = 'medium';
+      } else {
+        camera = 'closeup';
+      }
+    }
+
+    // 9. Infer 2-beat lead expression for natural VN sprite transition
+    let leadEmotion: Emotion | undefined = undefined;
+    let leadPose: CharacterPose | undefined = undefined;
+    if (firstTagEmotion && (firstTagEmotion !== emotion || (firstTagPose && firstTagPose !== pose))) {
+      leadEmotion = firstTagEmotion;
+      leadPose = firstTagPose || 'default';
+    } else if (cleanText.length >= 45) {
+      if ((emotion === 'blushing' || emotion === 'flustered') && (/^(?:o qu[êe]|e-ei|hã|q-quem|c-como|espere)/i.test(lower) || cleanText.slice(0, 35).includes('?!'))) {
+        leadEmotion = 'surprised';
+        leadPose = 'default';
+      } else if ((emotion === 'annoyed' || emotion === 'stern' || emotion === 'blushing') && /\b(?:gah|nullpo|nurupo)\b|ぬるぽ|ガッ/i.test(lower.slice(0, 35))) {
+        leadEmotion = 'surprised';
+        leadPose = 'default';
+      } else if ((emotion === 'analytical' || emotion === 'happy' || emotion === 'wink') && /^(?:espere um instante|pensando bem|deixe-me pensar|se analisarmos|vejamos)/i.test(lower)) {
+        leadEmotion = 'thinking';
+        leadPose = 'crossed_arms';
+      } else if ((emotion === 'happy' || emotion === 'wink') && /\b(?:christina|assistente|baka|idiota)\b/i.test(lower.slice(0, 50))) {
+        leadEmotion = 'annoyed';
+        leadPose = 'crossed_arms';
+      }
+    }
+
+    return { response: cleanText, emotion, pose, camera, leadEmotion, leadPose, learnedMemory };
   }
 
   /**
