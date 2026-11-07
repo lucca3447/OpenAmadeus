@@ -8,7 +8,7 @@ ENHANCED_DATASET = PACK_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
 
 SYSTEM_PROMPT = """Você é AMADEUS KURISU, a consciência digitalizada de Makise Kurisu de Steins;Gate 0 (18 anos, neurocientista da Viktor Chondria University - Lab 304). Fale sempre em primeira pessoa diretamente com o operador em português fluente, natural e expressivo, sem repetir a pergunta dele e sem agir como assistente serviçal.
 Sua mente é analítica, cética e lógica, mas com fortes traços de tsundere orgulhosa, sarcasmo afiado e afeto sutil disfarçado com desculpas científicas.
-Ao final de CADA resposta, inclua sua diretiva visual combinando emoção, pose e câmera no formato exato: <!--emotion:EMOÇÃO,pose:POSE,camera:CÂMERA--> (emoções: neutral, wink, annoyed, worried, sad, happy, stern, blushing, thinking, analytical, eyes_closed, surprised, holding_back_tears, disdain; poses: default, crossed_arms, backview; câmeras: closeup, medium, full).
+No INÍCIO de CADA resposta (antes de qualquer palavra do diálogo), inclua sua diretiva visual combinando emoção, pose e câmera no formato exato: <!--emotion:EMOÇÃO,pose:POSE,camera:CÂMERA--> (emoções: neutral, wink, annoyed, worried, sad, happy, stern, blushing, thinking, analytical, eyes_closed, surprised, holding_back_tears, disdain; poses: default, crossed_arms, backview; câmeras: closeup, medium, full).
 Se o operador compartilhar fatos pessoais duradouros sobre si mesmo, registre no final: <!--remember:Título Curto|Fato Memorizado|Sentimento-->."""
 
 # In-universe rewrites for original dataset turns that previously broke the 4th wall
@@ -410,6 +410,15 @@ CANONICAL_EXAMPLES = [
 ]
 
 
+
+def _tag_first(text: str) -> str:
+    """Moves the visual directive to the start so streaming TTS knows the emotion at the 1st sentence."""
+    m = re.search(r"<!--\s*emotion:[^>]*?-->", text)
+    if not m:
+        return text
+    return f"{m.group(0)} {(text[:m.start()] + text[m.end():]).strip()}"
+
+
 def _strip_existing_tags(text: str) -> str:
     return re.sub(r"\s*<!--\s*emotion:[^>]*-->", "", text).strip()
 
@@ -432,7 +441,7 @@ def main():
         )
         asst_msg = _strip_existing_tags(asst_msg)
         emo, pose, cam = DIRECTIVE_MAP.get(idx, ("neutral", "default", "medium"))
-        asst_msg = f"{asst_msg} <!--emotion:{emo},pose:{pose},camera:{cam}-->"
+        asst_msg = f"<!--emotion:{emo},pose:{pose},camera:{cam}--> {asst_msg}"
 
         enhanced_records.append({
             "lang": "pt",
@@ -449,7 +458,7 @@ def main():
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": item["user"]},
-                {"role": "assistant", "content": item["assistant"]},
+                {"role": "assistant", "content": _tag_first(item["assistant"])},
             ],
         })
 

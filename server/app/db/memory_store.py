@@ -110,7 +110,9 @@ class MemoryStore:
             sample = self.exemplars_collection.get(ids=["ex_0"], include=["metadatas"]) or {}
             sample_metas = sample.get("metadatas") or []
             first_meta = sample_metas[0] if sample_metas else {}
-            if "pose:" in (first_meta.get("assistant") or "") and first_meta.get("lang"):
+            first_asst = (first_meta.get("assistant") or "").lstrip()
+            # Re-seed records whose directive is not leading (v0.2.2 tag-first for streaming TTS)
+            if first_asst.startswith("<!--emotion") and "pose:" in first_asst and first_meta.get("lang"):
                 return
 
         ids = []
