@@ -297,7 +297,7 @@ async def lifespan(app: FastAPI):
     print("[Qwen3 Worker] Worker shutting down cleanly.")
 
 
-app = FastAPI(title="Amadeus Kurisu Qwen3-TTS Worker", version="0.2.1", lifespan=lifespan)
+app = FastAPI(title="Amadeus Kurisu Qwen3-TTS Worker", version="0.2.2", lifespan=lifespan)
 
 
 class SynthesizeRequest(BaseModel):
@@ -366,7 +366,6 @@ def synthesize_stream(req: SynthesizeRequest):
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
-    _active_gen_id += 1
     my_id = _active_gen_id
 
     def pcm_generator():
@@ -487,7 +486,6 @@ async def synthesize(req: SynthesizeRequest):
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
-    _active_gen_id += 1
     my_id = _active_gen_id
 
     def _run_sync():

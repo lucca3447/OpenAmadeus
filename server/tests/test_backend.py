@@ -14,6 +14,18 @@ class TestAmadeusBackend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
+        cls._initial_sessions = set(r["id"] for r in memory_store.list_sessions())
+
+    @classmethod
+    def tearDownClass(cls):
+        current_sessions = set(r["id"] for r in memory_store.list_sessions())
+        created = current_sessions - cls._initial_sessions
+        if created:
+            with memory_store._conn() as conn:
+                for sid in created:
+                    conn.execute("DELETE FROM messages WHERE session_id = ?", (sid,))
+                    conn.execute("DELETE FROM sessions WHERE id = ?", (sid,))
+                conn.commit()
 
     def test_01_health_endpoint(self):
         response = self.client.get("/api/health")
