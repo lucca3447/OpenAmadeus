@@ -22,7 +22,7 @@ import {
   getModelOptionsForKey,
 } from './services/aiService';
 import { BackendService, BackendHealth } from './services/backendService';
-import { SpeechService } from './services/speechService';
+import { SpeechService, type SentenceSpeaker, type SpeakOptions } from './services/speechService';
 import { CallHeader } from './components/CallHeader';
 import { AmadeusSpriteView } from './components/AmadeusSpriteView';
 import { preloadPrimarySprites, preloadEmotionSprites } from './services/spriteCatalog';
@@ -151,6 +151,7 @@ export const App: React.FC = () => {
 
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const [ttfaMs, setTtfaMs] = useState<number | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [interimTranscript, setInterimTranscript] = useState<string>('');
   const [micError, setMicError] = useState<string | null>(null);
@@ -362,9 +363,7 @@ export const App: React.FC = () => {
     setIsSpeaking(false);
   };
 
-  const speak = (text: string, emotion?: string) => {
-    if (!voiceSettings.enabled || !voiceSettings.autoSpeak) return;
-    SpeechService.speak(text, {
+  const buildSpeakOptions = (emotion?: string): SpeakOptions => ({
       voiceURI: voiceSettings.voiceURI,
       rate: voiceSettings.rate,
       pitch: voiceSettings.pitch,
@@ -393,7 +392,20 @@ export const App: React.FC = () => {
         setIsSpeaking(false);
         setErrorNotice(msg);
       },
-    });
+  });
+
+  const speak = (text: string, emotion?: string) => {
+    if (!voiceSettings.enabled || !voiceSettings.autoSpeak) return;
+    const sentAt = performance.now();
+    const opts = buildSpeakOptions(emotion);
+    const origStart = opts.onStart;
+    opts.onStart = () => {
+      const ms = Math.round(performance.now() - sentAt);
+      setTtfaMs(ms);
+      console.info(`[OpenAmadeus] ttfa_ms=${ms}`);
+      origStart?.();
+    };
+    SpeechService.speak(text, opts);
   };
 
   // Process user input
@@ -430,6 +442,21 @@ export const App: React.FC = () => {
     setCurrentPose(preReaction.pose);
     if (preReaction.camera) setCurrentCamera(preReaction.camera);
 
+    // v0.2.2 sentence streaming: the speaker is created BEFORE the request (it stops previous speech/streams)
+    const speakOpts = buildSpeakOptions();
+    const speaker: SentenceSpeaker | null =
+      voiceSettings.enabled && voiceSettings.autoSpeak ? SpeechService.createSentenceSpeaker(speakOpts) : null;
+    const sentAt = performance.now();
+    const aiMsgId = newId();
+    let streamedAny = false;
+    let ttfaLogged = false;
+    let subtitleText = '';
+    let currentMeta: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming; recalledIds?: string[] } = {
+      emotion: 'neutral',
+      pose: 'default',
+      camera: 'closeup',
+    };
+
     try {
       const result = await AIService.queryAmadeus(
         text,
@@ -439,21 +466,65 @@ export const App: React.FC = () => {
         nextHistory,
         sessionId,
         currentModel,
-        llmSettings
+        {
+          ...llmSettings,
+          stream: {
+            onMeta: (m) => {
+              currentMeta = { ...currentMeta, emotion: m.emotion, pose: m.pose, camera: m.camera };
+              speakOpts.emotion = m.emotion;
+              preloadEmotionSprites(m.emotion, m.pose || 'default', m.camera);
+              setCurrentEmotion(m.emotion);
+              if (m.pose) setCurrentPose(m.pose);
+              if (m.camera) setCurrentCamera(m.camera);
+            },
+            onSentence: (sentence) => {
+              streamedAny = true;
+              // Subtitle & chat history grow as each sentence becomes audible (or immediately when voice is off)
+              const reveal = () => {
+                subtitleText = subtitleText ? `${subtitleText} ${sentence}` : sentence;
+                setCurrentSubtitle(subtitleText);
+                if (!ttfaLogged) {
+                  ttfaLogged = true;
+                  const ms = Math.round(performance.now() - sentAt);
+                  setTtfaMs(ms);
+                  console.info(`[OpenAmadeus] ttfa_ms=${ms}`);
+                }
+                const partialMsg: ChatMessage = {
+                  id: aiMsgId,
+                  sender: 'amadeus',
+                  content: subtitleText,
+                  timestamp: Date.now(),
+                  emotion: currentMeta.emotion,
+                  pose: currentMeta.pose,
+                  camera: currentMeta.camera,
+                  recalledMemories: currentMeta.recalledIds ?? matched.map((m: MemoryItem) => m.id),
+                };
+                const partialHistory = [...nextHistory, partialMsg];
+                setHistory(partialHistory);
+                MemoryService.saveActiveSession(sessionId, partialHistory);
+              };
+              if (speaker) speaker.enqueue(sentence, reveal);
+              else reveal();
+            },
+          },
+        }
       );
+
+      if (result.aborted) return;
 
       const finalRecalledIds = result.recalledMemories ?? matched.map((m: MemoryItem) => m.id);
       setRecalledMemoryIds(finalRecalledIds);
       if (finalRecalledIds.length > 0) setMemoryPulse((p) => p + 1);
 
       setAiStatus(result.status);
-      setCurrentSubtitle(result.response);
+      if (!streamedAny) setCurrentSubtitle(result.response);
       if (leadTransitionTimerRef.current !== null) {
         window.clearTimeout(leadTransitionTimerRef.current);
         leadTransitionTimerRef.current = null;
       }
 
       const finalPose = result.pose || 'default';
+      currentMeta = { emotion: result.emotion, pose: result.pose, camera: result.camera, recalledIds: finalRecalledIds };
       if (result.leadEmotion && (result.leadEmotion !== result.emotion || (result.leadPose && result.leadPose !== finalPose))) {
         const initialPose = result.leadPose || 'default';
         preloadEmotionSprites(result.leadEmotion, initialPose, result.camera);
@@ -482,6 +553,7 @@ export const App: React.FC = () => {
       }
 
       if (result.isError) {
+        speaker?.cancel();
         setErrorNotice(result.response);
         setCurrentEmotion('worried');
         setCurrentPose('default');
@@ -505,26 +577,48 @@ export const App: React.FC = () => {
         setLearnedNotification(`Nova memória gravada: "${result.learnedMemory.title}"`);
       }
 
-      const aiMessage: ChatMessage = {
-        id: newId(),
-        sender: 'amadeus',
-        content: result.response,
-        timestamp: Date.now(),
-        emotion: result.emotion,
-        pose: result.pose,
-        camera: result.camera,
-        recalledMemories: finalRecalledIds,
-      };
-
-      const updatedHistory = [...nextHistory, aiMessage];
-      setHistory(updatedHistory);
-      MemoryService.saveActiveSession(sessionId, updatedHistory);
-      setSessions(MemoryService.getSessionLogs());
-
       preloadEmotionSprites(result.emotion, result.pose, result.camera);
 
-      speak(result.response, result.emotion);
+      if (streamedAny) {
+        if (subtitleText) {
+          const syncedHistory = [
+            ...nextHistory,
+            {
+              id: aiMsgId,
+              sender: 'amadeus' as const,
+              content: subtitleText,
+              timestamp: Date.now(),
+              emotion: result.emotion,
+              pose: result.pose,
+              camera: result.camera,
+              recalledMemories: finalRecalledIds,
+            },
+          ];
+          setHistory(syncedHistory);
+          MemoryService.saveActiveSession(sessionId, syncedHistory);
+        }
+        setSessions(MemoryService.getSessionLogs());
+        speaker?.end();
+      } else {
+        speaker?.cancel();
+        const aiMessage: ChatMessage = {
+          id: aiMsgId,
+          sender: 'amadeus',
+          content: result.response,
+          timestamp: Date.now(),
+          emotion: result.emotion,
+          pose: result.pose,
+          camera: result.camera,
+          recalledMemories: finalRecalledIds,
+        };
+        const updatedHistory = [...nextHistory, aiMessage];
+        setHistory(updatedHistory);
+        MemoryService.saveActiveSession(sessionId, updatedHistory);
+        setSessions(MemoryService.getSessionLogs());
+        speak(result.response, result.emotion);
+      }
     } catch (err: any) {
+      speaker?.cancel();
       console.error('Failed to query Amadeus:', err);
       const message = '[ERRO DE CONEXÃO COM O AMADEUS]';
       setCurrentSubtitle(message);
@@ -704,7 +798,8 @@ export const App: React.FC = () => {
         else setInterimTranscript('');
       },
       (message) => setMicError(message),
-      (interim) => setInterimTranscript(interim)
+      (interim) => setInterimTranscript(interim),
+      () => setCurrentEmotion('thinking')
     );
   }, []);
 
@@ -957,6 +1052,7 @@ export const App: React.FC = () => {
         voiceSettings={voiceSettings}
         llmSettings={llmSettings}
         onOpenSettingsWithSection={handleOpenSettingsWithSection}
+        ttfaMs={ttfaMs}
       />
 
       {/* Microphone problem banner */}

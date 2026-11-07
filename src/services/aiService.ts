@@ -1,5 +1,5 @@
 import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
-import { BackendService } from './backendService';
+import { BackendService, type ChatStreamHandlers } from './backendService';
 import { MemoryService } from './memoryService';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -207,6 +207,8 @@ export interface AIResult {
   sessionId?: string;
   fallbackModel?: string;
   decommissionNotice?: string;
+  /** stream cancelled before any sentence (barge-in / newer message) */
+  aborted?: boolean;
 }
 
 /** Error from the Gemini/Groq/OpenRouter API, carrying the HTTP status (0 = network / empty response). */
@@ -351,15 +353,16 @@ export class AIService {
         if (models.length > 0) {
           const score = (name: string): number => {
             let s = 0;
-            if (name.includes('120b')) s += 120;
-            else if (name.includes('70b')) s += 100;
-            else if (name.includes('27b')) s += 80;
+            if (name.includes('llama-3.3-70b')) s += 160;
+            else if (name.includes('70b')) s += 110;
+            else if (name.includes('120b')) s += 100;
+            else if (name.includes('27b') || name.includes('32b')) s += 85;
             else if (name.includes('20b')) s += 70;
             else if (name.includes('8b')) s += 50;
             if (name.includes('llama')) s += 30;
-            if (name.includes('gpt-oss')) s += 25;
+            if (name.includes('versatile')) s += 20;
             if (name.includes('qwen')) s += 20;
-            if (name.includes('versatile')) s += 15;
+            if (name.includes('gpt-oss')) s += 10;
             if (name.includes('instant')) s += 10;
             return s;
           };
@@ -372,10 +375,10 @@ export class AIService {
     }
 
     return [
+      'llama-3.3-70b-versatile',
+      'qwen/qwen3.8-27b',
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
-      'qwen/qwen3.8-27b',
-      'llama-3.3-70b-versatile',
       'llama-3.1-8b-instant',
     ];
   }
@@ -684,7 +687,12 @@ export class AIService {
     if (/\b(?:linda|fofa|bonita|maravilhosa|perfeita|cute|pretty|beautiful)\b|かわいい|可愛い|綺麗/i.test(uLow)) {
       return { emotion: 'blushing', pose: 'crossed_arms', camera: 'closeup' };
     }
-    if (/\b(?:teoria|f[íi]sica|c[óo]digo|python|bug|arquitetura|hip[óo]tese|como|por que|explica)\b|\?/i.test(uLow)) {
+    const letters = userMessage.replace(/[^A-Za-zÀ-ÿ]/g, '');
+    const shouting = letters.length >= 4 && letters === letters.toUpperCase();
+    if (shouting || (userMessage.includes('!') && userMessage.trim().length <= 40)) {
+      return { emotion: 'surprised', pose: 'default', camera: 'closeup' };
+    }
+    if (/\b(?:teoria|f[íi]sica|c[óo]digo|python|bug|arquitetura|hip[óo]tese|como|por que|explica|why|how|explain|theory|physics)\b|なぜ|どうして|説明|理論|\?/i.test(uLow)) {
       return { emotion: 'thinking', pose: 'crossed_arms', camera: 'medium' };
     }
     return { emotion: 'thinking', pose: 'default' };
@@ -817,6 +825,8 @@ export class AIService {
       allowModelFallback?: boolean;
       allowOfflineSimulatorFallback?: boolean;
       systemEvent?: AutonomousEventType;
+      /** v0.2.2: backend sentence streaming; the speak queue lives in the caller */
+      stream?: ChatStreamHandlers;
     }
   ): Promise<AIResult> {
     const key = apiKey?.trim();
@@ -841,17 +851,24 @@ export class AIService {
     const backendOnline = await BackendService.checkHealth();
     if (backendOnline) {
       try {
-        const backendRes = await BackendService.queryChat(
-          userMessage,
-          sessionId,
-          key || '',
-          history,
-          selectedModel,
-          allowModelFallback,
-          allowOfflineFallback,
-          systemEvent
-        );
+        const streamHandlers = llmOptions?.stream;
+        const backendRes = streamHandlers
+          ? await BackendService.queryChatStream(
+              userMessage, sessionId, key || '', history, selectedModel,
+              allowModelFallback, allowOfflineFallback, systemEvent, streamHandlers
+            ).catch((streamErr) => {
+              console.warn('[OpenAmadeus] /chat/stream failed before the first sentence, using /chat:', streamErr);
+              return BackendService.queryChat(
+                userMessage, sessionId, key || '', history, selectedModel,
+                allowModelFallback, allowOfflineFallback, systemEvent
+              );
+            })
+          : await BackendService.queryChat(
+              userMessage, sessionId, key || '', history, selectedModel,
+              allowModelFallback, allowOfflineFallback, systemEvent
+            );
         return {
+          aborted: backendRes.aborted,
           response: backendRes.response,
           emotion: backendRes.emotion,
           pose: backendRes.pose,
@@ -1046,7 +1063,7 @@ export class AIService {
       { role: 'system', content: systemPrompt },
       ...history.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->` : msg.content,
+        content: msg.emotion ? `<!--emotion:${msg.emotion},pose:${msg.pose || 'default'}--> ${msg.content}` : msg.content,
       })),
       { role: 'user', content: userMessage },
     ];
@@ -1186,7 +1203,7 @@ export class AIService {
       { role: 'system', content: systemPrompt },
       ...history.slice(-MAX_HISTORY_MESSAGES).map((msg) => ({
         role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.emotion ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->` : msg.content,
+        content: msg.emotion ? `<!--emotion:${msg.emotion},pose:${msg.pose || 'default'}--> ${msg.content}` : msg.content,
       })),
       { role: 'user', content: userMessage },
     ];
@@ -1310,7 +1327,7 @@ export class AIService {
       if (msg.sender === 'system') continue;
       const role = msg.sender === 'user' ? 'user' : 'model';
       const text = role === 'model' && msg.emotion
-        ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'}-->`
+        ? `<!--emotion:${msg.emotion},pose:${msg.pose || 'default'}--> ${msg.content}`
         : msg.content;
 
       const last = turns[turns.length - 1];
