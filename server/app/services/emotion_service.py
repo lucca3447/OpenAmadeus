@@ -308,9 +308,9 @@ def infer_pose_and_camera(
             pose = "backview"
         elif emotion in ("analytical", "disdain", "smug"):
             pose = "crossed_arms"
-        elif emotion in ("annoyed", "stern", "tsundere", "serious") and (
-            re.search(r"(\b(?:christina|assistente|zombie|teoria|c[óo]digo|hip[óo]tese|ci[êe]ncia|relatividade|entropia|dados|erro)\b)", f"{u_low} {text}")
-            or len(text) > 70
+        elif emotion in ("annoyed", "stern", "tsundere", "serious") and re.search(
+            r"(\b(?:cruzar os bra[çc]os|bra[çc]os cruzados|christina|assistente|zombie|teoria|c[óo]digo|hip[óo]tese|ci[êe]ncia|relatividade|entropia|dados|erro)\b)",
+            f"{u_low} {text}",
         ):
             pose = "crossed_arms"
         elif emotion in ("blushing", "flustered") and re.search(r"(n[ãa]o [ée] como se|processador|oscila[çc][ãa]o|sistema nervoso|calor|descaradamente)", text):
@@ -383,3 +383,54 @@ def infer_lead_expression(
                 return "eyes_closed", "crossed_arms"
 
     return None, None
+
+
+def infer_sentence_shift(
+    sentence: str,
+    index: int,
+    emotion: str,
+    pose: str,
+    camera: str,
+) -> dict:
+    """
+    Organically shifts Kurisu's pose, emotion and camera on sentence >= 1 during streaming
+    when the LLM did not emit an explicit mid-stream <!--emotion:...--> tag for that sentence.
+    Prevents staying frozen in crossed_arms for an entire multi-sentence explanation.
+    """
+    s = (sentence or "").strip()
+    low = s.lower()
+    if not s or index <= 0:
+        return {"emotion": emotion, "pose": pose, "camera": camera}
+
+    # 1. Exasperated sigh or eye-close mid-reply
+    if re.search(r"^(?:francamente\b|ora essa\b|suspiro\b|humpf\b|sinceramente\b)", low):
+        return {"emotion": "eyes_closed", "pose": "crossed_arms", "camera": "medium"}
+
+    # 2. Sudden exclamation or self-contradictory blush mid-reply
+    if re.search(r"\b(n-n[ãa]o|q-quem|n[ãa]o me entenda mal|oscila[çc][ãa]o t[ée]rmica|vi[ée]s de refor[çc]o)\b", low):
+        return {"emotion": "blushing", "pose": "crossed_arms" if pose == "default" else "default", "camera": "closeup"}
+
+    # 3. Closing or mid-speech question (?): uncross arms and lean in (closeup) to engage/challenge the operator
+    if s.endswith("?"):
+        if re.search(r"\b(ou ser[áa] que|n[ãa]o acha|vai me dizer|entendeu|consegue acompanhar|travou|duvida)\b", low):
+            return {"emotion": "wink", "pose": "default", "camera": "closeup"}
+        next_emo = "thinking" if emotion in ("analytical", "disdain", "stern") else emotion
+        return {"emotion": next_emo, "pose": "default", "camera": "closeup"}
+
+    # 4. Concrete example / open explanation pivot -> uncross arms to pose:default
+    if pose == "crossed_arms" and (
+        re.search(r"\b(por exemplo|imagine|na pr[áa]tica|pense bem|ou seja|basicamente|em outras palavras|veja bem)\b", low)
+        or index % 2 == 1
+    ):
+        next_emo = "thinking" if emotion == "analytical" else ("neutral" if emotion == "stern" else emotion)
+        return {"emotion": next_emo, "pose": "default", "camera": "closeup"}
+
+    # 5. Deep theoretical / analytical pivot from default pose -> cross arms for that point
+    if pose == "default" and (
+        re.search(r"\b(entretanto|por[ée]m|contudo|por outro lado|matematicamente|fisicamente|equa[çc][ãa]o|m[ée]trica|tensor|entropia|hip[óo]tese)\b", low)
+        or (index % 2 == 1 and emotion in ("thinking", "analytical", "annoyed", "stern"))
+    ):
+        next_emo = "analytical" if emotion in ("thinking", "neutral") else emotion
+        return {"emotion": next_emo, "pose": "crossed_arms", "camera": "medium"}
+
+    return {"emotion": emotion, "pose": pose, "camera": camera}

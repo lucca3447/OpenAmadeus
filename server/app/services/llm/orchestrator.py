@@ -7,7 +7,7 @@ from app.core.config import MAX_HISTORY_MESSAGES
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
-from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera, infer_lead_expression
+from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera, infer_lead_expression, infer_sentence_shift
 from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
@@ -730,26 +730,36 @@ class LLMOrchestrator:
         raw, used_model, gemini_model = "", "", ""
         spoken: List[str] = []
         first_emotion = "neutral"
+        cur_meta: Dict[str, str] = {"emotion": "neutral", "pose": "default", "camera": "closeup"}
+        shifted_this_sentence = False
         meta_sent = False
         completed = False
 
         def handle(events):
-            """Turns splitter events into outgoing events, guaranteeing one meta before the 1st sentence."""
-            nonlocal meta_sent, first_emotion
+            """Turns splitter events into outgoing events, guaranteeing one meta before the 1st sentence and per-sentence visual shifts."""
+            nonlocal meta_sent, first_emotion, cur_meta, shifted_this_sentence
             out = []
             for kind, val in events:
-                if kind == "directive" and not meta_sent:
+                if kind == "directive":
                     meta = self._directive_meta(val, user_ctx)
-                    first_emotion = meta["emotion"]
-                    meta_sent = True
-                    out.append(meta)
+                    cur_meta = {"emotion": meta["emotion"], "pose": meta["pose"], "camera": meta["camera"]}
+                    if not meta_sent:
+                        first_emotion = meta["emotion"]
+                        meta_sent = True
+                        out.append(meta)
+                    else:
+                        shifted_this_sentence = True
                 elif kind == "sentence":
                     if not meta_sent:
                         pose, camera = infer_pose_and_camera("", "neutral", user_message=user_ctx)
-                        out.append({"event": "meta", "emotion": "neutral", "pose": pose, "camera": camera})
+                        cur_meta = {"emotion": "neutral", "pose": pose, "camera": camera}
+                        out.append({"event": "meta", **cur_meta})
                         meta_sent = True
+                    elif spoken and not shifted_this_sentence:
+                        cur_meta = infer_sentence_shift(val, len(spoken), cur_meta["emotion"], cur_meta["pose"], cur_meta["camera"])
+                    shifted_this_sentence = False
                     spoken.append(val)
-                    out.append({"event": "sentence", "text": val, "index": len(spoken) - 1})
+                    out.append({"event": "sentence", "text": val, "index": len(spoken) - 1, **cur_meta})
             return out
 
         try:

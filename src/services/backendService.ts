@@ -37,7 +37,11 @@ export interface BackendChatResponse {
 
 export interface ChatStreamHandlers {
   onMeta?: (meta: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming }) => void;
-  onSentence?: (text: string, index: number) => void;
+  onSentence?: (
+    text: string,
+    index: number,
+    visual?: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming }
+  ) => void;
 }
 
 export class BackendService {
@@ -201,7 +205,11 @@ export class BackendService {
             handlers.onMeta?.(lastMeta);
           } else if (ev.event === 'sentence') {
             spoken.push(ev.text);
-            handlers.onSentence?.(ev.text, ev.index);
+            const visual: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming } | undefined = ev.emotion
+              ? { emotion: ev.emotion as Emotion, pose: (ev.pose ?? undefined) as CharacterPose | undefined, camera: (ev.camera ?? undefined) as CameraFraming | undefined }
+              : lastMeta ?? undefined;
+            if (visual) lastMeta = visual;
+            handlers.onSentence?.(ev.text, ev.index, visual);
           } else if (ev.event === 'done') {
             finalResponse = ev.response as BackendChatResponse;
           } else if (ev.event === 'error') {

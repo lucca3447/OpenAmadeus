@@ -412,11 +412,35 @@ CANONICAL_EXAMPLES = [
 
 
 def _tag_first(text: str) -> str:
-    """Moves the visual directive to the start so streaming TTS knows the emotion at the 1st sentence."""
-    m = re.search(r"<!--\s*emotion:[^>]*?-->", text)
-    if not m:
+    """Moves the visual directive to the start and injects a mid-speech pose shift on multi-sentence replies."""
+    tags = list(re.finditer(r"<!--\s*emotion:[^>]*?-->", text))
+    if not tags:
         return text
-    return f"{m.group(0)} {(text[:m.start()] + text[m.end():]).strip()}"
+    first_tag = tags[0].group(0)
+    clean = re.sub(r"\s*<!--\s*emotion:[^>]*?-->", "", text).strip()
+    parts = [p.strip() for p in re.split(r"(?<=[.?!])\s+", clean) if p.strip()]
+    if len(parts) < 2:
+        return f"{first_tag} {clean}"
+    if len(tags) >= 2:
+        second_tag = tags[-1].group(0)
+    else:
+        emo_m = re.search(r"emotion:([a-z_]+)", first_tag)
+        pose_m = re.search(r"pose:([a-z_]+)", first_tag)
+        emo = emo_m.group(1) if emo_m else "neutral"
+        pose = pose_m.group(1) if pose_m else "default"
+        last_s = parts[-1]
+        if pose == "crossed_arms":
+            emo2 = "wink" if last_s.endswith("?") and emo in ("analytical", "thinking", "smug", "disdain") else (
+                "thinking" if emo == "analytical" else emo
+            )
+            second_tag = f"<!--emotion:{emo2},pose:default,camera:closeup-->"
+        elif pose == "default" and emo in ("thinking", "analytical", "annoyed", "stern", "surprised"):
+            emo2 = "analytical" if emo in ("thinking", "surprised") else emo
+            second_tag = f"<!--emotion:{emo2},pose:crossed_arms,camera:medium-->"
+        else:
+            return f"{first_tag} {clean}"
+    head = " ".join(parts[:-1])
+    return f"{first_tag} {head} {second_tag} {parts[-1]}"
 
 
 def _strip_existing_tags(text: str) -> str:
@@ -441,7 +465,7 @@ def main():
         )
         asst_msg = _strip_existing_tags(asst_msg)
         emo, pose, cam = DIRECTIVE_MAP.get(idx, ("neutral", "default", "medium"))
-        asst_msg = f"<!--emotion:{emo},pose:{pose},camera:{cam}--> {asst_msg}"
+        asst_msg = _tag_first(f"<!--emotion:{emo},pose:{pose},camera:{cam}--> {asst_msg}")
 
         enhanced_records.append({
             "lang": "pt",

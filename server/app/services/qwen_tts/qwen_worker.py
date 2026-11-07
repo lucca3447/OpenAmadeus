@@ -305,8 +305,8 @@ class SynthesizeRequest(BaseModel):
     language: Optional[str] = "Portuguese"
     speaker: Optional[str] = "kurisu"
     instruct: Optional[str] = None
-    temperature: Optional[float] = 0.90  # Padrão v3 atualizado para 0.90
-    top_p: Optional[float] = 0.90
+    temperature: Optional[float] = 0.75
+    top_p: Optional[float] = 0.85
     repetition_penalty: Optional[float] = 1.05
     max_new_tokens: Optional[int] = 2048
 
@@ -360,9 +360,8 @@ def synthesize_stream(req: SynthesizeRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
     effective_instruct = _resolve_effective_instruct(req.instruct)
-    # Promove 0.65 legado para 0.90 (padrão oficial v3) ou respeita valores customizados
-    eff_temp = 0.90 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
-    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.95)
+    eff_temp = 0.75 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
+    eff_top_p = min(req.top_p if req.top_p is not None else 0.85, 0.95)
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 
@@ -480,9 +479,8 @@ async def synthesize(req: SynthesizeRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
     effective_instruct = _resolve_effective_instruct(req.instruct)
-    # Promove 0.65 legado para 0.90 (padrão oficial v3) ou respeita valores customizados
-    eff_temp = 0.90 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
-    eff_top_p = min(req.top_p if req.top_p is not None else 0.90, 0.95)
+    eff_temp = 0.75 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
+    eff_top_p = min(req.top_p if req.top_p is not None else 0.85, 0.95)
     eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
     eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
 

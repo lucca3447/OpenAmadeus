@@ -477,10 +477,24 @@ export const App: React.FC = () => {
               if (m.pose) setCurrentPose(m.pose);
               if (m.camera) setCurrentCamera(m.camera);
             },
-            onSentence: (sentence) => {
+            onSentence: (sentence, _index, visual) => {
               streamedAny = true;
-              // Subtitle & chat history grow as each sentence becomes audible (or immediately when voice is off)
+              if (visual?.emotion) {
+                preloadEmotionSprites(visual.emotion, visual.pose || currentMeta.pose || 'default', visual.camera || currentMeta.camera);
+              }
+              // Subtitle, chat history & sprite pose/expression update as each sentence becomes audible (or immediately when voice is off)
               const reveal = () => {
+                if (visual?.emotion) {
+                  currentMeta = {
+                    ...currentMeta,
+                    emotion: visual.emotion,
+                    pose: visual.pose || currentMeta.pose,
+                    camera: visual.camera || currentMeta.camera,
+                  };
+                  setCurrentEmotion(visual.emotion);
+                  if (visual.pose) setCurrentPose(visual.pose);
+                  if (visual.camera) setCurrentCamera(visual.camera);
+                }
                 subtitleText = subtitleText ? `${subtitleText} ${sentence}` : sentence;
                 setCurrentSubtitle(subtitleText);
                 if (!ttfaLogged) {
@@ -503,7 +517,7 @@ export const App: React.FC = () => {
                 setHistory(partialHistory);
                 MemoryService.saveActiveSession(sessionId, partialHistory);
               };
-              if (speaker) speaker.enqueue(sentence, reveal);
+              if (speaker) speaker.enqueue(sentence, reveal, visual?.emotion);
               else reveal();
             },
           },
@@ -524,24 +538,27 @@ export const App: React.FC = () => {
       }
 
       const finalPose = result.pose || 'default';
-      currentMeta = { emotion: result.emotion, pose: result.pose, camera: result.camera, recalledIds: finalRecalledIds };
-      if (result.leadEmotion && (result.leadEmotion !== result.emotion || (result.leadPose && result.leadPose !== finalPose))) {
-        const initialPose = result.leadPose || 'default';
-        preloadEmotionSprites(result.leadEmotion, initialPose, result.camera);
-        preloadEmotionSprites(result.emotion, finalPose, result.camera);
-        setCurrentEmotion(result.leadEmotion);
-        setCurrentPose(initialPose);
-        setCurrentCamera(result.camera);
-        leadTransitionTimerRef.current = window.setTimeout(() => {
+      currentMeta = { ...currentMeta, recalledIds: finalRecalledIds };
+      if (!streamedAny) {
+        currentMeta = { emotion: result.emotion, pose: result.pose, camera: result.camera, recalledIds: finalRecalledIds };
+        if (result.leadEmotion && (result.leadEmotion !== result.emotion || (result.leadPose && result.leadPose !== finalPose))) {
+          const initialPose = result.leadPose || 'default';
+          preloadEmotionSprites(result.leadEmotion, initialPose, result.camera);
+          preloadEmotionSprites(result.emotion, finalPose, result.camera);
+          setCurrentEmotion(result.leadEmotion);
+          setCurrentPose(initialPose);
+          setCurrentCamera(result.camera);
+          leadTransitionTimerRef.current = window.setTimeout(() => {
+            setCurrentEmotion(result.emotion);
+            setCurrentPose(finalPose);
+            setCurrentCamera(result.camera);
+            leadTransitionTimerRef.current = null;
+          }, 1500);
+        } else {
           setCurrentEmotion(result.emotion);
           setCurrentPose(finalPose);
           setCurrentCamera(result.camera);
-          leadTransitionTimerRef.current = null;
-        }, 1500);
-      } else {
-        setCurrentEmotion(result.emotion);
-        setCurrentPose(finalPose);
-        setCurrentCamera(result.camera);
+        }
       }
 
       if (result.decommissionNotice) {

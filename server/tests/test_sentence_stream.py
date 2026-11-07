@@ -58,6 +58,15 @@ class TestSentenceStream(unittest.TestCase):
         ev, _ = run(["Frase sem pontuação final"])
         self.assertEqual(sentences(ev), ["Frase sem pontuação final"])
 
+    def test_mid_speech_directive_emitted_before_second_sentence(self):
+        ev, _ = run([
+            "<!--emotion:thinking,pose:default,camera:closeup--> Primeira frase explicando o conceito básico. ",
+            "<!--emotion:analytical,pose:crossed_arms,camera:medium--> Segunda frase aprofundando a matemática da métrica.",
+        ])
+        self.assertEqual([k for k, _ in ev], ["directive", "sentence", "directive", "sentence"])
+        self.assertIn("pose:default", ev[0][1])
+        self.assertIn("pose:crossed_arms", ev[2][1])
+
 
 if __name__ == "__main__":
     unittest.main()

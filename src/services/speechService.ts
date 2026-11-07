@@ -19,8 +19,8 @@ export interface PcmTimeline {
 }
 
 export interface SentenceSpeaker {
-  /** Fires /tts immediately (prefetch) and plays after the previous sentence; onAudible runs when this sentence starts sounding. */
-  enqueue(text: string, onAudible?: () => void): void;
+  /** Prefetches /tts in queue order and plays after the previous sentence; onAudible runs when this sentence starts sounding. */
+  enqueue(text: string, onAudible?: () => void, emotion?: string): void;
   /** No more sentences: resolves options.onEnd after the last audio finishes. */
   end(): void;
   cancel(): void;
@@ -1183,12 +1183,13 @@ export class SpeechService {
     let errorShown = false;
 
     return {
-      enqueue: (text, onAudible) => {
+      enqueue: (text, onAudible, emotion) => {
         const clean = normalizeForSpeech(text);
         if (!clean) {
           chain = chain.then(() => onAudible?.());
           return;
         }
+        const sentenceOpts = emotion ? { ...options, emotion } : options;
         // Serialize GPU worker HTTP fetches so sentence N+1 prefetches right after sentence N finishes downloading (while N is still playing)
         let releaseFetch!: () => void;
         const fetchDone = new Promise<void>((r) => { releaseFetch = r; });
@@ -1198,7 +1199,7 @@ export class SpeechService {
         const pending = prevFetch
           .then(async () => {
             if (signal.aborted) { releaseFetch(); return null; }
-            const res = await this.requestNeural(clean, options, signal);
+            const res = await this.requestNeural(clean, sentenceOpts, signal);
             if (!res) { releaseFetch(); return null; }
             const ct = res.headers.get('content-type') || '';
             const fmt = res.headers.get('x-audio-format') || '';
