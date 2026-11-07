@@ -2,7 +2,7 @@
 
 A full-stack, modular multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), audio-reactive procedural lip-sync, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
 
-[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](https://semver.org/)
+[![Version](https://img.shields.io/badge/version-0.2.2-blue.svg)](https://semver.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -353,9 +353,9 @@ OpenAmadeus follows [Semantic Versioning 2.0.0](https://semver.org/) (`MAJOR.MIN
 
 - **`v0.1.0` (Released)**: Real-time Qwen3-TTS CUDA Graphs streaming (~391ms TTFA), $C^0$ boundary DSP ramp, Web Audio compressor, and 4-stage voice fallback cascade.
 - **`v0.2.0` (Completed)**: Acoustic calibration, 174-sprite SC3 bytecode ground truth mapping, autonomous eye-blink alignment, and hands-free Groq Whisper Turbo STT with instant barge-in.
-- **`v0.2.1` (Current — Released)**: Conversational naturalness, body grammar & organic pose/camera inference (`crossed_arms`, `backview`), circadian call telemetry ($\Delta t$), episodic bridge, 130 canonical Few-Shot exemplars, and trilingual foundation (`pt`, `en`, `ja`).
-- **`v0.2.2` (Next Step)**: LLM &rarr; TTS sentence-level streaming for sub-600ms total latency and pre-LLM listening micro-reactions.
-- **`v0.3.0`**: Multilingual expansion, persona cultural variants (PT-BR, EN, JA), and dynamic code-switching TTS.
+- **`v0.2.1` (Released)**: Conversational naturalness, body grammar & organic pose/camera inference (`crossed_arms`, `backview`), circadian call telemetry ($\Delta t$), episodic bridge, 130 canonical Few-Shot exemplars, and trilingual foundation (`pt`, `en`, `ja`).
+- **`v0.2.2` (Current — Released)**: LLM &rarr; TTS sentence-level SSE streaming (`/api/chat/stream`), tag-first visual conditioning, prefetch audio queue with $C^0$ continuity, barge-in LLM cancellation, and trilingual pre-LLM listening micro-reactions (`ttfa_ms` HUD telemetry).
+- **`v0.3.0` (Next Step)**: Multilingual expansion, persona cultural variants (PT-BR, EN, JA), and dynamic code-switching TTS.
 - **`v0.4.0`**: Multimodal screen vision (`getDisplayMedia`) with on-demand snapshot inspection and region analysis.
 - **`v0.5.0`**: Floating desktop pop-up / overlay (*Always-on-Top* companion) and continuous co-pilot monitoring.
 - **`v1.0.0`**: Public API freeze, one-click standalone installer, and fully GPU-orchestrated Docker release.

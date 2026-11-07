@@ -1,4 +1,4 @@
-# 🧠 OpenAmadeus Backend Core (`v0.2.1`)
+# 🧠 OpenAmadeus Backend Core (`v0.2.2`)
 
 High-performance Python backend server for the **Amadeus System**, orchestrating continuous episodic memory (RAG), psychological persona simulation, multi-provider LLM routing, and a 4-stage neural voice cascade with CUDA Graphs acceleration.
 
