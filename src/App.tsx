@@ -370,7 +370,7 @@ export const App: React.FC = () => {
       volume: voiceSettings.volume,
       engine: voiceSettings.engine || 'qwen3',
       qwenMode: voiceSettings.qwenMode || 'remote',
-      qwenRemoteUrl: voiceSettings.qwenRemoteUrl,
+      qwenRemoteUrl: voiceSettings.qwenMode === 'local' ? undefined : voiceSettings.qwenRemoteUrl,
       emotion,
       stream: voiceSettings.engine === 'qwen3' ? Boolean(voiceSettings.stream) : false,
       useNeural: voiceSettings.useNeural !== false,

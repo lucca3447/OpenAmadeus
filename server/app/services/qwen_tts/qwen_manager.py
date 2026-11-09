@@ -97,12 +97,17 @@ class QwenTTSManager:
         2. Environment variable QWEN_REMOTE_URL (if mode is remote or auto)
         3. Local loopback default (http://127.0.0.1:8005)
         """
+        mode = (qwen_mode or os.environ.get("QWEN_MODE", "remote")).lower()
+        if mode == "local":
+            if custom_url and custom_url.strip() and not cls.is_remote_url(custom_url):
+                return custom_url.strip().rstrip("/")
+            return f"http://127.0.0.1:{WORKER_PORT}"
+
         if custom_url and custom_url.strip():
             url = custom_url.strip().rstrip("/")
             if url.startswith("http://") or url.startswith("https://"):
                 return url
 
-        mode = (qwen_mode or os.environ.get("QWEN_MODE", "remote")).lower()
         if mode in ("remote", "auto"):
             env_remote = os.environ.get("QWEN_REMOTE_URL", "").strip().rstrip("/")
             if env_remote and (env_remote.startswith("http://") or env_remote.startswith("https://")):

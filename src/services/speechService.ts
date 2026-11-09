@@ -900,7 +900,7 @@ export class SpeechService {
           text: cleanText,
           engine: options.engine || 'qwen3',
           qwenMode: options.qwenMode || 'remote',
-          qwenRemoteUrl: options.qwenRemoteUrl,
+          qwenRemoteUrl: options.qwenMode === 'local' ? undefined : options.qwenRemoteUrl,
           emotion: options.emotion,
           instruct: options.instruct,
           stream: options.stream ?? false,
