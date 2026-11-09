@@ -519,6 +519,35 @@ class MemoryStore:
             cursor.execute("UPDATE sessions SET context_summary = ? WHERE id = ?", (clean, session_id))
             conn.commit()
 
+    def close_session(self, session_id: str) -> str:
+        """Single-pass episodic summary upon call hangup / session close (zero per-turn LLM overhead)."""
+        if not session_id:
+            return ""
+        msgs = self.get_session_messages(session_id)
+        user_turns = [
+            _sanitize_field(m["content"], 140)
+            for m in msgs
+            if m.get("sender") == "user" and not m.get("content", "").startswith("[")
+        ]
+        amadeus_turns = [m for m in msgs if m.get("sender") != "user" and m.get("content")]
+        summary = ""
+        if user_turns:
+            topics = " / ".join(dict.fromkeys([user_turns[0], *user_turns[-2:]]))
+            last_ai = _sanitize_field(amadeus_turns[-1]["content"], 180) if amadeus_turns else ""
+            last_emo = amadeus_turns[-1].get("emotion", "neutral") if amadeus_turns else "neutral"
+            summary = _sanitize_field(
+                f"Operador abordou: {topics}. Última reação de Kurisu ({last_emo}): {last_ai}",
+                600,
+            )
+        now = time.time()
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE sessions SET ended_at = ?, context_summary = COALESCE(NULLIF(?, ''), context_summary) WHERE id = ?",
+                (now, summary, session_id),
+            )
+            conn.commit()
+        return summary
+
     def save_message(self, session_id: str, sender: str, content: str, emotion: Optional[str] = None, recalled: Optional[List[str]] = None) -> str:
         msg_id = f"msg_{int(time.time() * 1000)}_{os.urandom(2).hex()}"
         with self._conn() as conn:
@@ -613,13 +642,18 @@ class MemoryStore:
 
             cursor.execute(
                 """
-                SELECT context_summary, summary FROM sessions
+                SELECT id, context_summary, summary FROM sessions
                 WHERE id != ? AND (context_summary IS NOT NULL OR summary IS NOT NULL)
                 ORDER BY started_at DESC LIMIT 1
                 """,
                 (current_session_id or "",),
             )
             sess_row = cursor.fetchone()
+
+        if sess_row and not sess_row["context_summary"]:
+            auto_summary = self.close_session(sess_row["id"])
+            last_topic = (auto_summary or sess_row["summary"] or "").strip()
+        else:
             last_topic = (sess_row["context_summary"] or sess_row["summary"] or "").strip() if sess_row else ""
 
         return {"gapSeconds": gap_seconds, "lastSessionTopic": last_topic}

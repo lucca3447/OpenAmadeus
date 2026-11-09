@@ -45,3 +45,8 @@ def get_session_messages(session_id: str):
 def delete_session(session_id: str):
     memory_store.delete_session(session_id)
     return {"ok": True, "deleted": session_id}
+
+@router.post("/sessions/{session_id}/close")
+def close_session(session_id: str):
+    summary = memory_store.close_session(session_id)
+    return {"ok": True, "sessionId": session_id, "contextSummary": summary}

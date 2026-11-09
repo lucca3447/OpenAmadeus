@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import httpx
@@ -17,7 +18,26 @@ from app.services.llm.streaming import stream_candidates, openai_delta, gemini_d
 
 _model_cache: Dict[str, str] = {}
 
-SUMMARY_INTERVAL = 10
+LOREBOOK: List[Tuple[str, str, re.Pattern, str]] = [
+    ("lore_ibn5100", "IBN 5100", re.compile(r"\bibn\s*5100\b|\bibn\b", re.I),
+     "Computador portátil dos anos 1970 cujo processador proprietário decodifica o banco de dados confidencial do SERN na linha Alpha."),
+    ("lore_sern", "SERN & Relatório Z", re.compile(r"\bsern\b|\blhc\b|\bjellym[ae]n\b|\brelat[óo]rio\s*z\b|\brounders?\b", re.I),
+     "Consórcio europeu que pesquisa viagem no tempo em segredo com micro-buracos negros no LHC; seus testes humanos geraram os 'Jellymen' documentados no Relatório Z."),
+    ("lore_leskinen", "Prof. Alexis Leskinen", re.compile(r"\bleskinen\b|\bxam[ãa]\b", re.I),
+     "Orientador de Kurisu e Maho na Universidade Viktor Chondria (Lab 304), co-criador do sistema Amadeus, famoso pelo bordão entusiasta sobre 'Japanese Shaman Girls'."),
+    ("lore_kerr", "Buraco Negro de Kerr (Kerr Black Hole)", re.compile(r"\bkerr\b|\bsingularidade\s+em\s+anel\b|\bergosfera\b|\blifter\b", re.I),
+     "Buraco negro rotativo com duas ergosferas e singularidade em anel; injetar carga elétrica via 'lifter' estabiliza a singularidade permitindo comprimir dados/matéria através de curvas temporais fechadas."),
+    ("lore_skuld", "Operação Skuld", re.compile(r"\bskuld\b|\blinha\s+steins\s*;?\s*gate\b|\b1\.048596\b", re.I),
+     "Plano final concebido pelo Okabe do futuro (2025) para enganar o seu 'eu' do passado e o próprio mundo sem alterar os fatos observados em 28 de julho no Radio Kaikan, alcançando a linha Steins Gate (1.048596%)."),
+]
+
+
+def match_lorebook(query: str) -> List[Dict[str, str]]:
+    return [
+        {"id": lid, "title": title, "content": content, "emotionalWeight": "Canônico", "source": "lorebook"}
+        for lid, title, pat, content in LOREBOOK
+        if pat.search(query or "")
+    ]
 
 
 def _format_hiatus(gap_seconds: Optional[float], turn_count: int) -> str:
@@ -185,87 +205,6 @@ class LLMOrchestrator:
             for t in (client_history or [])[-MAX_HISTORY_MESSAGES:]
         ]
 
-    async def _maybe_update_context_summary(
-        self,
-        session_id: str,
-        api_key: str,
-        is_groq: bool,
-        is_openrouter: bool,
-        active_model: str,
-    ) -> None:
-        """
-        Updates sessions.context_summary every SUMMARY_INTERVAL messages with a concise
-        rolling summary. Silent fallback preserves the previous summary on any error.
-        """
-        try:
-            all_msgs = memory_store.get_session_messages(session_id)
-            if len(all_msgs) < SUMMARY_INTERVAL or len(all_msgs) % SUMMARY_INTERVAL != 0:
-                return
-
-            prev_summary = memory_store.get_session_context_summary(session_id)
-            recent_slice = all_msgs[-SUMMARY_INTERVAL:]
-            transcript = "\n".join(
-                f"{'Operador' if m.get('sender') == 'user' else 'Kurisu'}: {m.get('content', '')}"
-                for m in recent_slice
-            )
-            prompt = (
-                "Resuma de forma factual e concisa em português (máximo 3 frases, sem tags HTML) "
-                "os principais tópicos, fatos sobre o operador e estado da conversa até agora.\n"
-                + (f"Resumo anterior: {prev_summary}\n" if prev_summary else "")
-                + f"Trecho recente:\n{transcript}"
-            )
-
-            summary_text = ""
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                if is_groq:
-                    model_id = self.model_cache.get(api_key[-8:]) or (await get_groq_candidate_models(client, api_key))[0]
-                    res = await client.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                        json={
-                            "model": model_id,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.3,
-                            "max_tokens": 220,
-                        },
-                    )
-                    if res.status_code == 200:
-                        summary_text = ((res.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-                elif is_openrouter:
-                    model_id = get_openrouter_candidate_models()[0]
-                    res = await client.post(
-                        "https://openrouter.ai/api/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                        json={
-                            "model": model_id,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.3,
-                            "max_tokens": 220,
-                        },
-                    )
-                    if res.status_code == 200:
-                        summary_text = ((res.json().get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-                else:
-                    model_id = active_model or (await get_candidate_models(client, api_key, self.model_cache))[0]
-                    data = await gemini_request(
-                        client,
-                        "POST",
-                        f"models/{model_id}:generateContent",
-                        api_key,
-                        {
-                            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 220},
-                        },
-                    )
-                    parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
-                    summary_text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
-
-            clean_summary = strip_thinking_tags(summary_text)
-            if clean_summary:
-                memory_store.update_session_context_summary(session_id, clean_summary)
-        except Exception as e:
-            print(f"[OpenAmadeus Core] Rolling context summary skipped (preserving previous): {e}")
-
     def _prepare_context(self, req: ChatRequest):
         """Shared by /chat and /chat/stream: session, history, semantic recall and the user-turn prompt."""
         persona = load_persona(req.personaId or "kurisu")
@@ -279,11 +218,11 @@ class LLMOrchestrator:
         system_event = (req.systemEvent or "").strip()
         is_system_event = system_event in ("call_greeting", "idle_stage_1", "idle_stage_2")
 
-        # 1. Semantic Memory Retrieval using ChromaDB
+        # 1. Semantic Memory Retrieval using ChromaDB + Deterministic Lorebook
         search_query = req.message
         if is_system_event and history_turns:
             search_query = next((t["content"] for t in reversed(history_turns) if t["role"] == "user"), req.message)
-        semantic_matches = memory_store.search_memories(search_query, max_kurisu=2, max_learned=2)
+        semantic_matches = match_lorebook(search_query) + memory_store.search_memories(search_query, max_kurisu=2, max_learned=2)
         recalled_ids = [m["id"] for m in semantic_matches]
 
         # Save user message to SQLite ONLY for genuine user messages (never for autonomous system events)
@@ -359,7 +298,6 @@ class LLMOrchestrator:
             learned.id = saved["id"]
 
         memory_store.save_message(session_id, sender="amadeus", content=clean_text, emotion=emotion, recalled=recalled_ids)
-        await self._maybe_update_context_summary(session_id, api_key, is_groq, is_openrouter, selected_gemini_model)
 
         return ChatResponse(
             response=clean_text,
