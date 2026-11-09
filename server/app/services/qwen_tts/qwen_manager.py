@@ -248,15 +248,17 @@ class QwenTTSManager:
             if await cls.is_worker_healthy(url):
                 return True
 
-            # If target worker port is occupied but unreachable/unhealthy, clean up stale zombie process
+            status = None
             if is_port_in_use(WORKER_PORT):
                 status = await cls.get_worker_status(url)
-                if status != "ready" and status != "initializing":
+                if status == "ready":
+                    return True
+                if status != "initializing":
                     print(f"[Qwen3 Manager] Port {WORKER_PORT} occupied by unresponsive process. Clearing stale port...")
                     kill_process_on_port(WORKER_PORT)
                     await asyncio.sleep(0.5)
 
-            if not cls.start_worker_process():
+            if status != "initializing" and not cls.start_worker_process():
                 return False
 
             print("[Qwen3 Manager] Waiting for local model to load into GPU memory...")

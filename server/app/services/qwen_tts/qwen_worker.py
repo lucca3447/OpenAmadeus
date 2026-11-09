@@ -31,22 +31,7 @@ dtype_used = default_dtype
 active_backend = "unknown"
 _gpu_lock = threading.Lock()
 _gpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qwen_cuda")
-_StopSentinel = object()
 _active_gen_id = 0
-
-
-def _next_or_sentinel(gen):
-    try:
-        return next(gen)
-    except StopIteration:
-        return _StopSentinel
-
-
-def _close_gen_safe(gen):
-    try:
-        gen.close()
-    except Exception:
-        pass
 
 
 def _enter_torch_inference():
@@ -231,7 +216,7 @@ def _load_model_worker():
                 device=device_name,
                 dtype=dtype_used,
                 attn_implementation="sdpa",
-                max_seq_len=2048,
+                max_seq_len=1024,
             )
             if hasattr(loaded_model, "predictor_graph") and loaded_model.predictor_graph is not None:
                 loaded_model.predictor_graph.temperature = 0.6
@@ -253,6 +238,8 @@ def _load_model_worker():
                     )
                     for _ in warmup_gen:
                         pass
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 print("[Qwen3 Worker] Mimi audio decoder primed and warm! First call will achieve sub-400ms TTFA.")
             except Exception as dec_err:
                 print(f"[Qwen3 Worker] Mimi audio decoder priming note: {dec_err}")
@@ -312,7 +299,7 @@ class SynthesizeRequest(BaseModel):
 
 
 @app.get("/health")
-def health_check():
+async def health_check():
     vram = (
         torch.cuda.memory_allocated() / (1024**2)
         if (torch is not None and torch.cuda.is_available())
@@ -335,21 +322,88 @@ def health_check():
 
 
 @app.post("/abort")
-def abort_active_generation():
+async def abort_active_generation():
     """Explicitly preempts any in-flight GPU synthesis so _gpu_lock is freed immediately."""
     global _active_gen_id
     _active_gen_id += 1
     return {"status": "aborted", "active_gen_id": _active_gen_id}
 
 
+def _to_pcm16(chunk: np.ndarray) -> bytes:
+    return (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+
+
+def _iter_audio(segments: list[str], req: SynthesizeRequest, is_cancelled):
+    """Continuous audio chunk generator running inside _gpu_executor under _gpu_lock."""
+    effective_instruct = _resolve_effective_instruct(req.instruct)
+    eff_temp = 0.75 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
+    eff_top_p = min(req.top_p if req.top_p is not None else 0.85, 0.95)
+    eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
+    eff_max_tokens = min(req.max_new_tokens if req.max_new_tokens is not None else 1024, 1024)
+
+    prev_sample = None
+    for seg_idx, seg_text in enumerate(segments):
+        if is_cancelled():
+            return
+        if seg_idx > 0:
+            pause_chunk = apply_boundary_continuity(np.zeros(int(24000 * 0.05), dtype=np.float32), prev_sample)
+            prev_sample = float(pause_chunk[-1])
+            yield pause_chunk, 24000
+
+        if active_backend == "faster" and hasattr(model, "generate_custom_voice_streaming"):
+            stream_gen = model.generate_custom_voice_streaming(
+                text=seg_text,
+                speaker=req.speaker or "kurisu",
+                language=req.language or "Portuguese",
+                instruct=effective_instruct,
+                chunk_size=8,
+                temperature=eff_temp,
+                top_p=eff_top_p,
+                repetition_penalty=eff_rep,
+                max_new_tokens=eff_max_tokens,
+            )
+            try:
+                for audio_chunk, sr, _ in stream_gen:
+                    if is_cancelled():
+                        break
+                    chunk = np.asarray(audio_chunk, dtype=np.float32).copy()
+                    chunk = apply_boundary_continuity(chunk, prev_sample)
+                    if len(chunk) > 0:
+                        prev_sample = float(chunk[-1])
+                    yield chunk, sr
+            finally:
+                try:
+                    stream_gen.close()
+                except Exception:
+                    pass
+        else:
+            wavs, sr = model.generate_custom_voice(
+                text=seg_text,
+                speaker=req.speaker or "kurisu",
+                language=req.language or "Portuguese",
+                instruct=effective_instruct,
+                temperature=eff_temp,
+                top_p=eff_top_p,
+                repetition_penalty=eff_rep,
+                max_new_tokens=eff_max_tokens,
+            )
+            full_audio = np.asarray(wavs[0], dtype=np.float32)
+            chunk_len = int(sr * 0.64)
+            for i in range(0, len(full_audio), chunk_len):
+                if is_cancelled():
+                    break
+                chunk = full_audio[i:i + chunk_len].copy()
+                chunk = apply_boundary_continuity(chunk, prev_sample)
+                if len(chunk) > 0:
+                    prev_sample = float(chunk[-1])
+                yield chunk, sr
+
+
 @app.post("/synthesize_stream")
-def synthesize_stream(req: SynthesizeRequest):
+async def synthesize_stream(req: SynthesizeRequest):
     """
-    Streams raw PCM16 mono 24kHz audio chunks in real-time.
-    Uses a dedicated 1-worker ThreadPoolExecutor (_gpu_executor) + async generator wrapper so that:
-    1. Every CUDA Graph step and `torch.inference_mode()` runs on the exact same OS thread with zero polling sleep.
-    2. On client disconnect/barge-in, the async wrapper's `finally` block explicitly calls `gen.close()` on `_gpu_executor`,
-       releasing `_gpu_lock` immediately without Starlette's `iterate_in_threadpool` leak.
+    Streams raw PCM16 mono 24kHz audio chunks in real-time using a continuous push queue on _gpu_executor.
+    Overlaps GPU chunk generation with HTTP socket delivery so the GPU never stalls between chunks.
     """
     global model, _active_gen_id
     if model is None:
@@ -359,107 +413,45 @@ def synthesize_stream(req: SynthesizeRequest):
     if not segments:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
-    effective_instruct = _resolve_effective_instruct(req.instruct)
-    eff_temp = 0.75 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
-    eff_top_p = min(req.top_p if req.top_p is not None else 0.85, 0.95)
-    eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
-    eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
-
+    _active_gen_id += 1
     my_id = _active_gen_id
+    cancel_ev = threading.Event()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
 
-    def pcm_generator():
-        prev_sample = None
+    def is_cancelled() -> bool:
+        return cancel_ev.is_set() or _active_gen_id != my_id
+
+    def produce():
         try:
-            with _gpu_lock:
-                for seg_idx, seg_text in enumerate(segments):
-                    if _active_gen_id != my_id:
-                        break
-                    if seg_idx > 0:
-                        pause_chunk = np.zeros(int(24000 * 0.05), dtype=np.float32)
-                        pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
-                        prev_sample = float(pause_chunk[-1])
-                        yield (np.clip(pause_chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-
-                    if active_backend == "faster":
-                        with _enter_torch_inference():
-                            stream_gen = model.generate_custom_voice_streaming(
-                                text=seg_text,
-                                speaker=req.speaker or "kurisu",
-                                language=req.language or "Portuguese",
-                                instruct=effective_instruct,
-                                chunk_size=8,
-                                temperature=eff_temp,
-                                top_p=eff_top_p,
-                                repetition_penalty=eff_rep,
-                                max_new_tokens=eff_max_tokens,
-                            )
-                            try:
-                                for audio_chunk, sr, _ in stream_gen:
-                                    if _active_gen_id != my_id:
-                                        break
-                                    chunk = audio_chunk.copy()
-                                    chunk = apply_boundary_continuity(chunk, prev_sample)
-                                    prev_sample = float(chunk[-1])
-                                    pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-                                    yield pcm16
-                            finally:
-                                try:
-                                    stream_gen.close()
-                                except Exception:
-                                    pass
-                                if torch is not None and torch.cuda.is_available():
-                                    torch.cuda.synchronize()
-                    else:
-                        with _enter_torch_inference():
-                            wavs, sr = model.generate_custom_voice(
-                                text=seg_text,
-                                speaker=req.speaker or "kurisu",
-                                language=req.language or "Portuguese",
-                                instruct=effective_instruct,
-                                temperature=eff_temp,
-                                top_p=eff_top_p,
-                                repetition_penalty=eff_rep,
-                                max_new_tokens=eff_max_tokens,
-                            )
-                        full_audio = wavs[0]
-                        chunk_len = int(sr * 0.64)
-                        for i in range(0, len(full_audio), chunk_len):
-                            if _active_gen_id != my_id:
-                                break
-                            chunk = full_audio[i:i + chunk_len].copy()
-                            chunk = apply_boundary_continuity(chunk, prev_sample)
-                            prev_sample = float(chunk[-1])
-                            pcm16 = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-                            yield pcm16
-        except GeneratorExit:
-            pass
+            with _gpu_lock, _enter_torch_inference():
+                for chunk, _ in _iter_audio(segments, req, is_cancelled):
+                    loop.call_soon_threadsafe(queue.put_nowait, _to_pcm16(chunk))
         except Exception as e:
             print(f"[Qwen3 Worker] Streaming generation error: {e}")
-            raise
-
-    async def safe_async_stream():
-        loop = asyncio.get_running_loop()
-        gen = pcm_generator()
-        try:
-            while True:
-                chunk = await loop.run_in_executor(_gpu_executor, _next_or_sentinel, gen)
-                if chunk is _StopSentinel:
-                    break
-                yield chunk
         finally:
-            fut = loop.run_in_executor(_gpu_executor, _close_gen_safe, gen)
             try:
-                await asyncio.shield(fut)
-            except asyncio.CancelledError:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+            except RuntimeError:
                 pass
 
+    _gpu_executor.submit(produce)
+
+    async def pcm_body():
+        try:
+            while (pcm := await queue.get()) is not None:
+                yield pcm
+        finally:
+            cancel_ev.set()
+
     return StreamingResponse(
-        safe_async_stream(),
+        pcm_body(),
         media_type="audio/L16;rate=24000",
         headers={
             "X-Audio-Format": "pcm_s16le",
             "X-Sample-Rate": "24000",
             "X-Backend": active_backend,
+            "X-Accel-Buffering": "no",
         },
     )
 
@@ -478,79 +470,18 @@ async def synthesize(req: SynthesizeRequest):
     if not segments:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
-    effective_instruct = _resolve_effective_instruct(req.instruct)
-    eff_temp = 0.75 if (req.temperature is None or req.temperature <= 0.65) else float(req.temperature)
-    eff_top_p = min(req.top_p if req.top_p is not None else 0.85, 0.95)
-    eff_rep = max(req.repetition_penalty if req.repetition_penalty is not None else 1.05, 1.05)
-    eff_max_tokens = req.max_new_tokens if req.max_new_tokens is not None else 2048
-
     my_id = _active_gen_id
 
     def _run_sync():
-        with _gpu_lock:
-            assembled_pieces = []
-            prev_sample = None
+        with _gpu_lock, _enter_torch_inference():
+            pieces = []
             sr = 24000
-
-            with _enter_torch_inference():
-                for seg_idx, seg_text in enumerate(segments):
-                    if _active_gen_id != my_id:
-                        break
-                    if seg_idx > 0:
-                        pause_chunk = np.zeros(int(sr * 0.05), dtype=np.float32)
-                        pause_chunk = apply_boundary_continuity(pause_chunk, prev_sample)
-                        prev_sample = float(pause_chunk[-1])
-                        assembled_pieces.append(pause_chunk)
-
-                    if active_backend == "faster" and hasattr(model, "generate_custom_voice_streaming"):
-                        stream_gen = model.generate_custom_voice_streaming(
-                            text=seg_text,
-                            speaker=req.speaker or "kurisu",
-                            language=req.language or "Portuguese",
-                            instruct=effective_instruct,
-                            chunk_size=8,
-                            temperature=eff_temp,
-                            top_p=eff_top_p,
-                            repetition_penalty=eff_rep,
-                            max_new_tokens=eff_max_tokens,
-                        )
-                        try:
-                            for audio_chunk, sr_val, _ in stream_gen:
-                                if _active_gen_id != my_id:
-                                    break
-                                sr = sr_val
-                                chunk = audio_chunk.copy().astype(np.float32)
-                                chunk = apply_boundary_continuity(chunk, prev_sample)
-                                if len(chunk) > 0:
-                                    prev_sample = float(chunk[-1])
-                                assembled_pieces.append(chunk)
-                        finally:
-                            try:
-                                stream_gen.close()
-                            except Exception:
-                                pass
-                            if torch is not None and torch.cuda.is_available():
-                                torch.cuda.synchronize()
-                    else:
-                        wavs, sr = model.generate_custom_voice(
-                            text=seg_text,
-                            speaker=req.speaker or "kurisu",
-                            language=req.language or "Portuguese",
-                            instruct=effective_instruct,
-                            temperature=eff_temp,
-                            top_p=eff_top_p,
-                            repetition_penalty=eff_rep,
-                            max_new_tokens=eff_max_tokens,
-                        )
-                        seg_audio = wavs[0].astype(np.float32, copy=True)
-                        seg_audio = apply_boundary_continuity(seg_audio, prev_sample)
-                        if len(seg_audio) > 0:
-                            prev_sample = float(seg_audio[-1])
-                        assembled_pieces.append(seg_audio)
-
-            if not assembled_pieces:
+            for chunk, chunk_sr in _iter_audio(segments, req, lambda: _active_gen_id != my_id):
+                sr = chunk_sr
+                pieces.append(chunk)
+            if not pieces:
                 return None
-            full_audio = np.concatenate(assembled_pieces) if len(assembled_pieces) > 1 else assembled_pieces[0]
+            full_audio = np.concatenate(pieces) if len(pieces) > 1 else pieces[0]
             buffer = io.BytesIO()
             sf.write(buffer, full_audio, sr, format="WAV", subtype="PCM_16")
             return buffer.getvalue()
