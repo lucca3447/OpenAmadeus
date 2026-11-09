@@ -67,7 +67,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 1. ✅ **Silero VAD Web (`@ricky0123/vad-web`)**:
    - Client-side ONNX neural Voice Activity Detection (hosted locally in `public/`) replacing raw RMS volume thresholding.
    - Eliminates false barge-in triggers from keyboard typing, mouse clicks, and breathing, avoiding unnecessary Groq Whisper API calls.
-2. **End-of-Call Session Summarization & Canonical Lorebook**:
+2. ✅ **End-of-Call Session Summarization & Canonical Lorebook**:
    - Automatic single-pass episodic summary generated in `memory_store.py` upon call hangup / session close (zero per-turn LLM overhead during conversation).
    - Lightweight, deterministic keyword/regex JSON *Lorebook* (~25 lines in `orchestrator.py`) injecting exact canonical lore when key terms are mentioned (*IBN 5100*, *SERN*, *Leskinen*, *Kerr Black Hole*, *Operação Skuld*).
 3. **Multilingual & Cloud-Trained Acoustic Upgrades**:

@@ -733,6 +733,7 @@ export const App: React.FC = () => {
     setErrorNotice(null);
     if (history.length > 0) {
       MemoryService.saveActiveSession(sessionId, history, false);
+      void BackendService.closeSession(sessionId);
     }
     const newSessionId = MemoryService.archiveAndStartNewSession(history);
     setSessionId(newSessionId);
@@ -748,6 +749,7 @@ export const App: React.FC = () => {
 
     if (history.length > 0) {
       MemoryService.saveActiveSession(sessionId, history, false);
+      void BackendService.closeSession(sessionId);
     }
 
     let loaded = MemoryService.loadSession(selectedId);
@@ -997,6 +999,9 @@ export const App: React.FC = () => {
     setIsSpeaking(false);
     setIsListening(false);
     setInterimTranscript('');
+    if (history.length > 0) {
+      void BackendService.closeSession(sessionId);
+    }
     setCallState('disconnected');
   };
 
@@ -1151,6 +1156,7 @@ export const App: React.FC = () => {
                 onSelectModel={handleSelectModel}
                 modelOptions={modelOptions}
                 currentProvider={currentProvider}
+                onEndCall={handleEndCall}
                 disabled={isProcessing}
               />
             </main>

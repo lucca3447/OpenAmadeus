@@ -10,6 +10,7 @@ import {
   Headphones,
   Square,
   Send,
+  PhoneOff,
   AlertTriangle,
 } from 'lucide-react';
 
@@ -34,6 +35,7 @@ interface PromptBarProps {
   streamEnabled?: boolean;
   onToggleStream?: () => void;
   isQwen?: boolean;
+  onEndCall?: () => void;
   disabled?: boolean;
 }
 
@@ -62,6 +64,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   streamEnabled = false,
   onToggleStream,
   isQwen = false,
+  onEndCall,
   disabled = false,
 }) => {
   const [input, setInput] = useState('');
@@ -266,6 +269,19 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                 <Send className="w-3.5 h-3.5 text-orange-400" />
                 <span className="engraved-serif text-[11px] font-bold tracking-widest">TRANSMIT</span>
               </button>
+
+              {/* Metallic Red CANCEL Pill */}
+              {onEndCall && (
+                <button
+                  type="button"
+                  onClick={onEndCall}
+                  title="Encerrar Chamada Neural"
+                  className="h-8 px-3 rounded-full bg-gradient-to-b from-rose-900/80 to-black border border-rose-500/60 text-rose-200 hover:text-white hover:border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)] transition-all flex items-center gap-1.5"
+                >
+                  <PhoneOff className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="engraved-serif text-[11px] font-bold tracking-widest">CANCEL</span>
+                </button>
+              )}
             </div>
           </div>
         </form>

@@ -332,6 +332,21 @@ export class BackendService {
   }
 
   /**
+   * Generates single-pass episodic summary and marks session as ended in SQLite
+   */
+  static async closeSession(sessionId: string): Promise<boolean> {
+    if (!sessionId) return false;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/sessions/${encodeURIComponent(sessionId)}/close`, {
+        method: 'POST',
+        keepalive: true,
+      });
+      return res.ok;
+    } catch {}
+    return false;
+  }
+
+  /**
    * Pings Qwen-TTS worker (remote or local) via backend proxy
    */
   static async pingQwenWorker(remoteUrl?: string): Promise<QwenWorkerStatus> {

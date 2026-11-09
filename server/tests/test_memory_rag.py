@@ -259,6 +259,37 @@ class TestMemoryRAG(unittest.TestCase):
         self.assertNotIn(sb["id"], [m["id"] for m in capped])
         self.store.clear_learned_memories()
 
+    def test_11_end_of_call_close_session_and_lorebook(self):
+        from app.services.llm.orchestrator import match_lorebook
+
+        # 1. Deterministic Lorebook matches all 5 canonical targets and ignores greetings
+        self.assertEqual(match_lorebook("Bom dia, tudo bem?"), [])
+        hits = match_lorebook(
+            "Me explique como o IBN 5100, o SERN, o Prof. Leskinen e um Kerr Black Hole se conectam na Operação Skuld."
+        )
+        hit_ids = {h["id"] for h in hits}
+        self.assertEqual(hit_ids, {"lore_ibn5100", "lore_sern", "lore_leskinen", "lore_kerr", "lore_skuld"})
+
+        # 2. Single-pass close_session summary + lazy auto-summarize on next session
+        s1 = self.store.create_session()
+        self.store.save_message(s1, sender="user", content="Vamos revisar o código do PhoneWave hoje.")
+        self.store.save_message(s1, sender="amadeus", content="Certo, já abri os logs dos sensores.", emotion="analytical")
+        summary = self.store.close_session(s1)
+        self.assertIn("PhoneWave", summary)
+        self.assertIn("analytical", summary)
+        self.assertEqual(self.store.get_session_context_summary(s1), summary)
+        s1_meta = next(s for s in self.store.list_sessions() if s["id"] == s1)
+        self.assertIsNotNone(s1_meta["endedAt"])
+
+        # 3. Unclosed session is automatically summarized when a new session starts
+        s2 = self.store.create_session()
+        self.store.save_message(s2, sender="user", content="Testando estabilização do buraco negro de Kerr.")
+        self.store.save_message(s2, sender="amadeus", content="A singularidade em anel exige um lifter.", emotion="thinking")
+        s3 = self.store.create_session()
+        ep = self.store.get_temporal_and_episodic_context(s3, is_system_event=True)
+        self.assertIn("Kerr", ep["lastSessionTopic"])
+        self.assertIn("singularidade em anel", ep["lastSessionTopic"])
+
 
 if __name__ == "__main__":
     unittest.main()
