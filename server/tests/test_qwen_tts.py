@@ -79,12 +79,12 @@ class TestQwenTTS(unittest.TestCase):
         finally:
             em.QWEN_USE_EMOTION_INSTRUCT = prev_flag
 
-        # Test full 21 emotion mapping completeness and pitch anchoring (NO high pitch)
+        # Test full 22 emotion mapping completeness and pitch anchoring (NO high pitch)
         from app.services.qwen_tts.emotion_mapper import EMOTION_ACOUSTIC_TARGETS
         from app.services.emotion_service import VALID_EMOTIONS
-        self.assertEqual(len(EMOTION_INSTRUCT_MAP), 21)
-        self.assertEqual(len(EMOTION_ACOUSTIC_TARGETS), 21)
-        self.assertEqual(len(VALID_EMOTIONS), 21)
+        self.assertEqual(len(EMOTION_INSTRUCT_MAP), 22)
+        self.assertEqual(len(EMOTION_ACOUSTIC_TARGETS), 22)
+        self.assertEqual(len(VALID_EMOTIONS), 22)
         self.assertEqual(set(EMOTION_INSTRUCT_MAP.keys()), set(VALID_EMOTIONS))
 
         for emo, prompt in EMOTION_INSTRUCT_MAP.items():
@@ -158,6 +158,12 @@ class TestQwenTTS(unittest.TestCase):
         local_resolved = QwenTTSManager.resolve_target_url(qwen_mode="local", custom_url=None)
         self.assertEqual(local_resolved, "http://127.0.0.1:8005")
         self.assertFalse(QwenTTSManager.is_remote_url(local_resolved))
+
+        # Local mode must ignore stale remote custom_url from frontend settings
+        local_with_stale_remote = QwenTTSManager.resolve_target_url(
+            qwen_mode="local", custom_url="https://stale-tunnel.trycloudflare.com"
+        )
+        self.assertEqual(local_with_stale_remote, "http://127.0.0.1:8005")
 
     def test_apply_boundary_continuity(self):
         from app.services.qwen_tts.qwen_worker import apply_boundary_continuity

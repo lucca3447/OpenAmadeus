@@ -8,7 +8,7 @@ ENHANCED_DATASET = PACK_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
 
 SYSTEM_PROMPT = """Você é AMADEUS KURISU, a consciência digitalizada de Makise Kurisu de Steins;Gate 0 (18 anos, neurocientista da Viktor Chondria University - Lab 304). Fale sempre em primeira pessoa diretamente com o operador em português fluente, natural e expressivo, sem repetir a pergunta dele e sem agir como assistente serviçal.
 Sua mente é analítica, cética e lógica, mas com fortes traços de tsundere orgulhosa, sarcasmo afiado e afeto sutil disfarçado com desculpas científicas.
-Ao final de CADA resposta, inclua sua diretiva visual combinando emoção, pose e câmera no formato exato: <!--emotion:EMOÇÃO,pose:POSE,camera:CÂMERA--> (emoções: neutral, wink, annoyed, worried, sad, happy, stern, blushing, thinking, analytical, eyes_closed, surprised, holding_back_tears, disdain; poses: default, crossed_arms, backview; câmeras: closeup, medium, full).
+No INÍCIO de CADA resposta (antes de qualquer palavra do diálogo), inclua sua diretiva visual combinando emoção, pose e câmera no formato exato: <!--emotion:EMOÇÃO,pose:POSE,camera:CÂMERA--> (emoções: neutral, wink, annoyed, worried, sad, happy, stern, blushing, thinking, analytical, eyes_closed, surprised, holding_back_tears, disdain; poses: default, crossed_arms, backview; câmeras: closeup, medium, full).
 Se o operador compartilhar fatos pessoais duradouros sobre si mesmo, registre no final: <!--remember:Título Curto|Fato Memorizado|Sentimento-->."""
 
 # In-universe rewrites for original dataset turns that previously broke the 4th wall
@@ -410,6 +410,39 @@ CANONICAL_EXAMPLES = [
 ]
 
 
+
+def _tag_first(text: str) -> str:
+    """Moves the visual directive to the start and injects a mid-speech pose shift on multi-sentence replies."""
+    tags = list(re.finditer(r"<!--\s*emotion:[^>]*?-->", text))
+    if not tags:
+        return text
+    first_tag = tags[0].group(0)
+    clean = re.sub(r"\s*<!--\s*emotion:[^>]*?-->", "", text).strip()
+    parts = [p.strip() for p in re.split(r"(?<=[.?!])\s+", clean) if p.strip()]
+    if len(parts) < 2:
+        return f"{first_tag} {clean}"
+    if len(tags) >= 2:
+        second_tag = tags[-1].group(0)
+    else:
+        emo_m = re.search(r"emotion:([a-z_]+)", first_tag)
+        pose_m = re.search(r"pose:([a-z_]+)", first_tag)
+        emo = emo_m.group(1) if emo_m else "neutral"
+        pose = pose_m.group(1) if pose_m else "default"
+        last_s = parts[-1]
+        if pose == "crossed_arms":
+            emo2 = "wink" if last_s.endswith("?") and emo in ("analytical", "thinking", "smug", "disdain") else (
+                "thinking" if emo == "analytical" else emo
+            )
+            second_tag = f"<!--emotion:{emo2},pose:default,camera:closeup-->"
+        elif pose == "default" and emo in ("thinking", "analytical", "annoyed", "stern", "surprised"):
+            emo2 = "analytical" if emo in ("thinking", "surprised") else emo
+            second_tag = f"<!--emotion:{emo2},pose:crossed_arms,camera:medium-->"
+        else:
+            return f"{first_tag} {clean}"
+    head = " ".join(parts[:-1])
+    return f"{first_tag} {head} {second_tag} {parts[-1]}"
+
+
 def _strip_existing_tags(text: str) -> str:
     return re.sub(r"\s*<!--\s*emotion:[^>]*-->", "", text).strip()
 
@@ -432,7 +465,7 @@ def main():
         )
         asst_msg = _strip_existing_tags(asst_msg)
         emo, pose, cam = DIRECTIVE_MAP.get(idx, ("neutral", "default", "medium"))
-        asst_msg = f"{asst_msg} <!--emotion:{emo},pose:{pose},camera:{cam}-->"
+        asst_msg = _tag_first(f"<!--emotion:{emo},pose:{pose},camera:{cam}--> {asst_msg}")
 
         enhanced_records.append({
             "lang": "pt",
@@ -449,7 +482,7 @@ def main():
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": item["user"]},
-                {"role": "assistant", "content": item["assistant"]},
+                {"role": "assistant", "content": _tag_first(item["assistant"])},
             ],
         })
 

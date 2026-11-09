@@ -58,17 +58,18 @@ There is no rush to `1.0.0`. Every backward-compatible feature set increments **
 
 ---
 
-### 🔨 `v0.2.2`: LLM $\rightarrow$ TTS Sentence-Level Streaming & Pre-LLM Micro-Reactions (Next Step)
+### 🟢 `v0.2.2`: LLM $\rightarrow$ TTS Sentence-Level Streaming & Pre-LLM Micro-Reactions (Completed)
 *Focus: Reducing perceived end-to-end latency (total TTFA) and pre-response visual reactivity.*
-1. ⏳ **LLM $\rightarrow$ TTS Sentence-Level Streaming**:
-   - As the LLM (Groq LPU or Gemini) streams tokens, a sentence boundary parser detects punctuation (`.`, `!`, `?`, `\n`) and immediately dispatches the first sentence to TTS (`FasterQwen3-TTS` / Kokoro).
-   - Audio playback starts in the browser while the LLM is still generating subsequent sentences in the background, bringing total time-to-first-audio below **~600 ms**.
-2. ⏳ **Pre-LLM Listening Gaze (Micro-Reactions)**:
-   - Instantaneous sprite shift during voice capture/submission (e.g., `thinking` on complex questions or `surprised` on sudden exclamations) before the first LLM token arrives.
+1. ✅ **LLM $\rightarrow$ TTS Sentence-Level Streaming (`sentence_stream.py`, `streaming.py`, `orchestrator.py`, `speechService.ts`)**:
+   - Added `POST /api/chat/stream` (SSE events `meta`, `sentence`, `done`, `error`) and `SentenceStream` boundary parser (`.`, `!`, `?`, `\n`, `…`, abbreviation/decimal safe, short-clause merging).
+   - Shifted visual directive `<!--emotion:X,pose:Y,camera:Z-->` to the start of the reply across `kurisu.json`, `kurisu.ts`, and all 130 canonical exemplars so sentence 1 is synthesized with the exact target emotion.
+   - Frontend `SentenceSpeaker` queue prefetches `/api/tts` for sentence $N+1$ while sentence $N$ is playing on a shared Web Audio timeline, synchronizes subtitle and chat history reveal with audio onset, cancels in-flight LLM generation on barge-in, and displays `ttfa_ms` telemetry in the HUD.
+2. ✅ **Pre-LLM Listening Gaze (Micro-Reactions) (`aiService.ts`, `speechService.ts`, `App.tsx`)**:
+   - Instantaneous sprite shift on VAD utterance end (`thinking`) and trilingual (PT / EN / JA) pre-LLM heuristics (`surprised` on `!` / shouting, `thinking` on analytical queries, `blushing`, `annoyed`, `holding_back_tears`) before the first LLM token arrives.
 
 ---
 
-### 🌐 `v0.3.0`: Full Internationalization (PT-BR / EN / JA) & Persona Variants
+### 🔨 `v0.3.0`: Full Internationalization (PT-BR / EN / JA) & Persona Variants (Next Step)
 *Focus: Global accessibility and native support for Portuguese, English, and Japanese across the UI and interactions.*
 1. **Language Selector & Persona Variants (`SettingsModal.tsx`, `i18n`)**:
    - Dedicated language profiles (`kurisu.pt.json`, `kurisu.en.json`, `kurisu.ja.json`) with authentic cultural guidelines:

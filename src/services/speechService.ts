@@ -12,6 +12,20 @@ declare global {
   }
 }
 
+/** Shared Web Audio timeline so consecutive sentence streams play back-to-back without a new jitter cushion. */
+export interface PcmTimeline {
+  next: number;
+  primed: boolean;
+}
+
+export interface SentenceSpeaker {
+  /** Prefetches /tts in queue order and plays after the previous sentence; onAudible runs when this sentence starts sounding. */
+  enqueue(text: string, onAudible?: () => void, emotion?: string): void;
+  /** No more sentences: resolves options.onEnd after the last audio finishes. */
+  end(): void;
+  cancel(): void;
+}
+
 export interface SpeakOptions {
   voiceURI?: string | null;
   rate?: number;
@@ -147,6 +161,7 @@ export class SpeechService {
   private static onStateChangeCb: SpeechStateCallback | null = null;
   private static onErrorCb: ((message: string) => void) | null = null;
   private static onInterimCb: ((text: string) => void) | null = null;
+  private static onUtteranceEndCb: (() => void) | null = null;
 
   // Web Audio API singletons for lip-sync, compression, and oscilloscope
   private static audioCtx: AudioContext | null = null;
@@ -251,8 +266,10 @@ export class SpeechService {
     onResult: SpeechCallback,
     onStateChange: SpeechStateCallback,
     onError?: (message: string) => void,
-    onInterim?: (text: string) => void
+    onInterim?: (text: string) => void,
+    onUtteranceEnd?: () => void
   ): boolean {
+    this.onUtteranceEndCb = onUtteranceEnd || null;
     this.onResultCb = onResult;
     this.onStateChangeCb = onStateChange;
     this.onErrorCb = onError || null;
@@ -419,6 +436,7 @@ export class SpeechService {
     const key = this.getEffectiveGroqKey();
     if (!key) return;
 
+    this.onUtteranceEndCb?.(); // end of VAD: lets the sprite react before the transcript arrives
     this.onInterimCb?.('Transcrevendo fala (Whisper Turbo)...');
     try {
       const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm';
@@ -853,7 +871,7 @@ export class SpeechService {
    * Streams and plays Microsoft Edge-TTS neural speech through Web Audio API
    */
   private static async speakNeural(cleanText: string, options: SpeakOptions): Promise<void> {
-    const { ctx, analyser } = this.ensureAudioContext();
+    this.ensureAudioContext();
 
     if (this.activeAbortController) {
       this.activeAbortController.abort();
@@ -861,6 +879,13 @@ export class SpeechService {
     const abortCtrl = new AbortController();
     this.activeAbortController = abortCtrl;
 
+    const res = await this.requestNeural(cleanText, options, abortCtrl.signal);
+    if (!res) return;
+    return this.playNeuralResponse(res, options, abortCtrl.signal);
+  }
+
+  /** Fires the /tts request; resolves null when aborted. */
+  private static async requestNeural(cleanText: string, options: SpeakOptions, signal: AbortSignal): Promise<Response | null> {
     const voice = options.neuralVoice || 'pt-BR-FranciscaNeural';
     const rate = options.rate ? `${Math.round((options.rate - 1) * 100)}%` : '+4%';
     const pitch = options.pitch ? `${Math.round((options.pitch - 1) * 20)}Hz` : '+10Hz';
@@ -870,12 +895,12 @@ export class SpeechService {
       res = await fetch(`${BACKEND_URL}/api/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: abortCtrl.signal,
+        signal,
         body: JSON.stringify({
           text: cleanText,
           engine: options.engine || 'qwen3',
           qwenMode: options.qwenMode || 'remote',
-          qwenRemoteUrl: options.qwenRemoteUrl,
+          qwenRemoteUrl: options.qwenMode === 'local' ? undefined : options.qwenRemoteUrl,
           emotion: options.emotion,
           instruct: options.instruct,
           stream: options.stream ?? false,
@@ -891,8 +916,8 @@ export class SpeechService {
         }),
       });
     } catch (err: any) {
-      if (err?.name === 'AbortError' || abortCtrl.signal.aborted) {
-        return;
+      if (err?.name === 'AbortError' || signal.aborted) {
+        return null;
       }
       throw err;
     }
@@ -902,17 +927,30 @@ export class SpeechService {
       const detail = errJson?.detail || `Erro HTTP ${res.status} no servidor de síntese vocal.`;
       throw new Error(detail);
     }
+    return res;
+  }
+
+  private static async playNeuralResponse(
+    res: Response,
+    options: SpeakOptions,
+    signal: AbortSignal,
+    timeline?: PcmTimeline
+  ): Promise<void> {
+    const { ctx } = this.ensureAudioContext();
 
     const contentType = res.headers.get('content-type') || '';
     const audioFormat = res.headers.get('x-audio-format') || '';
     const isPcmStream = contentType.includes('audio/L16') || audioFormat === 'pcm_s16le';
 
     if (isPcmStream && res.body) {
-      return this.playPcmStream(res.body, options, abortCtrl.signal);
+      return this.playPcmStream(res.body, options, signal, timeline);
     }
 
+    if (timeline?.primed) {
+      await this.waitUntilAudioTime(timeline.next, signal);
+    }
     const blob = await res.blob();
-    if (abortCtrl.signal.aborted) return;
+    if (signal.aborted) return;
     const audioUrl = URL.createObjectURL(blob);
     this.currentAudioUrl = audioUrl;
 
@@ -962,6 +1000,16 @@ export class SpeechService {
         reject(e);
       };
 
+      signal.addEventListener(
+        'abort',
+        () => {
+          URL.revokeObjectURL(audioUrl);
+          if (this.currentAudioUrl === audioUrl) this.currentAudioUrl = null;
+          resolve();
+        },
+        { once: true }
+      );
+
       audio.play().catch((err) => {
         URL.revokeObjectURL(audioUrl);
         if (this.currentAudioUrl === audioUrl) this.currentAudioUrl = null;
@@ -981,7 +1029,8 @@ export class SpeechService {
   private static async playPcmStream(
     body: ReadableStream<Uint8Array>,
     options: SpeakOptions,
-    signal: AbortSignal
+    signal: AbortSignal,
+    timeline?: PcmTimeline
   ): Promise<void> {
     const { ctx, makeUpGain, masterGain } = this.ensureAudioContext();
     masterGain.gain.setValueAtTime(options.volume ?? 1.0, ctx.currentTime);
@@ -1042,7 +1091,10 @@ export class SpeechService {
         source.connect(makeUpGain);
 
         const now = ctx.currentTime;
-        if (!hasStarted) {
+        if (!hasStarted && timeline?.primed) {
+          // Continuing a sentence queue: stay gapless unless the previous audio already ran dry
+          nextStartTime = timeline.next >= now ? timeline.next : now + JITTER_BUFFER_SEC;
+        } else if (!hasStarted) {
           nextStartTime = now + JITTER_BUFFER_SEC;
         } else if (nextStartTime < now) {
           // Underrun: rebuffer with a real cushion; a 15ms lead just underruns again on every late chunk (stutter)
@@ -1060,14 +1112,24 @@ export class SpeechService {
           hasStarted = true;
           this.isSpeakingAudio = true;
           this.startLipSyncMonitoring();
-          options.onStart?.();
+          if (timeline) {
+            // Reveal (subtitle/state) when this sentence is actually audible, not when it is scheduled
+            const audibleInMs = Math.max(0, (nextStartTime - now) * 1000);
+            window.setTimeout(() => { if (!signal.aborted) options.onStart?.(); }, audibleInMs);
+          } else {
+            options.onStart?.();
+          }
         }
 
         nextStartTime += audioBuffer.duration;
+        if (timeline) {
+          timeline.next = nextStartTime;
+          timeline.primed = true;
+        }
       }
 
-      // Wait until all scheduled audio buffers have finished playing
-      if (hasStarted) {
+      // Wait until all scheduled audio buffers have finished playing (the sentence queue waits once, at its end)
+      if (hasStarted && !timeline) {
         const remainingSec = Math.max(0, nextStartTime - ctx.currentTime);
         if (remainingSec > 0 && !signal.aborted) {
           await new Promise<void>((resolve) => {
@@ -1085,12 +1147,124 @@ export class SpeechService {
       }
     } finally {
       reader.releaseLock();
-      if (hasStarted) {
+      if (hasStarted && !timeline) {
         this.isSpeakingAudio = false;
         this.notifyLipSync(false, 0);
         options.onEnd?.();
       }
     }
+  }
+
+  private static waitUntilAudioTime(target: number, signal: AbortSignal): Promise<void> {
+    const { ctx } = this.ensureAudioContext();
+    const ms = Math.max(0, (target - ctx.currentTime) * 1000);
+    if (ms === 0 || signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const id = window.setTimeout(resolve, ms);
+      signal.addEventListener('abort', () => { clearTimeout(id); resolve(); }, { once: true });
+    });
+  }
+
+  /**
+   * Sentence-level TTS queue for LLM streaming (v0.2.2): each sentence's /tts request is fired as soon as it is
+   * enqueued (prefetch) while earlier sentences are still sounding. stopSpeaking() (barge-in) aborts everything.
+   */
+  static createSentenceSpeaker(options: SpeakOptions): SentenceSpeaker {
+    this.stopSpeaking();
+    const ctrl = new AbortController();
+    this.activeAbortController = ctrl;
+    const { signal } = ctrl;
+    const timeline: PcmTimeline = { next: 0, primed: false };
+    const canFallbackWebSpeech =
+      options.allowTtsFallback !== false && (options.allowedTtsFallbacks || ['qwen_local', 'kokoro', 'edge_rvc']).includes('web_speech');
+    let fetchQueue: Promise<void> = Promise.resolve();
+    let chain: Promise<void> = Promise.resolve();
+    let started = false;
+    let errorShown = false;
+
+    return {
+      enqueue: (text, onAudible, emotion) => {
+        const clean = normalizeForSpeech(text);
+        if (!clean) {
+          chain = chain.then(() => onAudible?.());
+          return;
+        }
+        const sentenceOpts = emotion ? { ...options, emotion } : options;
+        // Serialize GPU worker HTTP fetches so sentence N+1 prefetches right after sentence N finishes downloading (while N is still playing)
+        let releaseFetch!: () => void;
+        const fetchDone = new Promise<void>((r) => { releaseFetch = r; });
+        const prevFetch = fetchQueue;
+        fetchQueue = prevFetch.then(() => fetchDone);
+
+        const pending = prevFetch
+          .then(async () => {
+            if (signal.aborted) { releaseFetch(); return null; }
+            const res = await this.requestNeural(clean, sentenceOpts, signal);
+            if (!res) { releaseFetch(); return null; }
+            const ct = res.headers.get('content-type') || '';
+            const fmt = res.headers.get('x-audio-format') || '';
+            if (ct.includes('audio/L16') || fmt === 'pcm_s16le') {
+              return { res, isStream: true };
+            }
+            const buf = await res.arrayBuffer();
+            releaseFetch();
+            return { res: new Response(buf, { status: res.status, headers: res.headers }), isStream: false };
+          })
+          .catch((e) => {
+            releaseFetch();
+            return e as Error;
+          });
+
+        chain = chain.then(async () => {
+          if (signal.aborted) { releaseFetch(); return; }
+          let revealed = false;
+          const reveal = () => {
+            if (revealed || signal.aborted) return;
+            revealed = true;
+            if (!started) {
+              started = true;
+              options.onStart?.();
+            }
+            onAudible?.();
+          };
+          try {
+            const item = await pending;
+            if (item instanceof Error) throw item;
+            if (!item) { reveal(); return; }
+            try {
+              await this.playNeuralResponse(item.res, { ...options, onStart: reveal, onEnd: undefined }, signal, timeline);
+            } finally {
+              if (item.isStream) releaseFetch();
+            }
+          } catch (err: any) {
+            if (signal.aborted || err?.name === 'AbortError') return;
+            if (canFallbackWebSpeech) {
+              await this.waitUntilAudioTime(timeline.next, signal);
+              await new Promise<void>((resolve) => this.speakWebSpeech(clean, { ...options, onStart: reveal, onEnd: resolve }));
+              return;
+            }
+            if (!errorShown) {
+              errorShown = true;
+              options.onError?.(err?.message || '[MODO ESTRITO DE VOZ] Falha ao sintetizar áudio neural.');
+            }
+            reveal();
+          }
+        });
+      },
+      end: () => {
+        chain = chain.then(async () => {
+          await this.waitUntilAudioTime(timeline.next, signal);
+          if (signal.aborted) return;
+          this.isSpeakingAudio = false;
+          this.notifyLipSync(false, 0);
+          if (started) options.onEnd?.();
+        });
+      },
+      cancel: () => {
+        if (this.activeAbortController === ctrl) this.stopSpeaking();
+        else ctrl.abort();
+      },
+    };
   }
 
   /**
@@ -1153,6 +1327,7 @@ export class SpeechService {
    * Stops any ongoing speech synthesis (neural or browser)
    */
   static stopSpeaking(): void {
+    BackendService.cancelChatStream(); // barge-in also stops LLM generation (v0.2.2)
     if (this.activeAbortController) {
       this.activeAbortController.abort();
       this.activeAbortController = null;

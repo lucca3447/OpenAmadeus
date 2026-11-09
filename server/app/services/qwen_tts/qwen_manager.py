@@ -97,12 +97,17 @@ class QwenTTSManager:
         2. Environment variable QWEN_REMOTE_URL (if mode is remote or auto)
         3. Local loopback default (http://127.0.0.1:8005)
         """
+        mode = (qwen_mode or os.environ.get("QWEN_MODE", "remote")).lower()
+        if mode == "local":
+            if custom_url and custom_url.strip() and not cls.is_remote_url(custom_url):
+                return custom_url.strip().rstrip("/")
+            return f"http://127.0.0.1:{WORKER_PORT}"
+
         if custom_url and custom_url.strip():
             url = custom_url.strip().rstrip("/")
             if url.startswith("http://") or url.startswith("https://"):
                 return url
 
-        mode = (qwen_mode or os.environ.get("QWEN_MODE", "remote")).lower()
         if mode in ("remote", "auto"):
             env_remote = os.environ.get("QWEN_REMOTE_URL", "").strip().rstrip("/")
             if env_remote and (env_remote.startswith("http://") or env_remote.startswith("https://")):
@@ -243,15 +248,17 @@ class QwenTTSManager:
             if await cls.is_worker_healthy(url):
                 return True
 
-            # If target worker port is occupied but unreachable/unhealthy, clean up stale zombie process
+            status = None
             if is_port_in_use(WORKER_PORT):
                 status = await cls.get_worker_status(url)
-                if status != "ready" and status != "initializing":
+                if status == "ready":
+                    return True
+                if status != "initializing":
                     print(f"[Qwen3 Manager] Port {WORKER_PORT} occupied by unresponsive process. Clearing stale port...")
                     kill_process_on_port(WORKER_PORT)
                     await asyncio.sleep(0.5)
 
-            if not cls.start_worker_process():
+            if status != "initializing" and not cls.start_worker_process():
                 return False
 
             print("[Qwen3 Manager] Waiting for local model to load into GPU memory...")
@@ -315,8 +322,8 @@ class QwenTTSManager:
                     "language": language or "Portuguese",
                     "speaker": speaker or "kurisu",
                     "instruct": instruct,
-                    "temperature": 0.9,
-                    "top_p": 0.90,
+                    "temperature": 0.75,
+                    "top_p": 0.85,
                     "repetition_penalty": 1.05,
                     "max_new_tokens": 2048,
                 },
@@ -368,8 +375,8 @@ class QwenTTSManager:
                 "language": language or "Portuguese",
                 "speaker": speaker or "kurisu",
                 "instruct": instruct,
-                "temperature": 0.9,
-                "top_p": 0.90,
+                "temperature": 0.75,
+                "top_p": 0.85,
                 "repetition_penalty": 1.05,
                 "max_new_tokens": 2048,
             },

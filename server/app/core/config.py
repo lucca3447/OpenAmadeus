@@ -29,7 +29,7 @@ TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 # System Meta
 APP_TITLE = "Amadeus System Core API"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 APP_DESCRIPTION = "Cognitive memory with SQLite & ChromaDB, persona simulation, and neural speech synthesis for Amadeus."
 
 # LLM Config
@@ -55,9 +55,9 @@ OPENROUTER_FREE_MODELS: List[str] = [
 ]
 
 GROQ_FALLBACK_MODELS: List[str] = [
+    "llama-3.3-70b-versatile",
+    "qwen/qwen3.8-27b",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "qwen/qwen3.8-27b",
-    "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant"
 ]

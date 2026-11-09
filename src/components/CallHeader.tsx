@@ -32,6 +32,7 @@ interface CallHeaderProps {
   voiceSettings?: VoiceSettings;
   llmSettings?: LLMFallbackSettings;
   onOpenSettingsWithSection?: (section: SettingsSectionId) => void;
+  ttfaMs?: number | null;
 }
 
 export const CallHeader: React.FC<CallHeaderProps> = ({
@@ -50,6 +51,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
   voiceSettings,
   llmSettings,
   onOpenSettingsWithSection,
+  ttfaMs,
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -199,6 +201,14 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
           >
             {isTtsStrict ? 'Estrito' : 'Cascata'}
           </span>
+          {ttfaMs != null && (
+            <span
+              title="Time-To-First-Audio (TTFA) do último turno"
+              className="text-[9px] px-1.5 py-0.2 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+            >
+              {ttfaMs}ms
+            </span>
+          )}
         </button>
 
         {/* Whisper STT Subsystem Pill */}

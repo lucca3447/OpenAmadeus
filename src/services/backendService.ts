@@ -31,9 +31,21 @@ export interface BackendChatResponse {
     emotionalWeight?: string;
   };
   error?: string;
+  /** true when the stream was cancelled (barge-in / new message) before any sentence arrived */
+  aborted?: boolean;
+}
+
+export interface ChatStreamHandlers {
+  onMeta?: (meta: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming }) => void;
+  onSentence?: (
+    text: string,
+    index: number,
+    visual?: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming }
+  ) => void;
 }
 
 export class BackendService {
+  private static chatStreamCtrl: AbortController | null = null;
   private static isAvailable: boolean | null = null;
   private static lastCheckTime = 0;
   private static CHECK_INTERVAL_MS = 15000; // Check health every 15s
@@ -78,6 +90,37 @@ export class BackendService {
   /**
    * Queries OpenAmadeus via the Python backend (with ChromaDB semantic retrieval & SQLite persistence)
    */
+  private static chatBody(
+    message: string,
+    sessionId: string | null,
+    apiKey: string,
+    history: ChatMessage[],
+    selectedModel: string | undefined,
+    allowModelFallback: boolean,
+    allowOfflineSimulatorFallback: boolean,
+    systemEvent?: AutonomousEventType
+  ): string {
+    const formattedHistory = history.slice(-20).map((msg) => ({
+      role: msg.sender === 'user' ? 'user' : 'model',
+      content:
+        msg.sender !== 'user' && msg.emotion
+          ? `<!--emotion:${msg.emotion},pose:${msg.pose || 'default'},camera:${msg.camera || 'closeup'}--> ${msg.content}`
+          : msg.content,
+    }));
+
+    return JSON.stringify({
+      message,
+      sessionId,
+      personaId: 'kurisu',
+      systemEvent: systemEvent || null,
+      apiKey: apiKey || null,
+      history: formattedHistory,
+      selectedModel: selectedModel || null,
+      allowModelFallback,
+      allowOfflineSimulatorFallback,
+    });
+  }
+
   static async queryChat(
     message: string,
     sessionId: string | null,
@@ -88,28 +131,10 @@ export class BackendService {
     allowOfflineSimulatorFallback: boolean = true,
     systemEvent?: AutonomousEventType
   ): Promise<BackendChatResponse> {
-    const formattedHistory = history.slice(-20).map((msg) => ({
-      role: msg.sender === 'user' ? 'user' : 'model',
-      content:
-        msg.sender !== 'user' && msg.emotion
-          ? `${msg.content} <!--emotion:${msg.emotion},pose:${msg.pose || 'default'},camera:${msg.camera || 'closeup'}-->`
-          : msg.content,
-    }));
-
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        sessionId,
-        personaId: 'kurisu',
-        systemEvent: systemEvent || null,
-        apiKey: apiKey || null,
-        history: formattedHistory,
-        selectedModel: selectedModel || null,
-        allowModelFallback,
-        allowOfflineSimulatorFallback,
-      }),
+      body: this.chatBody(message, sessionId, apiKey, history, selectedModel, allowModelFallback, allowOfflineSimulatorFallback, systemEvent),
     });
 
     if (!res.ok) {
@@ -118,6 +143,99 @@ export class BackendService {
     }
 
     return (await res.json()) as BackendChatResponse;
+  }
+
+  /** Aborts the in-flight /chat/stream (barge-in or a newer message); the backend stops the LLM on disconnect. */
+  static cancelChatStream(): void {
+    this.chatStreamCtrl?.abort();
+    this.chatStreamCtrl = null;
+  }
+
+  /**
+   * SSE variant of queryChat (v0.2.2). Throws only when nothing was received (caller falls back to queryChat);
+   * a stream cut after the first sentence resolves with the sentences already delivered.
+   */
+  static async queryChatStream(
+    message: string,
+    sessionId: string | null,
+    apiKey: string,
+    history: ChatMessage[],
+    selectedModel: string | undefined,
+    allowModelFallback: boolean,
+    allowOfflineSimulatorFallback: boolean,
+    systemEvent: AutonomousEventType | undefined,
+    handlers: ChatStreamHandlers
+  ): Promise<BackendChatResponse> {
+    this.cancelChatStream();
+    const ctrl = new AbortController();
+    this.chatStreamCtrl = ctrl;
+
+    const spoken: string[] = [];
+    let lastMeta: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming } | null = null;
+    let finalResponse: BackendChatResponse | null = null;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: ctrl.signal,
+        body: this.chatBody(message, sessionId, apiKey, history, selectedModel, allowModelFallback, allowOfflineSimulatorFallback, systemEvent),
+      });
+      if (!res.ok || !res.body) {
+        const errorText = await res.text().catch(() => 'Erro no servidor Python');
+        throw new Error(`[Backend ${res.status}] ${errorText}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buf.indexOf('\n\n')) !== -1) {
+          const block = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const line = block.split('\n').find((l) => l.startsWith('data:'));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(5));
+          if (ev.event === 'meta') {
+            lastMeta = { emotion: ev.emotion, pose: ev.pose ?? undefined, camera: ev.camera ?? undefined };
+            handlers.onMeta?.(lastMeta);
+          } else if (ev.event === 'sentence') {
+            spoken.push(ev.text);
+            const visual: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming } | undefined = ev.emotion
+              ? { emotion: ev.emotion as Emotion, pose: (ev.pose ?? undefined) as CharacterPose | undefined, camera: (ev.camera ?? undefined) as CameraFraming | undefined }
+              : lastMeta ?? undefined;
+            if (visual) lastMeta = visual;
+            handlers.onSentence?.(ev.text, ev.index, visual);
+          } else if (ev.event === 'done') {
+            finalResponse = ev.response as BackendChatResponse;
+          } else if (ev.event === 'error') {
+            console.warn('[OpenAmadeus] Chat stream cut by provider:', ev.message);
+          }
+        }
+      }
+    } catch (err) {
+      if (!ctrl.signal.aborted && spoken.length === 0) throw err;
+      if (!ctrl.signal.aborted) console.warn('[OpenAmadeus] Chat stream interrupted:', err);
+    } finally {
+      if (this.chatStreamCtrl === ctrl) this.chatStreamCtrl = null;
+    }
+
+    if (finalResponse) return finalResponse;
+    if (spoken.length === 0) {
+      if (ctrl.signal.aborted) return { response: '', emotion: 'neutral', recalledMemories: [], aborted: true };
+      throw new Error('[Backend] Stream de chat vazio');
+    }
+    return {
+      response: spoken.join(' '),
+      emotion: lastMeta?.emotion ?? 'neutral',
+      pose: lastMeta?.pose,
+      camera: lastMeta?.camera,
+      recalledMemories: [],
+    };
   }
 
   /**

@@ -33,6 +33,7 @@ EMOTION_ACOUSTIC_TARGETS: Dict[str, Dict[str, Any]] = {
     "annoyed": {"f0_hz": 432.4, "f0_range": (300.7, 567.4), "rms": 0.162, "file": "kurisu_0221.wav"},
     # 4. Registro Extremo / Falsete Emocional (> 500 Hz)
     "holding_back_tears": {"f0_hz": 513.4, "f0_range": (287.1, 585.4), "rms": 0.167, "file": "kurisu_0656.wav"},
+    "surprised": {"f0_hz": 380.0, "f0_range": (260.0, 480.0), "rms": 0.120, "file": "kurisu_0831.wav"},
 }
 
 # Calibrated English instructions following official 7-dimension guidance:
@@ -60,6 +61,7 @@ EMOTION_INSTRUCT_MAP: Dict[str, Optional[str]] = {
     "desperate": "Mid pitch, anxious, urgent and distressed, tense delivery.",
     "look_side": "Mid-low pitch, evasive, looking away, slightly defensive.",
     "eyes_closed": "Mid-low pitch, tranquil, serene, relaxed and quiet delivery.",
+    "surprised": "Mid pitch, caught off-guard, startled and reactive, alert delivery.",
 }
 
 

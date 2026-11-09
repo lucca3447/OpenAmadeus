@@ -15,7 +15,7 @@ if SERVER_DIR not in sys.path:
 
 from app.services.rvc.pipeline import KurisuRVCPipeline
 
-app = FastAPI(title="Amadeus RVC Neural Voice Worker", version="0.2.1")
+app = FastAPI(title="Amadeus RVC Neural Voice Worker", version="0.2.2")
 
 _pipelines: Dict[str, KurisuRVCPipeline] = {}
 _default_model_name = "KurisuRVCv147"
