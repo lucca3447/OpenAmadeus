@@ -64,7 +64,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ### 🔨 `v0.3.0`: Acoustic, VAD & Cognitive Depth (Next Step)
 *Focus: Noise-immune speech detection, authentic Steins;Gate lore grounding, and native PT-BR voice fine-tuning.*
-1. **Silero VAD Web (`@ricky0123/vad-web`)**:
+1. ✅ **Silero VAD Web (`@ricky0123/vad-web`)**:
    - Client-side ONNX neural Voice Activity Detection (hosted locally in `public/`) replacing raw RMS volume thresholding.
    - Eliminates false barge-in triggers from keyboard typing, mouse clicks, and breathing, avoiding unnecessary Groq Whisper API calls.
 2. **End-of-Call Session Summarization & Canonical Lorebook**:

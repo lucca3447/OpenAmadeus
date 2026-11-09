@@ -59,3 +59,6 @@ CONTEXT.md
 #AI
 .agents/
 AGENTS.md
+
+# Silero VAD + onnxruntime assets (copied by scripts/copy-vad-assets.mjs on npm install)
+public/vad/

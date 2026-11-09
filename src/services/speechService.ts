@@ -1,4 +1,6 @@
 import { BackendService, BACKEND_URL } from './backendService';
+import type { MicVAD } from '@ricky0123/vad-web';
+import { isVoiced } from './vadGate';
 
 export type SpeechCallback = (text: string) => void;
 export type SpeechStateCallback = (isListening: boolean) => void;
@@ -155,6 +157,9 @@ export class SpeechService {
   private static voiceStartTime = 0;
   private static recordCycleStart = 0;
   private static usingGroqRecorder = false;
+  // Silero neural VAD (ONNX in public/vad); null prob until loaded or if it fails -> RMS gate
+  private static silero: MicVAD | null = null;
+  private static sileroProb: number | null = null;
 
   // Callbacks stored from initRecognition
   private static onResultCb: SpeechCallback | null = null;
@@ -513,7 +518,7 @@ export class SpeechService {
       const threshold = this.isSpeakingAudio ? Math.max(onsetThreshold * 2.2, 0.065 * sensScale) : baseThreshold;
       const now = Date.now();
 
-      if (rms > threshold) {
+      if (isVoiced({ prob: this.sileroProb, rms, rmsThreshold: threshold, sensitivity: this.vadSensitivity, speaking: this.isSpeakingAudio, active: this.hasVocalActivity })) {
         if (!this.voiceStartTime) this.voiceStartTime = now;
         this.lastVoiceTime = now;
 
@@ -557,7 +562,7 @@ export class SpeechService {
           this.usingGroqRecorder &&
           this.micMode === 'hands_free' &&
           this.mediaRecorder?.state === 'recording' &&
-          rms < onsetThreshold * 0.8 &&
+          (this.sileroProb === null ? rms < onsetThreshold * 0.8 : this.sileroProb < 0.2) &&
           now - this.recordCycleStart > 2200
         ) {
           // Trim dead pre-speech silence in quiet room so Whisper never receives long silent blobs
@@ -574,6 +579,30 @@ export class SpeechService {
     this.vadAnimFrame = requestAnimationFrame(checkVad);
   }
 
+  // Loads Silero in the background on the already-open mic; the RMS gate covers the load time and any failure
+  private static startSilero(stream: MediaStream): void {
+    if (this.silero) return;
+    import('@ricky0123/vad-web')
+      .then(({ MicVAD }) =>
+        MicVAD.new({
+          model: 'v5',
+          baseAssetPath: '/vad/',
+          onnxWASMBasePath: '/vad/',
+          audioContext: this.ensureAudioContext().ctx,
+          getStream: async () => stream,
+          pauseStream: async () => {}, // the stream is owned by stopListening
+          onFrameProcessed: (p) => {
+            this.sileroProb = p.isSpeech;
+          },
+        })
+      )
+      .then((vad) => {
+        if (this.isListening && this.micStream === stream && !this.silero) this.silero = vad;
+        else vad.destroy();
+      })
+      .catch((err) => console.warn('[SpeechService] Silero VAD unavailable, using RMS gate:', err));
+  }
+
   static async startListening(): Promise<boolean> {
     if (this.isListening) return true;
 
@@ -585,6 +614,7 @@ export class SpeechService {
     const canUseGroq = Boolean(groqKey && typeof MediaRecorder !== 'undefined' && typeof navigator?.mediaDevices?.getUserMedia === 'function');
 
     const stream = await this.setupMicAnalyser();
+    if (stream) this.startSilero(stream);
     if (!stream && !this.recognition) {
       this.onErrorCb?.('Microfone indisponível neste navegador.');
       return false;
@@ -632,6 +662,9 @@ export class SpeechService {
     const wasListening = this.isListening;
     this.isListening = false;
     this.isHoldingPtt = false;
+    this.silero?.destroy();
+    this.silero = null;
+    this.sileroProb = null;
 
     if (this.vadAnimFrame) {
       cancelAnimationFrame(this.vadAnimFrame);
