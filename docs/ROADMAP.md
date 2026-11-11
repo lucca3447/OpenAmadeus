@@ -62,22 +62,23 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🔨 `v0.3.0`: Acoustic, VAD & Cognitive Depth (Next Step)
-*Focus: Noise-immune speech detection, authentic Steins;Gate lore grounding, and native PT-BR voice fine-tuning.*
+### 🟢 `v0.3.0`: Acoustic, VAD, Multilingual & Cognitive Depth (Completed — Current)
+*Focus: Noise-immune speech detection, authentic Steins;Gate lore grounding, trilingual localization, F1/F2 formant lip-sync, and native PT-BR voice fine-tuning.*
 1. ✅ **Silero VAD Web (`@ricky0123/vad-web`)**:
    - Client-side ONNX neural Voice Activity Detection (hosted locally in `public/`) replacing raw RMS volume thresholding.
    - Eliminates false barge-in triggers from keyboard typing, mouse clicks, and breathing, avoiding unnecessary Groq Whisper API calls.
 2. ✅ **End-of-Call Session Summarization & Canonical Lorebook**:
    - Automatic single-pass episodic summary generated in `memory_store.py` upon call hangup / session close (zero per-turn LLM overhead during conversation).
    - Lightweight, deterministic keyword/regex JSON *Lorebook* (~25 lines in `orchestrator.py`) injecting exact canonical lore when key terms are mentioned (*IBN 5100*, *SERN*, *Leskinen*, *Kerr Black Hole*, *Operação Skuld*).
-3. **Multilingual & Cloud-Trained Acoustic Upgrades**:
-   - Cultural persona adaptation and full UI localization across `PT-BR`, `EN`, and `JA`.
-   - Native PT-BR Qwen3-TTS LoRA fine-tuning notebook (`notebooks/`) trained on Google Colab to eliminate cross-lingual accent drift.
-   - Phonetic vowel/formant lip-sync (`A/E/I/O/U`) driving mouth shapes by audio frequency analysis instead of simple volume thresholding.
+3. ✅ **Multilingual, Formant Lip-Sync & Cloud-Trained Acoustic Upgrades**:
+   - Cultural persona adaptation and 100% complete UI localization across `PT-BR`, `EN`, and `JA` via zero-dependency typed dictionary (`src/i18n.ts`).
+   - Canonical Japanese dubbing mode (`canonicalJpVoice`) emitting Japanese speech via single-pass inline `<!--ja:...-->` tags while displaying subtitles in the user's chosen language.
+   - Native PT-BR Qwen3-TTS hybrid restoration + bilingual replay LoRA training notebook (`notebooks/Amadeus_Qwen3_TTS_PTBR_LoRA.ipynb`) eliminating foreign accent drift.
+   - Real-time phonetic vowel/formant lip-sync (`F1/F2` spectral analysis: `600–950 Hz` open &rarr; `02`, `250–550 Hz` close/mid &rarr; `01`, silence &rarr; `00`) driving the 3 canonical mouth frames of the 174 VN sprites.
 
 ---
 
-### 👁️ `v0.4.0`: Flexible 3-Tier Multimodal Vision & Co-Pilot
+### 🔨 `v0.4.0`: Flexible 3-Tier Multimodal Vision & Co-Pilot (Next Step)
 *Focus: Giving Kurisu genuine visual perception of the operator's workspace, screen, and documents without forcing expensive APIs or heavy local models.*
 1. **3-Tier Vision Engines (Configurable in Settings > Vision)**:
    - **Tier 1 (Default — Free Cloud):** `Gemini 2.5 Flash` / `Groq Vision` / Remote Colab worker (`Qwen2.5-VL`) with 0 GB local VRAM footprint, high-resolution code and PDF reading.
