@@ -5,6 +5,7 @@ class TTSRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     text: str
+    lang: Optional[str] = "pt"
     engine: Optional[str] = "qwen3"  # "qwen3", "kokoro", "edge_rvc", "edge"
     qwen_mode: Optional[str] = Field("remote", alias="qwenMode")  # "remote", "local", "auto"
     qwen_remote_url: Optional[str] = Field(None, alias="qwenRemoteUrl")

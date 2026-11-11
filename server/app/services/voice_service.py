@@ -101,6 +101,18 @@ def clean_text_for_tts(text: str, lang: str = "pt") -> str:
     return clean_text
 
 
+def resolve_qwen_language(lang: Optional[str] = "pt", text: str = "") -> str:
+    """Maps ISO/BCP-47 language tag (or CJK text detection) to Qwen3-TTS language name."""
+    if text and re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", text):
+        return "Japanese"
+    norm = (lang or "pt").strip().lower()
+    if norm.startswith("ja"):
+        return "Japanese"
+    if norm.startswith("en"):
+        return "English"
+    return "Portuguese"
+
+
 async def generate_edge_tts_stream(
     text: str,
     voice: str = "pt-BR-FranciscaNeural",
@@ -150,6 +162,7 @@ async def synthesize_speech(
     stream: bool = False,
     allow_fallback: bool = True,
     allowed_fallbacks: Optional[List[str]] = None,
+    lang: Optional[str] = "pt",
 ) -> Tuple[str, AsyncGenerator[bytes, None]]:
     """
     Modular speech orchestrator with user-controlled strict mode vs. sequential fallback:
@@ -168,10 +181,12 @@ async def synthesize_speech(
     # =========================================================================
     # STEP 1: Qwen3-TTS (Primary)
     # =========================================================================
+    qwen_lang = resolve_qwen_language(lang, clean_text)
+    eff_lang_code = "ja" if qwen_lang == "Japanese" else ("en" if qwen_lang == "English" else "pt")
     if active_engine == "qwen3":
-        qwen_text = clean_text_for_tts(text)
+        qwen_text = clean_text_for_tts(text, lang=eff_lang_code)
         primary_err = None
-        print(f"[OpenAmadeus Voice] Qwen3 Synthesis (mode: {qwen_mode}, stream: {stream}, strict: {not allow_fallback}) | Emotion: '{emotion or 'neutral'}'")
+        print(f"[OpenAmadeus Voice] Qwen3 Synthesis (lang: {qwen_lang}, mode: {qwen_mode}, stream: {stream}, strict: {not allow_fallback}) | Emotion: '{emotion or 'neutral'}'")
 
         # 1.1 Complete WAV delivery
         if not stream:
@@ -180,7 +195,7 @@ async def synthesize_speech(
                     text=qwen_text,
                     emotion=emotion,
                     custom_instruct=instruct,
-                    language="Portuguese",
+                    language=qwen_lang,
                     qwen_mode=qwen_mode or "remote",
                     qwen_remote_url=qwen_remote_url,
                 )
@@ -208,7 +223,7 @@ async def synthesize_speech(
                             text=qwen_text,
                             emotion=emotion,
                             custom_instruct=instruct,
-                            language="Portuguese",
+                            language=qwen_lang,
                             qwen_mode="local",
                         )
                         if local_wav:
@@ -225,7 +240,7 @@ async def synthesize_speech(
                     text=qwen_text,
                     emotion=emotion,
                     custom_instruct=instruct,
-                    language="Portuguese",
+                    language=qwen_lang,
                     qwen_mode=qwen_mode or "remote",
                     qwen_remote_url=qwen_remote_url,
                 )
@@ -249,7 +264,7 @@ async def synthesize_speech(
                             text=qwen_text,
                             emotion=emotion,
                             custom_instruct=instruct,
-                            language="Portuguese",
+                            language=qwen_lang,
                             qwen_mode="local",
                         )
                         return content_type, local_stream_gen
@@ -323,7 +338,9 @@ async def synthesize_speech(
     # =========================================================================
     # STEP 3: Edge-TTS (Cloud Neural)
     # =========================================================================
-    print(f"[OpenAmadeus Voice] Edge-TTS Synthesis (RVC: {use_rvc}) | Text: \"{clean_text}\"")
+    if (not voice or voice == "pt-BR-FranciscaNeural") and eff_lang_code != "pt":
+        voice = "ja-JP-NanamiNeural" if eff_lang_code == "ja" else "en-US-JennyNeural"
+    print(f"[OpenAmadeus Voice] Edge-TTS Synthesis (RVC: {use_rvc}, voice: {voice}) | Text: \"{clean_text}\"")
     try:
         if not use_rvc:
             return "audio/mpeg", generate_edge_tts_stream(clean_text, voice=voice, rate=rate, pitch=pitch)

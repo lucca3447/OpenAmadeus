@@ -4,7 +4,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.services.llm.sentence_stream import SentenceStream
+from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
+from app.services.offline_simulator import offline_simulator
+from app.services.voice_service import resolve_qwen_language
+from app.services.qwen_tts.qwen_worker import sanitize_for_qwen, prepare_worker_segments
 
 
 def run(chunks):
@@ -66,6 +69,49 @@ class TestSentenceStream(unittest.TestCase):
         self.assertEqual([k for k, _ in ev], ["directive", "sentence", "directive", "sentence"])
         self.assertIn("pose:default", ev[0][1])
         self.assertIn("pose:crossed_arms", ev[2][1])
+
+    def test_japanese_punctuation_splits_without_spaces(self):
+        ev, _ = run(["<!--emotion:annoyed,pose:crossed_arms,camera:medium--> クリスティーナって呼ぶな！私は牧瀬紅莉栖よ。"])
+        self.assertEqual(sentences(ev), ["クリスティーナって呼ぶな！", "私は牧瀬紅莉栖よ。"])
+
+    def test_canonical_ja_tag_emitted_and_stripped_from_subtitle(self):
+        raw = (
+            "<!--emotion:wink,pose:default,camera:closeup--> "
+            "<!--ja:冗談よ、そんなに怒らないで。--> Brincadeira, não precisa ficar tão bravo. "
+            "<!--ja:さあ、次の実験を始めましょう。--> Agora vamos começar o próximo experimento."
+        )
+        ev, _ = run([raw])
+        self.assertEqual(
+            ev,
+            [
+                ("directive", "<!--emotion:wink,pose:default,camera:closeup-->"),
+                ("ja", "冗談よ、そんなに怒らないで。"),
+                ("sentence", "Brincadeira, não precisa ficar tão bravo."),
+                ("ja", "さあ、次の実験を始めましょう。"),
+                ("sentence", "Agora vamos começar o próximo experimento."),
+            ],
+        )
+        self.assertEqual(extract_ja_tts(raw), "冗談よ、そんなに怒らないで。 さあ、次の実験を始めましょう。")
+
+    def test_qwen_language_resolution_and_sanitizer(self):
+        self.assertEqual(resolve_qwen_language("pt-BR", "Olá"), "Portuguese")
+        self.assertEqual(resolve_qwen_language("en-US", "Hello"), "English")
+        self.assertEqual(resolve_qwen_language("pt-BR", "こんにちは！"), "Japanese")
+        self.assertEqual(sanitize_for_qwen("Relatório!", language="Portuguese"), "Relatório.")
+        self.assertEqual(sanitize_for_qwen("Wait a second!", language="English"), "Wait a second!")
+        self.assertEqual(sanitize_for_qwen("クリスティーナって呼ぶな！", language="Japanese"), "クリスティーナって呼ぶな！")
+        self.assertEqual(
+            prepare_worker_segments("クリスティーナって呼ぶな！私は牧瀬紅莉栖よ。", max_single_pass_chars=8, language="Japanese"),
+            ["クリスティーナって呼ぶな！", "私は牧瀬紅莉栖よ。"],
+        )
+
+    def test_offline_simulator_trilingual_responses(self):
+        pt_res, _, _ = offline_simulator("Olá", {}, [], lang="pt")
+        en_res, _, _ = offline_simulator("Hello", {}, [], lang="en")
+        ja_res, _, _ = offline_simulator("こんにちは", {}, [], lang="ja")
+        self.assertIn("Kurisu", pt_res)
+        self.assertIn("Kurisu", en_res)
+        self.assertTrue("牧瀬紅莉栖" in ja_res or "アマデウス" in ja_res)
 
 
 if __name__ == "__main__":

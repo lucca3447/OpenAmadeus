@@ -28,6 +28,7 @@ async def text_to_speech(req: TTSRequest):
         stream=bool(req.stream),
         allow_fallback=req.allow_fallback if req.allow_fallback is not None else True,
         allowed_fallbacks=req.allowed_fallbacks,
+        lang=req.lang or "pt",
     )
     headers = {
         "X-Accel-Buffering": "no",

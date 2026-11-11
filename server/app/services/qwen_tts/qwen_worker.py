@@ -61,29 +61,32 @@ def apply_boundary_continuity(chunk: np.ndarray, prev_sample: Optional[float]) -
     return smoothed
 
 
-def sanitize_for_qwen(text: str) -> str:
+def sanitize_for_qwen(text: str, language: str = "Portuguese") -> str:
     """
     Worker-level safety sanitizer for starrydark/Makise_Kurisu_Qwen3_TTS:
     - Strips HTML comments, markdown, and emotes
     - Converts interrobangs ('?!', '!?') to '?'
-    - Converts exclamation marks ('!') to '.' to prevent Japanese glottal-stop syllable clipping
-    - Strips non-lexical hesitation vocables ('Hum', 'Hmm', 'U-um', 'Uhm') that trigger VN sighs/moans
+    - When language is Portuguese, converts exclamation marks ('!') to '.' to prevent Japanese glottal-stop clipping
+    - Strips non-lexical hesitation vocables ('Hum', 'Hmm', 'U-um', 'Uhm') in Portuguese
     - De-stutters single-letter prefixes ('Q-quem' -> 'Quem')
     - Replaces mid-sentence ellipses ('...', '…') with ', ' to prevent 2-3s silent gaps
-    - Ensures terminal punctuation ('.' or '?') for clean EOS
+    - Ensures terminal punctuation ('.', '?', '!', '。', '？', '！') for clean EOS
     """
     s = re.sub(r"<!--[^>]*-->", "", text or "")
     s = re.sub(r"\*[^*]+\*", "", s)
     s = re.sub(r'''[*_~`#"'«»]''', "", s)
     s = re.sub(r"[…‥]", "...", s)
     s = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", s)
-    s = re.sub(r"!+", ".", s)
-    s = re.sub(r"([.,])\s*\.", r"\1", s)
-    s = re.sub(
-        r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
-        "",
-        s,
-    )
+    is_pt = (language or "Portuguese").strip().lower().startswith("port") or (language or "").strip().lower().startswith("pt")
+    is_ja = (language or "").strip().lower().startswith("jap") or (language or "").strip().lower().startswith("ja") or bool(re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", s))
+    if is_pt and not is_ja:
+        s = re.sub(r"!+", ".", s)
+        s = re.sub(r"([.,])\s*\.", r"\1", s)
+        s = re.sub(
+            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+            "",
+            s,
+        )
 
     def _un_stutter(m: re.Match) -> str:
         prefix, word = m.group(1), m.group(2)
@@ -92,6 +95,14 @@ def sanitize_for_qwen(text: str) -> str:
         return m.group(0)
 
     s = re.sub(r"\b([A-Za-zÀ-ÿ])(?:\s*\.{2,}\s*|-)([a-zà-ÿ]+)\b", _un_stutter, s)
+    if is_ja:
+        s = re.sub(r"\s*\.{2,}\s*$", "。", s)
+        s = re.sub(r"\s*\.{2,}\s*", "、", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        if s and s[-1] not in ".?!。？！":
+            s += "。"
+        return s
+
     s = re.sub(r"\s*\.{2,}\s*$", ".", s)
     s = re.sub(r"\s*\.{2,}\s*", ", ", s)
     s = re.sub(r",\s*,+", ",", s)
@@ -102,30 +113,33 @@ def sanitize_for_qwen(text: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     if s and s[0].islower():
         s = s[0].upper() + s[1:]
-    if s and s[-1] not in ".?":
+    term_chars = ".?" if is_pt else ".?!"
+    if s and s[-1] not in term_chars:
         s += "."
     return s
 
 
-def prepare_worker_segments(text: str, max_single_pass_chars: int = 175) -> list[str]:
+def prepare_worker_segments(text: str, max_single_pass_chars: int = 175, language: str = "Portuguese") -> list[str]:
     """
     Sanitizes text and splits long multi-sentence paragraphs into stable sentence segments
     to prevent attention drift, volume collapse, and premature codec EOS on long texts.
     Short utterances (<= max_single_pass_chars) remain a single segment for fluid prosody.
     """
-    cleaned = sanitize_for_qwen(text)
+    cleaned = sanitize_for_qwen(text, language=language)
     if not cleaned:
         return []
     if len(cleaned) <= max_single_pass_chars:
         return [cleaned]
 
-    raw_parts = [p.strip() for p in re.split(r"(?<=[.?!])\s+", cleaned) if p.strip()]
+    is_ja = (language or "").strip().lower().startswith("jap") or bool(re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", cleaned))
+    raw_parts = [p.strip() for p in re.split(r"(?<=[.?!])\s+|(?<=[。！？])\s*", cleaned) if p.strip()]
     segments: list[str] = []
+    min_fragment = min(12 if is_ja else 25, max(1, max_single_pass_chars // 2))
     for part in raw_parts:
-        if part[-1] not in ".?":
-            part += "."
-        if segments and (len(segments[-1]) + 1 + len(part) <= max_single_pass_chars or len(part) < 25):
-            segments[-1] = f"{segments[-1]} {part}"
+        if part[-1] not in (".?!。？！" if is_ja else ".?!"):
+            part += "。" if is_ja else "."
+        if segments and (len(segments[-1]) + 1 + len(part) <= max_single_pass_chars or len(part) < min_fragment):
+            segments[-1] = f"{segments[-1]}{part}" if is_ja else f"{segments[-1]} {part}"
         else:
             segments.append(part)
     return segments or [cleaned]
@@ -222,6 +236,19 @@ def _load_model_worker():
                 loaded_model.predictor_graph.temperature = 0.6
                 loaded_model.predictor_graph.top_p = 0.9
                 print("[Qwen3 Worker] Calibrated PredictorGraph (temperature=0.6, top_p=0.9) before warmup.")
+
+            lora_dir = os.environ.get("QWEN_LORA_PATH") or os.path.join(
+                os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")),
+                "weights",
+                "kurisu_qwen3_ptbr_lora",
+            )
+            if os.path.isdir(lora_dir) and hasattr(loaded_model, "talker"):
+                try:
+                    from peft import PeftModel
+                    print(f"[Qwen3 Worker] Merging PT-BR LoRA adapter from '{lora_dir}' before CUDA Graph capture...")
+                    loaded_model.talker = PeftModel.from_pretrained(loaded_model.talker, lora_dir).merge_and_unload()
+                except Exception as lora_err:
+                    print(f"[Qwen3 Worker] Optional LoRA merge skipped ({lora_err}).")
 
             print("[Qwen3 Worker] Warming up Talker & Predictor CUDA Graphs...")
             loaded_model.warmup(prefill_len=100)
@@ -409,7 +436,7 @@ async def synthesize_stream(req: SynthesizeRequest):
     if model is None:
         raise HTTPException(status_code=503, detail="Qwen3-TTS Worker is still initializing.")
 
-    segments = prepare_worker_segments(req.text or "")
+    segments = prepare_worker_segments(req.text or "", language=req.language or "Portuguese")
     if not segments:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
@@ -466,7 +493,7 @@ async def synthesize(req: SynthesizeRequest):
     if model is None:
         raise HTTPException(status_code=503, detail="Qwen3-TTS Worker is still initializing.")
 
-    segments = prepare_worker_segments(req.text or "")
+    segments = prepare_worker_segments(req.text or "", language=req.language or "Portuguese")
     if not segments:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 

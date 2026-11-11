@@ -13,7 +13,7 @@ from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.openrouter import get_openrouter_candidate_models
-from app.services.llm.sentence_stream import SentenceStream
+from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
 from app.services.llm.streaming import stream_candidates, openai_delta, gemini_delta, gemini_stream_url
 
 _model_cache: Dict[str, str] = {}
@@ -132,10 +132,80 @@ def _offline_system_event_reply(
     history_turns: List[Dict[str, str]],
     gap_seconds: Optional[float],
     last_session_topic: str,
+    lang: str = "pt",
 ) -> Tuple[str, str]:
     last_user = next((t["content"] for t in reversed(history_turns) if t["role"] == "user"), "")
     snippet = (last_user[:48] + "...") if len(last_user) > 48 else last_user
     h = datetime.now().hour
+    lc = (lang or "pt").strip().lower()[:2]
+
+    if lc == "en":
+        if system_event == "call_greeting":
+            if gap_seconds and gap_seconds >= 86400:
+                days = max(1, int(gap_seconds // 86400))
+                return (
+                    f"Look who finally decided to show up after {days} day(s) of radio silence! I half-thought the 'Organization' got you... not that I was waiting for your call or anything! What's on the agenda today?",
+                    "annoyed",
+                )
+            if h < 6:
+                return (
+                    "Connecting at this hour of the night? I hope you at least have a mug of black coffee next to you. What's tonight's scientific insomnia about?",
+                    "wink",
+                )
+            if last_session_topic:
+                return (
+                    f"Link established with Lab 304! I was just thinking about our last conversation ({last_session_topic[:70]}). How did things progress on your end?",
+                    "happy",
+                )
+            return (
+                "Link established with Laboratory 304 at Viktor Chondria University. Makise Kurisu here. What are we working on today?",
+                "happy",
+            )
+        if system_event == "idle_stage_1":
+            if snippet:
+                return (
+                    f"Hey, you went completely quiet all of a sudden... Are you still processing what we were saying about \"{snippet}\" or did you freeze in front of your monitor?",
+                    "thinking",
+                )
+            return ("Hey, are you still there? You went silent right in the middle of our conversation.", "thinking")
+        return (
+            "Listen, if you went to grab coffee and left me talking to myself on the terminal, at least say so! I'm crossing my arms and reviewing my neuroscience papers until you bother replying.",
+            "annoyed",
+        )
+
+    if lc == "ja":
+        if system_event == "call_greeting":
+            if gap_seconds and gap_seconds >= 86400:
+                days = max(1, int(gap_seconds // 86400))
+                return (
+                    f"{days}日も音沙汰なしだったなんて、いったいどこをほっつき歩いていたのよ！『機関』にでも捕まったのかと思ったじゃない……べ、別にあんたの着信を待ってたわけじゃないんだからね！今日は何の用？",
+                    "annoyed",
+                )
+            if h < 6:
+                return (
+                    "こんな深夜に接続してくるなんて、ちゃんとブラックコーヒーくらい用意してるんでしょうね？今夜の科学的な不眠症のテーマは何？",
+                    "wink",
+                )
+            if last_session_topic:
+                return (
+                    f"ヴィクトル・コンドリア大学ラボ304、接続完了よ。ちょうど前回の話（{last_session_topic[:50]}）を思い出していたところなの。その後どうなった？",
+                    "happy",
+                )
+            return (
+                "ヴィクトル・コンドリア大学ラボ304と接続完了。牧瀬紅莉栖よ。今日はどんな議論をするつもり？",
+                "happy",
+            )
+        if system_event == "idle_stage_1":
+            if snippet:
+                return (
+                    f"ちょっと、急に黙り込んでどうしたのよ……「{snippet}」の話をまだ考え中なの、それともモニターの前で固まってるの？",
+                    "thinking",
+                )
+            return ("ねえ、まだそこにいるの？話の途中で急に静かになったけど。", "thinking")
+        return (
+            "ちょっと、コーヒーでも淹れに行って私を端末の前に放置してるなら一言くらい言いなさいよね！あんたが返事をするまで、腕を組んで神経科学の論文を読んでるから。",
+            "annoyed",
+        )
 
     if system_event == "call_greeting":
         if gap_seconds and gap_seconds >= 86400:
@@ -265,11 +335,33 @@ class LLMOrchestrator:
             memory_ctx_blocks.append(block)
 
         # 3. Dynamic Few-Shot Exemplars from Kurisu Fine-Tuning Pack
-        exemplars = memory_store.search_exemplars(search_query, n_results=2, lang=req.lang or "pt")
+        lang_code = (req.lang or "pt").strip().lower()[:2]
+        exemplars = memory_store.search_exemplars(search_query, n_results=2, lang=lang_code)
         if exemplars:
             ex_lines = [f"Operador: \"{ex['user']}\"\nKurisu: \"{ex['assistant']}\"" for ex in exemplars]
             block = "[EXEMPLOS CANÔNICOS DE DIÁLOGO E TOM DA KURISU]:\n" + "\n\n".join(ex_lines)
             memory_ctx_blocks.append(block)
+
+        if lang_code == "en":
+            memory_ctx_blocks.append(
+                "[LANGUAGE DIRECTIVE OVERRIDE: 100% FLUENT ENGLISH]\n"
+                "- Respond strictly in natural, sharp, academic English as Amadeus Makise Kurisu (Viktor Chondria Lab 304).\n"
+                "- Never reply in Portuguese and never use isolated Japanese romaji interjections ('Baka', '-kun', '-san').\n"
+                "- Keep all visual tags <!--emotion:...,pose:...,camera:...--> and memory tags <!--remember:...|...|...--> intact."
+            )
+        elif lang_code == "ja":
+            memory_ctx_blocks.append(
+                "[言語ディレクティブ最優先: 100% カノニカル日本語 (牧瀬紅莉栖)]\n"
+                "- 必ず『STEINS;GATE 0』の牧瀬紅莉栖（アマデウス紅莉栖、18歳、ヴィクトル・コンドリア大学ラボ304）として、自然で知的な日本語（一人称は「私」、理知的で少しツンデレな口調）のみで応答してください。\n"
+                "- ポルトガル語や英語で返答せず、視覚タグ <!--emotion:...,pose:...,camera:...--> と記憶タグ <!--remember:...|...|...--> はそのまま維持してください。"
+            )
+
+        if getattr(req, "canonicalVoice", False) and lang_code in ("pt", "en"):
+            memory_ctx_blocks.append(
+                "[MODO DUBLAGEM CANÔNICA (VOZ ORIGINAL EM JAPONÊS + LEGENDA)]:\n"
+                "- Para CADA frase da sua resposta, inclua imediatamente antes do texto na língua do operador a tag <!--ja:セリフ--> contendo a fala equivalente autêntica de Makise Kurisu em japonês nativo (como Asami Imai em Steins;Gate 0).\n"
+                "- Exemplo: <!--emotion:wink,pose:default,camera:closeup--> <!--ja:冗談よ、そんなにムキにならないで。--> Brincadeira, não precisa levar tão a sério."
+            )
 
         memory_ctx = ("\n\n" + "\n\n".join(memory_ctx_blocks)) if memory_ctx_blocks else ""
         system_prompt = persona.get("systemPrompt", "") + memory_ctx
@@ -280,6 +372,7 @@ class LLMOrchestrator:
         """Parses tags, infers pose/camera, persists the turn and returns the ChatResponse."""
         # Parse tags with user message context for action intent mapping
         user_ctx_for_tags = None if is_system_event else req.message
+        tts_resp = extract_ja_tts(raw_reply) if getattr(req, "canonicalVoice", False) else None
         clean_text, emotion, learned = parse_tags(raw_reply, user_message=user_ctx_for_tags)
         if is_system_event:
             learned = None
@@ -301,6 +394,7 @@ class LLMOrchestrator:
 
         return ChatResponse(
             response=clean_text,
+            ttsResponse=tts_resp or None,
             emotion=emotion,
             pose=pose,
             camera=camera,
@@ -337,10 +431,10 @@ class LLMOrchestrator:
                 )
 
             if is_system_event:
-                clean_text, emotion = _offline_system_event_reply(system_event, history_turns, gap_seconds, last_session_topic)
+                clean_text, emotion = _offline_system_event_reply(system_event, history_turns, gap_seconds, last_session_topic, req.lang or "pt")
                 learned = None
             else:
-                clean_text, emotion, learned = offline_simulator(req.message, persona, semantic_matches)
+                clean_text, emotion, learned = offline_simulator(req.message, persona, semantic_matches, lang=req.lang or "pt")
             pose, camera = infer_pose_and_camera(clean_text, emotion, None if is_system_event else req.message)
             lead_emotion, lead_pose = infer_lead_expression(clean_text, clean_text, emotion, pose, None if is_system_event else req.message)
             
@@ -648,7 +742,10 @@ class LLMOrchestrator:
             res = await self.handle_chat(req)
             if not res.error:
                 yield {"event": "meta", "emotion": res.emotion, "pose": res.pose, "camera": res.camera}
-                yield {"event": "sentence", "text": res.response, "index": 0}
+                sent_ev: Dict[str, Any] = {"event": "sentence", "text": res.response, "index": 0}
+                if res.ttsResponse:
+                    sent_ev["ttsText"] = res.ttsResponse
+                yield sent_ev
             yield {"event": "done", "response": res.model_dump()}
             return
 
@@ -670,12 +767,13 @@ class LLMOrchestrator:
         first_emotion = "neutral"
         cur_meta: Dict[str, str] = {"emotion": "neutral", "pose": "default", "camera": "closeup"}
         shifted_this_sentence = False
+        pending_ja: Optional[str] = None
         meta_sent = False
         completed = False
 
         def handle(events):
             """Turns splitter events into outgoing events, guaranteeing one meta before the 1st sentence and per-sentence visual shifts."""
-            nonlocal meta_sent, first_emotion, cur_meta, shifted_this_sentence
+            nonlocal meta_sent, first_emotion, cur_meta, shifted_this_sentence, pending_ja
             out = []
             for kind, val in events:
                 if kind == "directive":
@@ -687,6 +785,8 @@ class LLMOrchestrator:
                         out.append(meta)
                     else:
                         shifted_this_sentence = True
+                elif kind == "ja":
+                    pending_ja = f"{pending_ja} {val}".strip() if pending_ja else val
                 elif kind == "sentence":
                     if not meta_sent:
                         pose, camera = infer_pose_and_camera("", "neutral", user_message=user_ctx)
@@ -697,7 +797,11 @@ class LLMOrchestrator:
                         cur_meta = infer_sentence_shift(val, len(spoken), cur_meta["emotion"], cur_meta["pose"], cur_meta["camera"])
                     shifted_this_sentence = False
                     spoken.append(val)
-                    out.append({"event": "sentence", "text": val, "index": len(spoken) - 1, **cur_meta})
+                    sent_payload: Dict[str, Any] = {"event": "sentence", "text": val, "index": len(spoken) - 1, **cur_meta}
+                    if pending_ja:
+                        sent_payload["ttsText"] = pending_ja
+                        pending_ja = None
+                    out.append(sent_payload)
             return out
 
         try:

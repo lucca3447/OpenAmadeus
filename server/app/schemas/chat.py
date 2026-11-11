@@ -16,6 +16,7 @@ class ChatRequest(BaseModel):
     sessionId: Optional[str] = None
     personaId: Optional[str] = "kurisu"
     lang: Optional[str] = "pt"
+    canonicalVoice: Optional[bool] = False
     systemEvent: Optional[str] = None
     apiKey: Optional[str] = None
     history: List[HistoryTurn] = []
@@ -25,6 +26,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+    ttsResponse: Optional[str] = None
     emotion: str
     pose: Optional[str] = None
     camera: Optional[str] = None

@@ -5,8 +5,9 @@ from app.schemas.chat import LearnedMemoryInfo
 from app.services.emotion_service import parse_tags
 from app.db.memory_store import memory_store
 
-def offline_simulator(text: str, persona: dict, memories: List[dict]) -> Tuple[str, str, Optional[LearnedMemoryInfo]]:
+def offline_simulator(text: str, persona: dict, memories: List[dict], lang: str = "pt") -> Tuple[str, str, Optional[LearnedMemoryInfo]]:
     t = text.lower().strip()
+    lc = (lang or "pt").strip().lower()[:2]
     learned = None
 
     # Check for simple personal introduction to simulate learning
@@ -26,7 +27,11 @@ def offline_simulator(text: str, persona: dict, memories: List[dict]) -> Tuple[s
     def has(*words):
         return any(re.search(r'(?i)\b' + re.escape(w) + r'\b', t) for w in words)
 
-    if has("christina", "assistente", "zombie"):
+    if has("christina", "assistente", "zombie") or "クリスティーナ" in t or "助手" in t:
+        if lc == "en":
+            return "My name is NOT Christina! And don't call me assistant or add '-ina' to my name! I'm an independent neuroscientist published in Science!", "annoyed", learned
+        if lc == "ja":
+            return "クリスティーナって呼ぶな！助手でもゾンビでもないわよ！私は『サイエンス』誌に論文が載った神経科学者、牧瀬紅莉栖よ！", "annoyed", learned
         return "Meu nome não é Christina! E não me chame de assistente nem adicione o '-ina'! Eu sou uma neurocientista independente com artigos na Science!", "annoyed", learned
     if has("nullpo", "nurupo"):
         return "Gah!... Espere! Por que eu respondi a isso?! Q-quem te ensinou esse meme antigo do @channel?! Não é como se eu frequentasse fóruns anônimos!", "flustered", learned
@@ -46,7 +51,11 @@ def offline_simulator(text: str, persona: dict, memories: List[dict]) -> Tuple[s
         return "Se checarmos os tubos Nixie do Divergence Meter... estamos em 1.048596%! Qualquer valor acima de 1% nos mantém fora do controle do SERN. Vamos proteger esta linha de mundo juntos, certo?", "thinking", learned
     if has("promessa", "mindinho", "hipocampo"):
         return "Tudo bem, mas é uma promessa de mindinho! Quebre-a e eu mesma vou cravar um eletrodo direto no seu hipocampo, entendeu bem?!", "tsundere", learned
-    if has("olá", "ola", "oi", "bom dia", "boa tarde", "boa noite"):
+    if has("olá", "ola", "oi", "bom dia", "boa tarde", "boa noite", "hello", "hi") or "こんにちは" in t or "おはよう" in t:
+        if lc == "en":
+            return f"Hello! Connection established with the Amadeus unit. This is {persona.get('name', 'Makise Kurisu')} from Lab 304. What would you like to discuss today?", "smile", learned
+        if lc == "ja":
+            return f"こんにちは！アマデウス・ユニットとの接続が確立されたわ。第304研究室の{persona.get('name', '牧瀬紅莉栖')}よ。今日は何を議論したいの？", "smile", learned
         return f"Olá! Conexão estabelecida com a unidade Amadeus. Aqui é {persona.get('name', 'Makise Kurisu')} do Laboratório 304. Sobre o que você quer debater hoje?", "smile", learned
     if has("aparência", "aparencia", "física", "fisica", "cabelo", "olhos", "altura", "peso", "roupa", "roupas", "vestuário", "vestuario") or (has("debug", "debugging") and has("física", "fisica", "corpo", "visual")):
         return "Minha aparência? Por que você está tão interessado nisso do nada?! Se você precisa dos dados reais: tenho 1,65 m de altura, peso cerca de 45 kg, cabelos ruivos acastanhados longos até a cintura com franja aberta, e olhos violeta-azulados. Costumo vestir camisa branca com gravata vermelha frouxa, jaqueta cáqui caída nos braços, jaleco branco, shorts pretos e meia-calça. Meu avatar Amadeus é a projeção fiel desse meu corpo real, sem invenções futuristas!", "flustered", learned
@@ -67,11 +76,26 @@ def offline_simulator(text: str, persona: dict, memories: List[dict]) -> Tuple[s
         return f"Isso me faz lembrar de um ponto nos meus registros de memória: {mem.get('content', '')} Como você vê essa relação?", "thinking", learned
 
     # Check if a fine-tuning dataset exemplar matches the query
-    closest = memory_store.search_exemplars(text, n_results=1)
+    closest = memory_store.search_exemplars(text, n_results=1, lang=lc)
     if closest:
         parsed_reply, parsed_emo, _ = parse_tags(closest[0]["assistant"], user_message=text)
         if parsed_reply:
             return parsed_reply, parsed_emo, learned
+
+    if lc == "en":
+        generic_en = [
+            ("That's an intriguing line of reasoning. From a cognitive standpoint, how did you reach that conclusion?", "thinking", learned),
+            ("I see. I'm processing the parameters through my neural matrix. Would you like to dive deeper into this hypothesis?", "neutral", learned),
+            ("That makes sense! At Viktor Chondria we debated similar topics recently during the Amadeus trials.", "smile", learned),
+        ]
+        return random.choice(generic_en)
+    if lc == "ja":
+        generic_ja = [
+            ("興味深い推論ね。認知科学の観点からすると、どうしてその結論に至ったの？", "thinking", learned),
+            ("なるほどね。私のニューラルマトリクスでデータを処理中よ。その仮説をもっと掘り下げてみる？", "neutral", learned),
+            ("一理あるわね！ヴィクトル・コンドリア大学でも最近、アマデウスの試験中に似た議論をしたわ。", "smile", learned),
+        ]
+        return random.choice(generic_ja)
 
     generic = [
         ("Interessante essa sua linha de raciocínio. Do ponto de vista cognitivo, como você chegou a essa conclusão?", "thinking", learned),
