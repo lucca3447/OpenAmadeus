@@ -242,12 +242,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setVoiceTestError(null);
     const sampleText =
       (voiceSettings.engine || 'qwen3') === 'qwen3'
-        ? 'Teste de calibração acústica do motor Qwen3 concluído. Sincronia neural ativa.'
+        ? t.voiceSec.testPhraseQwen
         : voiceSettings.engine === 'kokoro'
-          ? 'Olá, este é o motor neural Kokoro operando localmente com baixa latência.'
+          ? t.voiceSec.testPhraseKokoro
           : voiceSettings.neuralVoice?.startsWith('ja-JP')
             ? 'こんにちは！神経接続および音声合成テスト完了。'
-            : 'Conexão estabelecida. Teste de síntese vocal e sincronia labial concluído.';
+            : t.voiceSec.testPhraseDefault;
 
     await SpeechService.speak(sampleText, {
       voiceURI: voiceSettings.voiceURI,
@@ -317,7 +317,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Capsule Tab List */}
           <div
             role="tablist"
-            aria-label="Seções de Configuração"
+            aria-label={t.footer.sectionAria}
             className="relative z-10 flex md:flex-col gap-2.5 overflow-x-auto md:overflow-visible pb-1 md:pb-0"
           >
             {CAPSULE_SECTIONS.map((sec, idx) => {
@@ -348,7 +348,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       selected ? 'text-amber-100' : 'text-amber-200/70'
                     }`}
                   >
-                    {sec.label}
+                    {(t.capsules as Record<string, string>)[sec.id] || sec.label}
                   </span>
                 </button>
               );
@@ -375,25 +375,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="flex items-center justify-between px-6 py-4 border-b border-amber-900/40 bg-black/50">
             <div>
               <h2 id="amadeus-setup-title" className="engraved-heading text-lg md:text-xl font-bold uppercase">
-                {activeSection === 'cortex' && 'Córtex LLM & Credenciais'}
-                {activeSection === 'voice' && 'Síntese Vocal & Prosódia Neural'}
-                {activeSection === 'whisper' && 'Whisper STT & Detecção de Voz (VAD)'}
-                {activeSection === 'display' && 'Calibração Óptica & Enquadramento'}
-                {activeSection === 'system' && 'Arquitetura Neural & Modelos Open-Source'}
+                {(t.sectionHeaders as Record<string, { title: string; sub: string }>)[activeSection]?.title}
               </h2>
               <p className="text-[11px] font-mono text-orange-400/80 tracking-wider uppercase mt-0.5">
-                {activeSection === 'cortex' && 'Chave Primária e Controle Estrito de Modelos'}
-                {activeSection === 'voice' && 'Motores Qwen3 1.7B, Kokoro 82M, Edge+RVC e Cascata TTS'}
-                {activeSection === 'whisper' && 'Credencial Groq Dedicada, Gate Acústico e Fallback STT'}
-                {activeSection === 'display' && 'Varredura CRT e Geometria de Palco'}
-                {activeSection === 'system' && 'Infraestrutura Local e Pesos Neurais'}
+                {(t.sectionHeaders as Record<string, { title: string; sub: string }>)[activeSection]?.sub}
               </p>
             </div>
 
             <button
               type="button"
               onClick={handleApplyAndClose}
-              title="Aplicar e Fechar (Esc)"
+              title={t.footer.applyCloseTitle}
               className="w-8 h-8 rounded-full border border-amber-900/60 bg-black/60 flex items-center justify-center text-zinc-400 hover:text-amber-200 hover:border-orange-400 transition-colors"
             >
               <X className="w-4 h-4" />
@@ -410,7 +402,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="engraved-label flex items-center gap-2">
                       <Key className="w-4 h-4 text-orange-400" />
-                      <span>Chave Primária do Córtex (Groq / Gemini / OpenRouter)</span>
+                      <span>{t.cortexSec.primaryKeyLabel}</span>
                     </span>
                     <span className="text-[10px] font-mono text-orange-400 uppercase">
                       {tempApiKey.trim().startsWith('gsk_')
@@ -423,15 +415,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
-                    Suporta chaves <strong>Groq Cloud</strong> (<code className="text-amber-300">gsk_...</code>),{' '}
-                    <strong>Google Gemini</strong> (<code className="text-amber-300">AIzaSy...</code>) ou{' '}
-                    <strong>OpenRouter</strong> (<code className="text-amber-300">sk-or-...</code>).
+                    {t.cortexSec.keyProvidersDesc}
                   </p>
 
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
                     <input
                       type="password"
-                      placeholder="Insira sua chave (gsk_... / AIzaSy... / sk-or-...)"
+                      placeholder={t.cortexSec.keyPlaceholder}
                       value={tempApiKey}
                       onChange={(e) => {
                         setTempApiKey(e.target.value);
@@ -452,7 +442,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <Zap className="w-3.5 h-3.5 text-orange-400" />
                       )}
                       <span className="engraved-serif text-[11px] font-bold tracking-wider">
-                        {isTesting ? 'TESTANDO...' : 'TESTAR CONEXÃO'}
+                        {isTesting ? t.cortexSec.testingBtn : t.cortexSec.testConnBtn}
                       </span>
                     </button>
                   </div>
@@ -478,7 +468,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Engraved Toggle 1: Strict Model Lock */}
                 <div className="space-y-1.5 pt-3 border-t border-amber-900/30">
                   <div className="flex items-baseline">
-                    <span className="engraved-label">Travar Modelo Selecionado (Sem Cascata LLM)</span>
+                    <span className="engraved-label">{t.cortexSec.strictModelLabel}</span>
                     <div className="dotted-leader" />
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -505,14 +495,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans">
-                    Quando <strong>ON</strong>, impede que erros de cota (HTTP 429/503) troquem silenciosamente seu modelo por outro da fila, exibindo o erro real do provedor.
+                    {t.cortexSec.strictModelDesc}
                   </p>
                 </div>
 
                 {/* Engraved Toggle 2: Block Silent Offline Simulator */}
                 <div className="space-y-1.5 pt-2">
                   <div className="flex items-baseline">
-                    <span className="engraved-label">Bloquear Simulador Offline em Falhas de Rede</span>
+                    <span className="engraved-label">{t.cortexSec.blockOfflineSimLabel}</span>
                     <div className="dotted-leader" />
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -545,21 +535,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans">
-                    Quando <strong>ON</strong>, nunca responde com frases pré-programadas do simulador caso a API falhe.
+                    {t.cortexSec.blockOfflineSimDesc}
                   </p>
                 </div>
 
                 {/* Spontaneous Initiative & Impatience Mode */}
                 <div className="space-y-2 pt-3 border-t border-amber-900/30">
                   <span className="engraved-label block">
-                    Iniciativa Espontânea & Impaciência em Silêncio
+                    {t.cortexSec.idleInitiativeLabel}
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {(
                       [
-                        { id: 'off', label: 'OFF (DESATIVADO)' },
-                        { id: 'silent', label: 'SILENCIOSO (TEXTO + SPRITE)' },
-                        { id: 'voice', label: 'VOZ ATIVA (TEXTO + TTS)' },
+                        { id: 'off', label: t.cortexSec.idleModes.off },
+                        { id: 'silent', label: t.cortexSec.idleModes.silent },
+                        { id: 'voice', label: t.cortexSec.idleModes.voice },
                       ] as const
                     ).map((opt) => {
                       const activeMode = llmSettings.idleInitiativeMode || 'voice';
@@ -586,7 +576,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     })}
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans">
-                    Quando ativa, a Kurisu puxa assunto se você parar de responder no meio da conversa (em 2 estágios) e comenta seu tempo de ausência ao atender.
+                    {t.cortexSec.idleInitiativeDesc}
                   </p>
                 </div>
               </div>
@@ -610,10 +600,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="space-y-2">
                     <div>
                       <label className="engraved-label block text-xs">
-                        {t.uiLangLabel || 'Idioma da Interface (Menus, Modais e Botões):'}
+                        {t.uiLangLabel}
                       </label>
                       <p className="text-[11px] text-zinc-400 font-sans mt-0.5">
-                        {t.uiLangDesc || 'Define o idioma visual da aplicação (rótulos, painéis, modais e avisos).'}
+                        {t.uiLangDesc}
                       </p>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -650,10 +640,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="pt-3 border-t border-amber-900/40 space-y-2">
                     <div>
                       <label className="engraved-label block text-xs">
-                        {t.convLangLabel || 'Idioma da Conversa (Diálogo, Voz e STT):'}
+                        {t.convLangLabel}
                       </label>
                       <p className="text-[11px] text-zinc-400 font-sans mt-0.5">
-                        {t.convLangDesc || 'Define o idioma no qual a Makise Kurisu escuta pelo microfone, raciocina e responde.'}
+                        {t.convLangDesc}
                       </p>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -731,23 +721,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Primary Engine Row */}
                 <div className="space-y-2">
-                  <span className="engraved-label block">Motor Primário de Síntese Vocal</span>
+                  <span className="engraved-label block">{t.voiceSec.primaryEngineLabel}</span>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     {[
                       {
                         id: 'qwen3' as const,
-                        title: 'QWEN3-TTS 1.7B',
-                        sub: 'Prosódia & Emoções (Colab / CUDA)',
+                        title: t.voiceSec.engineQwenTitle,
+                        sub: t.voiceSec.engineQwenSub,
                       },
                       {
                         id: 'kokoro' as const,
-                        title: 'KOKORO-TTS 82M',
-                        sub: 'Motor Local Ultrarrápido (~100ms)',
+                        title: t.voiceSec.engineKokoroTitle,
+                        sub: t.voiceSec.engineKokoroSub,
                       },
                       {
                         id: 'edge_rvc' as const,
-                        title: 'EDGE-TTS + RVC',
-                        sub: 'Voz Neural Cloud + Timbre RVC v2',
+                        title: t.voiceSec.engineEdgeTitle,
+                        sub: t.voiceSec.engineEdgeSub,
                       },
                     ].map((eng) => {
                       const active = (voiceSettings.engine || 'qwen3') === eng.id;
@@ -777,7 +767,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="p-4 border border-amber-900/50 bg-black/55 space-y-4">
                     {/* Execution Mode: Remote vs Local */}
                     <div className="flex items-baseline">
-                      <span className="engraved-label">Topologia de Execução Qwen3</span>
+                      <span className="engraved-label">{t.voiceSec.qwenTopologyLabel}</span>
                       <div className="dotted-leader" />
                       <div className="flex items-center gap-2 shrink-0">
                         <button
@@ -789,7 +779,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             handlePingWorker(voiceSettings.qwenRemoteUrl);
                           }}
                         >
-                          COLAB REMOTO
+                          {t.voiceSec.qwenColabToggle}
                         </button>
                         <span className="text-zinc-600 font-serif">/</span>
                         <button
@@ -801,14 +791,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             handlePingWorker('http://127.0.0.1:8005');
                           }}
                         >
-                          CUDA LOCAL
+                          {t.voiceSec.qwenCudaToggle}
                         </button>
                       </div>
                     </div>
 
                     {/* Audio Delivery: Streaming vs Complete WAV */}
                     <div className="flex items-baseline">
-                      <span className="engraved-label">Protocolo de Entrega Acústica</span>
+                      <span className="engraved-label">{t.voiceSec.deliveryProtocolLabel}</span>
                       <div className="dotted-leader" />
                       <div className="flex items-center gap-2 shrink-0">
                         <button
@@ -817,7 +807,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           data-active={Boolean(voiceSettings.stream)}
                           onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: true })}
                         >
-                          STREAM (~500MS)
+                          {t.voiceSec.streamToggle}
                         </button>
                         <span className="text-zinc-600 font-serif">/</span>
                         <button
@@ -826,7 +816,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           data-active={!voiceSettings.stream}
                           onClick={() => onSaveVoiceSettings({ ...voiceSettings, stream: false })}
                         >
-                          WAV COMPLETO
+                          {t.voiceSec.wavToggle}
                         </button>
                       </div>
                     </div>
@@ -836,7 +826,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <div className="space-y-2 pt-2 border-t border-amber-900/30">
                         <label className="text-[11px] text-amber-200/90 flex items-center gap-1.5">
                           <Globe className="w-3.5 h-3.5 text-orange-400" />
-                          <span>Endpoint Público do Worker (Cloudflare Tunnel):</span>
+                          <span>{t.voiceSec.endpointLabel}</span>
                         </label>
                         <div className="flex flex-col sm:flex-row gap-2">
                           <input
@@ -862,45 +852,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             ) : (
                               <Activity className="w-3.5 h-3.5 text-orange-400" />
                             )}
-                            <span className="engraved-serif text-[11px] font-bold">TESTAR PING</span>
+                            <span className="engraved-serif text-[11px] font-bold">{t.voiceSec.pingBtn}</span>
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="flex items-center justify-between pt-2 border-t border-amber-900/30 text-[11px]">
-                        <span className="text-zinc-400">Loopback Local Qwen3: <code className="text-amber-300">http://127.0.0.1:8005</code></span>
+                        <span className="text-zinc-400">{t.voiceSec.loopbackLabel} <code className="text-amber-300">http://127.0.0.1:8005</code></span>
                         <button
                           type="button"
                           onClick={() => handlePingWorker('http://127.0.0.1:8005')}
                           className="text-orange-400 hover:underline flex items-center gap-1"
                         >
                           <Activity className="w-3.5 h-3.5" />
-                          <span>Verificar Worker Local</span>
+                          <span>{t.voiceSec.checkLocalWorkerBtn}</span>
                         </button>
                       </div>
                     )}
 
                     {/* Live Worker Telemetry Bar */}
                     <div className="flex items-center justify-between px-3 py-1.5 bg-black/80 border border-zinc-800 text-[11px]">
-                      <span className="text-zinc-400">Telemetria do Worker Qwen3:</span>
+                      <span className="text-zinc-400">{t.voiceSec.telemetryLabel}</span>
                       {qwenPingStatus ? (
                         qwenPingStatus.status === 'ready' ? (
                           <span className="text-emerald-400 font-bold flex items-center gap-1.5">
                             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                            ONLINE • {qwenPingStatus.device || 'GPU'} ({qwenPingStatus.ping_ms}ms)
+                            {t.voiceSec.statusReady} • {qwenPingStatus.device || 'GPU'} ({qwenPingStatus.ping_ms}ms)
                           </span>
                         ) : qwenPingStatus.status === 'initializing' ? (
                           <span className="text-amber-400 font-bold flex items-center gap-1.5">
                             <Loader2 className="w-3 h-3 animate-spin" />
-                            CARREGANDO PESOS ({qwenPingStatus.ping_ms}ms)
+                            {t.voiceSec.statusLoading} ({qwenPingStatus.ping_ms}ms)
                           </span>
                         ) : (
                           <span className="text-rose-400 font-bold">
-                            OFFLINE ({qwenPingStatus.error ? 'Inacessível' : 'Desconectado'})
+                            {t.voiceSec.statusOffline} ({qwenPingStatus.error ? t.voiceSec.statusUnreachable : t.voiceSec.statusDisconnected})
                           </span>
                         )
                       ) : (
-                        <span className="text-zinc-500">Não verificado</span>
+                        <span className="text-zinc-500">{t.voiceSec.statusUnchecked}</span>
                       )}
                     </div>
                   </div>
@@ -910,7 +900,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {voiceSettings.engine === 'kokoro' && (
                   <div className="p-4 border border-amber-900/50 bg-black/55 space-y-4">
                     <div className="flex items-baseline">
-                      <span className="engraved-label">Conversão de Timbre RVC sobre Kokoro</span>
+                      <span className="engraved-label">{t.voiceSec.kokoroRvcLabel}</span>
                       <div className="dotted-leader" />
                       <div className="flex items-center gap-2 shrink-0">
                         <button
@@ -935,7 +925,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     {voiceSettings.useRvc && (
                       <div className="flex items-center justify-between gap-4 pt-2 border-t border-amber-900/30">
-                        <span className="text-zinc-300">Modelo RVC (.pth):</span>
+                        <span className="text-zinc-300">{t.voiceSec.rvcModelLabel}</span>
                         <select
                           value={voiceSettings.rvcModel || 'KurisuRVCv147'}
                           onChange={(e) =>
@@ -958,7 +948,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {voiceSettings.engine === 'edge_rvc' && (
                   <div className="p-4 border border-amber-900/50 bg-black/55 space-y-4">
                     <div className="flex items-baseline">
-                      <span className="engraved-label">Fonte Vocal Base</span>
+                      <span className="engraved-label">{t.voiceSec.baseVoiceSourceLabel}</span>
                       <div className="dotted-leader" />
                       <div className="flex items-center gap-2 shrink-0">
                         <button
@@ -967,7 +957,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           data-active={voiceSettings.useNeural !== false}
                           onClick={() => onSaveVoiceSettings({ ...voiceSettings, useNeural: true })}
                         >
-                          EDGE NEURAL
+                          {t.voiceSec.edgeNeuralToggle}
                         </button>
                         <span className="text-zinc-600 font-serif">/</span>
                         <button
@@ -976,14 +966,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           data-active={voiceSettings.useNeural === false}
                           onClick={() => onSaveVoiceSettings({ ...voiceSettings, useNeural: false })}
                         >
-                          NAVEGADOR
+                          {t.voiceSec.browserVoiceToggle}
                         </button>
                       </div>
                     </div>
 
                     {voiceSettings.useNeural !== false ? (
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <span className="text-zinc-300">Timbre Neural Base:</span>
+                        <span className="text-zinc-300">{t.voiceSec.neuralVoiceBaseLabel}</span>
                         <select
                           value={voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural'}
                           onChange={(e) =>
@@ -991,17 +981,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           }
                           className="h-8 px-3 bg-black border border-amber-900/60 text-amber-100 text-xs outline-none focus:border-orange-400"
                         >
-                          <option value="pt-BR-FranciscaNeural">Francisca Neural (pt-BR - Expressiva)</option>
-                          <option value="pt-BR-ThalitaNeural">Thalita Neural (pt-BR - Ágil)</option>
-                          <option value="pt-BR-ElzaNeural">Elza Neural (pt-BR - Analítica)</option>
-                          <option value="ja-JP-NanamiNeural">Nanami Neural (ja-JP - Nativa)</option>
-                          <option value="ja-JP-AoiNeural">Aoi Neural (ja-JP - Suave)</option>
-                          <option value="en-US-JennyNeural">Jenny Neural (en-US - Estúdio)</option>
+                          <option value="pt-BR-FranciscaNeural">Francisca Neural (pt-BR)</option>
+                          <option value="pt-BR-ThalitaNeural">Thalita Neural (pt-BR)</option>
+                          <option value="pt-BR-ElzaNeural">Elza Neural (pt-BR)</option>
+                          <option value="ja-JP-NanamiNeural">Nanami Neural (ja-JP)</option>
+                          <option value="ja-JP-AoiNeural">Aoi Neural (ja-JP)</option>
+                          <option value="en-US-JennyNeural">Jenny Neural (en-US)</option>
                         </select>
                       </div>
                     ) : (
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <span className="text-zinc-300">Voz do Sistema Operacional:</span>
+                        <span className="text-zinc-300">{t.voiceSec.osVoiceLabel}</span>
                         <select
                           value={voiceSettings.voiceURI || ''}
                           onChange={(e) =>
@@ -1009,7 +999,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           }
                           className="h-8 px-3 bg-black border border-amber-900/60 text-amber-100 text-xs outline-none focus:border-orange-400"
                         >
-                          <option value="">Padrão do Sistema</option>
+                          <option value="">{t.voiceSec.osVoiceDefault}</option>
                           {availableVoices.map((v) => (
                             <option key={v.voiceURI} value={v.voiceURI}>
                               {v.name} ({v.lang})
@@ -1021,7 +1011,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     {/* RVC Toggle */}
                     <div className="flex items-baseline pt-2 border-t border-amber-900/30">
-                      <span className="engraved-label">Clonagem Acústica RVC v2 (CUDA FP16)</span>
+                      <span className="engraved-label">{t.voiceSec.rvcCloningLabel}</span>
                       <div className="dotted-leader" />
                       <div className="flex items-center gap-2 shrink-0">
                         <button
@@ -1049,7 +1039,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {voiceSettings.useRvc && (
                       <div className="space-y-4 pt-2">
                         <div className="flex items-center justify-between gap-4">
-                          <span className="text-zinc-300">Modelo RVC (.pth):</span>
+                          <span className="text-zinc-300">{t.voiceSec.rvcModelLabel}</span>
                           <select
                             value={voiceSettings.rvcModel || 'KurisuRVCv147'}
                             onChange={(e) =>
@@ -1067,7 +1057,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <PlasmaMeter
-                            label="Transposição Harmônica RVC"
+                            label={t.voiceSec.rvcPitchLabel}
                             displayValue={`${voiceSettings.rvcPitch ?? 0} st`}
                             min={-6}
                             max={6}
@@ -1078,7 +1068,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             }
                           />
                           <PlasmaMeter
-                            label="Fidelidade de Índice RVC"
+                            label={t.voiceSec.rvcIndexLabel}
                             displayValue={`${Math.round((voiceSettings.rvcIndexRate ?? 0.75) * 100)}%`}
                             min={0.2}
                             max={1.0}
@@ -1097,7 +1087,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* STRICT TTS FALLBACK CONTROL */}
                 <div className="space-y-3 pt-3 border-t border-amber-900/40">
                   <div className="flex items-baseline">
-                    <span className="engraved-label">Modo Estrito de Voz (Bloquear Cascata TTS)</span>
+                    <span className="engraved-label">{t.voiceSec.strictTtsLabel}</span>
                     <div className="dotted-leader" />
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -1124,14 +1114,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans">
-                    Quando <strong>ON</strong>, se o motor primário selecionado estiver offline, o sistema <strong>não</strong> troca para vozes genéricas e exibe o erro imediatamente.
+                    {t.voiceSec.strictTtsDesc}
                   </p>
 
                   {/* Allowed Fallback Queue when Cascade is permitted */}
                   {voiceSettings.allowTtsFallback !== false && (
                     <div className="p-3 bg-black/50 border border-zinc-800 space-y-2">
                       <span className="text-[10px] font-mono text-orange-400 uppercase tracking-wider block">
-                        Motores Autorizados na Fila de Contingência:
+                        {t.voiceSec.fallbackQueueLabel}
                       </span>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {DEFAULT_FALLBACK_ENGINES.map((item) => {
@@ -1153,9 +1143,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   : 'border-zinc-800 bg-black/40 text-zinc-500'
                               }`}
                             >
-                              <span>{item.label}</span>
+                              <span>{(t.voiceSec.fallbackEngines as Record<string, string>)[item.id] || item.label}</span>
                               <span className="font-bold text-[10px]">
-                                {isAllowed ? 'ATIVO' : 'BLOQUEADO'}
+                                {isAllowed ? t.voiceSec.engineActive : t.voiceSec.engineBlocked}
                               </span>
                             </button>
                           );
@@ -1167,7 +1157,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Auto-Speak Engraved Toggle */}
                 <div className="flex items-baseline pt-2 border-t border-amber-900/30">
-                  <span className="engraved-label">Vocalizar Respostas Automaticamente</span>
+                  <span className="engraved-label">{t.voiceSec.autoSpeakLabel}</span>
                   <div className="dotted-leader" />
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -1193,7 +1183,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Prosody Plasma Meters: Rate & Pitch */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-2">
                   <PlasmaMeter
-                    label="Velocidade de Prosódia"
+                    label={t.voiceSec.prosodyRateLabel}
                     displayValue={`${voiceSettings.rate.toFixed(2)}x`}
                     min={0.8}
                     max={1.4}
@@ -1202,7 +1192,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onChange={(val) => onSaveVoiceSettings({ ...voiceSettings, rate: val })}
                   />
                   <PlasmaMeter
-                    label="Frequência / Pitch Base"
+                    label={t.voiceSec.prosodyPitchLabel}
                     displayValue={`${voiceSettings.pitch.toFixed(2)}`}
                     min={0.8}
                     max={1.6}
@@ -1226,7 +1216,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <Radio className="w-4 h-4 text-orange-400" />
                     )}
                     <span className="engraved-serif text-xs font-bold tracking-widest">
-                      {isTestingVoice ? 'EMITINDO SINAL DE TESTE...' : 'EMITIR AMOSTRA ACÚSTICA'}
+                      {isTestingVoice ? t.voiceSec.testingSampleBtn : t.voiceSec.testSampleBtn}
                     </span>
                   </button>
 
@@ -1246,7 +1236,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Whisper Key Mode: Unified vs Separate */}
                 <div className="space-y-2">
                   <div className="flex items-baseline">
-                    <span className="engraved-label">Credencial Groq Whisper Large-v3</span>
+                    <span className="engraved-label">{t.whisperSec.whisperKeyLabel}</span>
                     <div className="dotted-leader" />
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -1273,14 +1263,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans">
-                    Use <strong>DEDICATED</strong> para manter uma chave Groq (<code className="text-amber-300">gsk_...</code>) exclusiva para transcrição Whisper quando seu LLM principal for Google Gemini ou OpenRouter.
+                    {t.whisperSec.whisperKeyDesc}
                   </p>
 
                   {sttMode === 'unified' && !isMainKeyGroq && (
                     <div className="flex items-start gap-2 p-2.5 border border-amber-500/50 bg-amber-950/30 text-amber-200 text-[11px] font-sans">
                       <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                       <span>
-                        Sua chave primária atual não é uma chave Groq (<code className="text-amber-300">gsk_...</code>). Mude para <strong>DEDICATED</strong> e insira uma chave Groq abaixo para usar o Whisper Large-v3.
+                        {t.whisperSec.whisperKeyWarning}
                       </span>
                     </div>
                   )}
@@ -1290,7 +1280,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {sttMode === 'separate' && (
                   <div className="space-y-2 pt-2 border-t border-amber-900/30">
                     <label className="engraved-label block">
-                      Chave Groq Dedicada ao Whisper (<code className="text-orange-400 text-xs">gsk_...</code>)
+                      {t.whisperSec.dedicatedKeyLabel}
                     </label>
                     <input
                       type="password"
@@ -1311,7 +1301,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Capture Mode: PTT vs Hands-Free VAD */}
                 <div className="flex items-baseline pt-3 border-t border-amber-900/30">
-                  <span className="engraved-label">Operação do Microfone</span>
+                  <span className="engraved-label">{t.whisperSec.micOperationLabel}</span>
                   <div className="dotted-leader" />
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -1338,7 +1328,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* VAD Gate Sensitivity Plasma Meter */}
                 <PlasmaMeter
-                  label="Sensibilidade do Gate Acústico (VAD)"
+                  label={t.whisperSec.vadSensitivityLabel}
                   displayValue={`${(voiceSettings.vadSensitivity ?? 1.0).toFixed(2)}x`}
                   min={0.5}
                   max={2.0}
@@ -1352,7 +1342,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Web Speech Fallback Toggle */}
                 <div className="space-y-1.5 pt-3 border-t border-amber-900/30">
                   <div className="flex items-baseline">
-                    <span className="engraved-label">Permitir Fallback p/ Web Speech do Navegador</span>
+                    <span className="engraved-label">{t.whisperSec.webSpeechFallbackLabel}</span>
                     <div className="dotted-leader" />
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -1385,7 +1375,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans">
-                    Quando <strong>OFF</strong>, opera exclusivamente via Groq Whisper Large-v3 e exibe alerta imediato se a chave Groq estiver ausente.
+                    {t.whisperSec.webSpeechFallbackDesc}
                   </p>
                 </div>
               </div>
@@ -1396,7 +1386,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="space-y-6">
                 {/* CRT Scanlines Toggle */}
                 <div className="flex items-baseline">
-                  <span className="engraved-label">Linhas de Varredura de Tubo (CRT Scanlines)</span>
+                  <span className="engraved-label">{t.displaySec.scanlinesLabel}</span>
                   <div className="dotted-leader" />
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -1422,14 +1412,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Default Camera Framing */}
                 {onSaveDefaultCamera && (
                   <div className="space-y-2 pt-3 border-t border-amber-900/30">
-                    <span className="engraved-label block">Enquadramento Óptico Padrão</span>
+                    <span className="engraved-label block">{t.displaySec.defaultFramingLabel}</span>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {(
                         [
-                          { id: 'auto', label: 'DINÂMICO (IA)' },
-                          { id: 'closeup', label: 'CLOSE-UP' },
-                          { id: 'medium', label: 'PLANO MÉDIO' },
-                          { id: 'full', label: 'CORPO INTEIRO' },
+                          { id: 'auto', label: t.displaySec.framingOptions.auto },
+                          { id: 'closeup', label: t.displaySec.framingOptions.closeup },
+                          { id: 'medium', label: t.displaySec.framingOptions.medium },
+                          { id: 'full', label: t.displaySec.framingOptions.full },
                         ] as const
                       ).map((cam) => (
                         <button
@@ -1460,7 +1450,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <div className="flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-orange-400 shrink-0" />
                         <h3 className="engraved-serif text-xs font-bold text-amber-100">
-                          Kurisu Qwen3-TTS 1.7B (Síntese Neural Expressiva)
+                          {t.systemSec.qwenCardTitle}
                         </h3>
                       </div>
                       <p className="text-[10px] text-zinc-400 mt-0.5">
@@ -1478,7 +1468,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </a>
                   </div>
                   <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
-                    Motor neural <em>end-to-end</em> de 1.7B parâmetros para síntese vocal expressiva em tempo real via CUDA BF16 ou túnel remoto Google Colab.
+                    {t.systemSec.qwenCardDesc}
                   </p>
                 </div>
 
@@ -1488,7 +1478,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <div className="flex items-center gap-2">
                         <Volume2 className="w-4 h-4 text-orange-400 shrink-0" />
                         <h3 className="engraved-serif text-xs font-bold text-amber-100">
-                          Kurisu RVC v2 (Conversão Harmônica de Timbre)
+                          {t.systemSec.rvcCardTitle}
                         </h3>
                       </div>
                       <p className="text-[10px] text-zinc-400 mt-0.5">
@@ -1506,7 +1496,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </a>
                   </div>
                   <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
-                    Conversão acústica em GPU local sobre modelos base Kokoro-TTS 82M e Microsoft Edge Neural TTS.
+                    {t.systemSec.rvcCardDesc}
                   </p>
                 </div>
 
@@ -1514,11 +1504,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="flex items-center gap-2">
                     <Database className="w-4 h-4 text-orange-400 shrink-0" />
                     <h3 className="engraved-serif text-xs font-bold text-amber-100">
-                      Memória Vetorial RAG & Orquestrador Multi-LLM
+                      {t.systemSec.ragCardTitle}
                     </h3>
                   </div>
                   <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
-                    Persistência híbrida em <strong>ChromaDB + SQLite</strong> com busca semântica vetorial e suporte a <strong>Groq LPU</strong>, <strong>Google Gemini</strong> e <strong>OpenRouter</strong>.
+                    {t.systemSec.ragCardDesc}
                   </p>
                   <div className="flex flex-wrap gap-1.5 pt-1">
                     <span className="px-2 py-0.5 bg-black border border-amber-900/50 text-[10px] text-orange-300">
@@ -1540,7 +1530,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="px-6 py-3.5 border-t border-amber-900/40 bg-black/75 flex items-center justify-between">
             <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
               <Layers className="w-3.5 h-3.5 text-orange-400" />
-              <span>Persistência Imediata no Barramento Local</span>
+              <span>{t.footer.busPersistence}</span>
             </div>
             <button
               type="button"
@@ -1553,7 +1543,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Check className="w-4 h-4 text-orange-400" />
               )}
               <span className="engraved-serif text-xs font-bold tracking-widest">
-                {savedSuccess ? 'CALIBRADO' : 'APLICAR E FECHAR'}
+                {savedSuccess ? t.footer.calibratedBtn : t.footer.applyCloseBtn}
               </span>
             </button>
           </div>

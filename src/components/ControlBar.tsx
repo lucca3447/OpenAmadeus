@@ -120,7 +120,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             className="copper-capsule px-3.5 py-1.5 flex items-center gap-1.5 text-amber-300 hover:text-white border-amber-400 shadow-[0_0_14px_rgba(245,158,11,0.45)] animate-pulse"
           >
             <Square className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-            <span className="engraved-serif text-[10px] font-bold tracking-widest">CORTAR VOZ</span>
+            <span className="engraved-serif text-[10px] font-bold tracking-widest">{t.stopVoiceBtn}</span>
           </button>
         )}
       </div>
@@ -133,7 +133,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
           onChange={(e) => setInputValue(e.target.value)}
           placeholder={
             interimTranscript
-              ? `[VOZ] ${interimTranscript}`
+              ? `[${t.voiceBadge}] ${interimTranscript}`
               : isListening
                 ? micMode === 'hands_free'
                   ? t.placeholderListeningVad

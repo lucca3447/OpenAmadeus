@@ -12,32 +12,32 @@ interface SubtitleBoxProps {
   lang?: string;
 }
 
-const EMOTION_LABELS: Record<Emotion, { label: string; color: string }> = {
+const EMOTION_COLORS: Record<Emotion, string> = {
   // Canonical 12
-  neutral: { label: 'Neutra / Focada', color: 'text-zinc-300 border-zinc-700' },
-  wink: { label: 'Piscadela / Descontraída', color: 'text-amber-300 border-amber-500/40' },
-  annoyed: { label: 'Irritada / Aborrecida', color: 'text-orange-400 border-orange-500/40' },
-  worried: { label: 'Preocupada / Aflita', color: 'text-pink-400 border-pink-500/40' },
-  disdain: { label: 'Desdém / Cética', color: 'text-zinc-300 border-zinc-700' },
-  happy: { label: 'Feliz / Satisfeita', color: 'text-amber-300 border-amber-500/50' },
-  stern: { label: 'Severa / Rígida', color: 'text-rose-400 border-rose-500/50' },
-  blushing: { label: 'Envergonhada / Corada', color: 'text-rose-300 border-rose-400/40' },
-  look_side: { label: 'Olhar de Soslaio / Tímida', color: 'text-violet-300 border-violet-500/40' },
-  eyes_closed: { label: 'Olhos Fechados / Repouso', color: 'text-zinc-300 border-zinc-700' },
-  analytical: { label: 'Analítica / Foco Científico', color: 'text-sky-400 border-sky-500/40' },
-  holding_back_tears: { label: 'Emocionada / Contida', color: 'text-blue-300 border-blue-500/40' },
+  neutral: 'text-zinc-300 border-zinc-700',
+  wink: 'text-amber-300 border-amber-500/40',
+  annoyed: 'text-orange-400 border-orange-500/40',
+  worried: 'text-pink-400 border-pink-500/40',
+  disdain: 'text-zinc-300 border-zinc-700',
+  happy: 'text-amber-300 border-amber-500/50',
+  stern: 'text-rose-400 border-rose-500/50',
+  blushing: 'text-rose-300 border-rose-400/40',
+  look_side: 'text-violet-300 border-violet-500/40',
+  eyes_closed: 'text-zinc-300 border-zinc-700',
+  analytical: 'text-sky-400 border-sky-500/40',
+  holding_back_tears: 'text-blue-300 border-blue-500/40',
 
   // Legacy & Poses
-  smile: { label: 'Sorriso / Gentil', color: 'text-amber-300 border-amber-500/40' },
-  serious: { label: 'Analítica / Foco Científico', color: 'text-sky-400 border-sky-500/40' },
-  surprised: { label: 'Surpresa / Chocada', color: 'text-pink-400 border-pink-500/40' },
-  tsundere: { label: 'Tsundere / Defensiva', color: 'text-rose-400 border-rose-500/50' },
-  thinking: { label: 'Pensativa / Analítica', color: 'text-sky-400 border-sky-500/40' },
-  smug: { label: 'Confiante / Irônica', color: 'text-amber-300 border-amber-500/40' },
-  flustered: { label: 'Envergonhada / Corada', color: 'text-rose-300 border-rose-400/40' },
-  sad: { label: 'Melancólica / Reflexiva', color: 'text-blue-300 border-blue-500/40' },
-  puzzled: { label: 'Intrigada / Investigativa', color: 'text-purple-300 border-purple-500/40' },
-  desperate: { label: 'Aflita / Urgente', color: 'text-rose-400 border-rose-500/50' },
+  smile: 'text-amber-300 border-amber-500/40',
+  serious: 'text-sky-400 border-sky-500/40',
+  surprised: 'text-pink-400 border-pink-500/40',
+  tsundere: 'text-rose-400 border-rose-500/50',
+  thinking: 'text-sky-400 border-sky-500/40',
+  smug: 'text-amber-300 border-amber-500/40',
+  flustered: 'text-rose-300 border-rose-400/40',
+  sad: 'text-blue-300 border-blue-500/40',
+  puzzled: 'text-purple-300 border-purple-500/40',
+  desperate: 'text-rose-400 border-rose-500/50',
 };
 
 export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
@@ -72,7 +72,9 @@ export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
     return () => clearInterval(interval);
   }, [text]);
 
-  const emotionInfo = EMOTION_LABELS[emotion] || EMOTION_LABELS.neutral;
+  const appLang = normalizeAppLang(lang);
+  const emotionColor = EMOTION_COLORS[emotion] || EMOTION_COLORS.neutral;
+  const emotionDisplay = EMOTION_I18N[appLang]?.[emotion] || emotion.toUpperCase();
 
   return (
     <div className="w-full max-w-5xl mx-auto flex flex-col gap-3 font-mono">
@@ -109,8 +111,8 @@ export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
         </div>
 
         {/* Top-Right Mood Status Tag */}
-        <div className={`absolute -top-3 right-5 text-[10px] font-mono px-2.5 py-0.5 rounded-sm border bg-[#0e0c0a] ${emotionInfo.color}`}>
-          {EMOTION_I18N[normalizeAppLang(lang)][emotion] || emotionInfo.label.toUpperCase()}
+        <div className={`absolute -top-3 right-5 text-[10px] font-mono px-2.5 py-0.5 rounded-sm border bg-[#0e0c0a] ${emotionColor}`}>
+          {emotionDisplay}
         </div>
 
         {/* Main Dialogue Area + 3D Spinning Gold Gimbal Ring */}
@@ -135,7 +137,7 @@ export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
           <div
             className="relative w-10 h-10 shrink-0 flex items-center justify-center"
             style={{ perspective: '200px' }}
-            title="Sincronia do Barramento de Diálogo Ativa"
+            title={t.dialogueSyncTitle}
           >
             <div className="w-8 h-8 rounded-full border-2 border-amber-400 shadow-[0_0_12px_#f59e0b] gimbal-ring-3d" />
             <div className="absolute w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_8px_#f97316]" />

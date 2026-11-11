@@ -119,7 +119,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           <div className="py-12 px-4 text-center text-zinc-500 text-[11px] space-y-1 border border-dashed border-amber-900/30 bg-black/30">
             <p className="engraved-serif text-zinc-400 font-bold">{t.emptySessions}</p>
             <p className="text-[10px] text-zinc-500 font-sans">
-              Os diálogos arquivados no barramento aparecerão aqui.
+              {t.emptyDesc}
             </p>
           </div>
         ) : (
@@ -152,7 +152,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                   />
                   <div className="overflow-hidden">
                     <p className="truncate text-xs font-sans font-medium">
-                      {session.summary || 'Diálogo Neural OpenAmadeus'}
+                      {session.summary || t.defaultTitle}
                     </p>
                     <div className="flex items-center gap-2 text-[10px] text-zinc-500 mt-0.5 font-mono">
                       <span className={isActive ? 'text-amber-300/80' : ''}>

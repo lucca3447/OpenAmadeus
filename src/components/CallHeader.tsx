@@ -245,14 +245,14 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
                 : 'bg-zinc-800 text-zinc-400 border-zinc-700'
             }`}
           >
-            {isSttDedicated ? 'Dedicada' : 'Unificada'}
+            {isSttDedicated ? t.sttDedicated : t.sttUnified}
           </span>
         </button>
 
         {/* ChromaDB + SQLite indicator */}
         {backendHealth && (
           <span
-            title={`Armazenamento Sináptico: ChromaDB (${backendHealth.chromaCount} vetores) e SQLite (${backendHealth.totalSessions} sessões)`}
+            title={`${t.ragStorageTitle}: ChromaDB (${backendHealth.chromaCount} vetores) / SQLite (${backendHealth.totalSessions})`}
             className="hidden 2xl:flex items-center gap-1 px-2 py-1 rounded border border-sky-500/30 bg-zinc-900/90 text-[10px] text-sky-400"
           >
             <Database className="w-3 h-3" />
@@ -368,7 +368,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
           <button
             type="button"
             onClick={() => onOpenSettingsWithSection('cortex')}
-            title="Abrir Bancada de Configuração (Setup Menu)"
+            title={t.openSetupTitle}
             className="copper-capsule px-3 py-1 flex items-center gap-1.5 text-[11px] font-bold text-amber-200"
           >
             <Sliders className="w-3.5 h-3.5 text-orange-400" />

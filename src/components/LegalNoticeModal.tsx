@@ -64,7 +64,7 @@ export const LegalNoticeModal: React.FC<LegalNoticeModalProps> = ({ isOpen, onCl
           </div>
           <button
             onClick={onClose}
-            aria-label="Fechar modal"
+            aria-label={t.closeModalAria}
             className="p-1.5 rounded-lg border border-[#262c3a] bg-[#181c26] text-[#8892a4] hover:text-white hover:border-[#f59e0b] transition-colors"
           >
             <X className="w-4 h-4" />

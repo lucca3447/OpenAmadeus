@@ -130,7 +130,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
             disabled={disabled}
             placeholder={
               interimTranscript
-                ? `[VOZ] ${interimTranscript}`
+                ? `[${t.voiceBadge}] ${interimTranscript}`
                 : isListening
                   ? micMode === 'hands_free'
                     ? t.placeholderListeningVad
@@ -155,14 +155,14 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                 >
                   {(modelOptions && modelOptions.length > 0 ? modelOptions : MODEL_OPTIONS).map((opt) => (
                     <option key={opt.id} value={opt.id}>
-                      {'isDecommissioned' in opt && opt.isDecommissioned ? `[Desativado] ${opt.label}` : opt.label}
+                      {'isDecommissioned' in opt && opt.isDecommissioned ? `${t.modelDecommissionedBadge} ${opt.label}` : opt.label}
                     </option>
                   ))}
                 </select>
                 <ChevronDown className="w-3 h-3 text-orange-400 absolute right-1.5 top-2 pointer-events-none" />
               </div>
               {modelOptions?.find((m) => m.id === currentModel && 'isDecommissioned' in m && m.isDecommissioned) && (
-                <span title="Modelo descontinuado no provedor">
+                <span title={t.modelDecommissionedTitle}>
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
                 </span>
               )}
@@ -179,7 +179,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                   className="copper-capsule px-3 py-1 flex items-center gap-1.5 text-amber-300 hover:text-white border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.45)] animate-pulse"
                 >
                   <Square className="w-3 h-3 fill-amber-400 text-amber-400" />
-                  <span className="engraved-serif text-[10px] font-bold tracking-widest">CORTAR VOZ</span>
+                  <span className="engraved-serif text-[10px] font-bold tracking-widest">{t.stopVoiceBtn}</span>
                 </button>
               )}
 

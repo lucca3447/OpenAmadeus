@@ -136,17 +136,17 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
                 type="button"
                 onClick={() => handleCopyCode(codeKey, codeText)}
                 className="flex items-center gap-1 text-[11px] hover:text-amber-200 transition-colors"
-                title="Copiar código"
+                title={t.copyCodeTitle}
               >
                 {copiedCodeId === codeKey ? (
                   <>
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-emerald-400">Copiado</span>
+                    <span className="text-emerald-400">{t.copiedBadge}</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-3.5 h-3.5" />
-                    <span>Copiar</span>
+                    <span>{t.copyBtn}</span>
                   </>
                 )}
               </button>
@@ -340,25 +340,25 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
                     >
                       <Volume2 className="w-3.5 h-3.5 text-orange-400" />
                       <span className="engraved-serif text-[10px] font-bold tracking-wider">
-                        VOCALIZAR
+                        {t.speakBtn}
                       </span>
                     </button>
                     <span className="text-amber-900">•</span>
                     <button
                       onClick={() => handleCopy(msg.id, msg.content)}
                       className="hover:text-amber-200 flex items-center gap-1 transition-colors"
-                      title="Copiar Registro"
+                      title={t.copyMessageTitle}
                     >
                       {copiedId === msg.id ? (
                         <>
                           <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-emerald-400 text-[10px] font-bold">COPIADO</span>
+                          <span className="text-emerald-400 text-[10px] font-bold">{t.copiedBadge.toUpperCase()}</span>
                         </>
                       ) : (
                         <>
                           <Copy className="w-3.5 h-3.5 text-orange-400/80" />
                           <span className="engraved-serif text-[10px] font-bold tracking-wider">
-                            COPIAR
+                            {t.copyBtn.toUpperCase()}
                           </span>
                         </>
                       )}

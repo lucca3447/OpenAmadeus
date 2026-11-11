@@ -27,16 +27,16 @@ interface AmadeusSpriteViewProps {
 const CAMERA_CYCLE: CameraMode[] = ['auto', 'closeup', 'medium', 'full'];
 const CAMERA_LABELS: Record<CameraFraming, string> = {
   closeup: 'CLOSE-UP (JL)',
-  medium: 'MÉDIO (JM)',
-  full: 'INTEIRO (JS)',
+  medium: 'MEDIUM (JM)',
+  full: 'FULL (JS)',
 };
 
 const POSE_CYCLE: Array<'auto' | CharacterPose> = ['auto', 'default', 'crossed_arms', 'backview'];
 const POSE_LABELS: Record<'auto' | CharacterPose, string> = {
   auto: 'POSE: AUTO',
-  default: 'POSE: FRONTAL',
-  crossed_arms: 'POSE: BRAÇOS CRUZADOS',
-  backview: 'POSE: COSTAS',
+  default: 'POSE: FRONT',
+  crossed_arms: 'POSE: CROSSED ARMS',
+  backview: 'POSE: BACKVIEW',
 };
 
 export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
@@ -326,26 +326,26 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
         <button
           type="button"
           onClick={handleCyclePose}
-          title="Alternar posição/postura da Kurisu (Auto / Frontal / Braços Cruzados / Costas)"
+          title={t.togglePoseTitle}
           className="copper-capsule flex items-center gap-1.5 px-3 py-1 text-[10px] font-mono text-amber-200 hover:text-white whitespace-nowrap"
         >
           <User className="w-3 h-3 text-orange-400 shrink-0" />
           <span className="engraved-serif font-bold tracking-wider">
-            {POSE_LABELS[poseOverride]}
+            {(t.poses as Record<string, string>)[poseOverride] || POSE_LABELS[poseOverride]}
           </span>
         </button>
 
         <button
           type="button"
           onClick={handleCycleCamera}
-          title="Alternar distância/enquadramento (Auto / Close-up JL / Meio-Corpo JM / Corpo Inteiro JS)"
+          title={t.toggleCameraTitle}
           className="copper-capsule flex items-center gap-1.5 px-3 py-1 text-[10px] font-mono text-amber-200 hover:text-white whitespace-nowrap"
         >
           <Camera className="w-3 h-3 text-orange-400 shrink-0" />
           <span className="engraved-serif font-bold tracking-wider">
             {cameraMode === 'auto'
-              ? `AUTO · ${CAMERA_LABELS[activeCamera]}`
-              : CAMERA_LABELS[activeCamera]}
+              ? `AUTO · ${(t.cameras as Record<string, string>)[activeCamera] || CAMERA_LABELS[activeCamera]}`
+              : (t.cameras as Record<string, string>)[activeCamera] || CAMERA_LABELS[activeCamera]}
           </span>
         </button>
       </div>
