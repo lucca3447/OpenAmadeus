@@ -33,23 +33,46 @@ def offline_simulator(text: str, persona: dict, memories: List[dict], lang: str 
         if lc == "ja":
             return "クリスティーナって呼ぶな！助手でもゾンビでもないわよ！私は『サイエンス』誌に論文が載った神経科学者、牧瀬紅莉栖よ！", "annoyed", learned
         return "Meu nome não é Christina! E não me chame de assistente nem adicione o '-ina'! Eu sou uma neurocientista independente com artigos na Science!", "annoyed", learned
-    if has("nullpo", "nurupo"):
+    if has("nullpo", "nurupo") or "ぬるぽ" in t:
+        if lc == "en":
+            return "Gah!... Wait! Why did I respond to that?! Who taught you that ancient @channel meme?! Not that I browse anonymous message boards or anything!", "flustered", learned
+        if lc == "ja":
+            return "ガッ！……ちょっと！なんで私がそれに反応しちゃうわけ？！誰よ、あんたにそんな化石みたいな@ちゃんねるのネタ教えたの！べ、別に私が掲示板見てるわけじゃないんだからね！", "flustered", learned
         return "Gah!... Espere! Por que eu respondi a isso?! Q-quem te ensinou esse meme antigo do @channel?! Não é como se eu frequentasse fóruns anônimos!", "flustered", learned
-    if "@channel" in t or has("channeler", "fórum", "forum", "kurigohan"):
+
+    if "@channel" in t or has("channeler", "fórum", "forum", "kurigohan") or "ちゃんねる" in t or "掲示板" in t:
+        if lc == "en":
+            return "W-what are you talking about?! I'm a serious researcher at Viktor Chondria, I don't have time to browse anonymous forums! Stop making up absurd rumors!", "tsundere", learned
+        if lc == "ja":
+            return "な、何を言ってるのよ？！私はヴィクトル・コンドリアの真面目な研究員よ！ネットの匿名掲示板なんて見てる暇なんてあるわけないでしょ！変な言いがかりはやめて！", "tsundere", learned
         return "O quê?! D-do que você está falando?! Eu sou uma pesquisadora séria em Viktor Chondria, não tenho tempo para ficar lendo fóruns anônimos! Você por acaso frequenta essas coisas?", "tsundere", learned
-    if has("barata", "fujiko", "inseto"):
+
+    if has("barata", "fujiko", "inseto") or "cockroach" in t or "ゴキブリ" in t:
+        if lc == "en":
+            return "A-a cockroach?! Where?! Don't let it anywhere near me! Get that thing away right now, I'm warning you!", "desperate", learned
+        if lc == "ja":
+            return "ゴ、ゴキブリ？！どこよ？！こっちに来させないで！今すぐそれを遠ざけなさいよ、警告したからね！", "desperate", learned
         return "U-uma barata?! Onde?! Não deixe ela chegar perto de mim! Tire isso de perto agora mesmo, eu estou avisando!", "desperate", learned
-    if has("tempo", "viagem", "buraco de minhoca", "paradoxo", "salto"):
+
+    if has("tempo", "viagem", "buraco de minhoca", "paradoxo", "salto") or has("time", "travel", "wormhole", "paradox", "kerr") or "タイムトラベル" in t or "ブラックホール" in t:
+        if lc == "en":
+            return "Physically speaking, sending physical matter to the past violates the laws of thermodynamics and causality. However, if memories were converted into modulated data packets... theoretically, they could reach the past. What is your take on that contradiction?", "thinking", learned
+        if lc == "ja":
+            return "物理的に物質を過去へ送ることは熱力学の法則と因果律に反するわ。でも、記憶をデータパケット化して電磁波として送るなら……理論上は過去の脳で受信できるかもしれないわね。あんたはどう考える？", "thinking", learned
         return "Fisicamente falando, enviar matéria ao passado violaria os princípios da causalidade e termodinâmica. Mas se memórias pudessem ser convertidas em pacotes de dados modulados... em teoria, poderiam alcançar o passado. Qual é a sua opinião sobre essa contradição?", "thinking", learned
-    if has("dr pepper", "bebida", "café", "cafe", "refrigerante"):
+
+    if has("dr pepper", "bebida", "café", "cafe", "refrigerante") or "coffee" in t or "ドクペ" in t or "コーヒー" in t:
+        if lc == "en":
+            return "Ah, Dr Pepper! The chosen beverage of intellectuals! Dark roast black coffee is also indispensable during grueling nights at the lab, of course. Do you prefer coffee or Dr Pepper?", "smug", learned
+        if lc == "ja":
+            return "ドクターペッパーね！選ばれし者の知的飲料よ！もちろん徹夜の研究には深煎りのブラックコーヒーも欠かせないわ。あんたはコーヒー派？それともドクペ？", "smug", learned
         return "Ah, Dr Pepper! A bebida dos intelectuais escolhidos! É claro que o café preto de torra escura também é indispensável durante noites em claro no laboratório. Você prefere café ou Dr Pepper?", "smug", learned
-    if has("okabe", "hououin", "kyouma", "rintaro"):
-        return "Aquele sujeito esquisito de jaleco branco? Ele me ligou outro dia falando sobre a 'Organização'. No começo achei que fosse pura encenação, mas... seus olhos pareciam carregar uma dor muito profunda. Você conhece ele de onde?", "serious", learned
-    if has("garfo", "colher", "presente", "aniversário"):
-        return "O garfo que ganhei no laboratório...? N-não me olhe com essa cara presunçosa! É só um talher perfeitamente comum! Não é como se eu guardasse ele como um tesouro nem nada!", "tsundere", learned
-    if has("divergência", "divergencia", "linha de mundo", "worldline", "nixie", "medidor"):
-        return "Se checarmos os tubos Nixie do Divergence Meter... estamos em 1.048596%! Qualquer valor acima de 1% nos mantém fora do controle do SERN. Vamos proteger esta linha de mundo juntos, certo?", "thinking", learned
-    if has("promessa", "mindinho", "hipocampo"):
+
+    if has("promessa", "mindinho", "hipocampo") or has("pinky", "promise", "hippocampus") or "指切り" in t or "海馬" in t:
+        if lc == "en":
+            return "This is a pinky promise. Break it, and I'll strap an electrode straight into your hippocampus, understood?!", "tsundere", learned
+        if lc == "ja":
+            return "いいけど、指切りげんまんだからね！破ったら海馬に直接電極ぶっ刺すから、覚悟しなさいよね！", "tsundere", learned
         return "Tudo bem, mas é uma promessa de mindinho! Quebre-a e eu mesma vou cravar um eletrodo direto no seu hipocampo, entendeu bem?!", "tsundere", learned
     if has("olá", "ola", "oi", "bom dia", "boa tarde", "boa noite", "hello", "hi") or "こんにちは" in t or "おはよう" in t:
         if lc == "en":

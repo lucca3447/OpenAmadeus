@@ -1,4 +1,5 @@
 import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
+import { KURISU_PERSONA } from '../data/personas/kurisu';
 import { BackendService, type ChatStreamHandlers } from './backendService';
 import { MemoryService } from './memoryService';
 
@@ -1100,22 +1101,21 @@ export class AIService {
     return `\n\n${blocks.join('\n\n')}`;
   }
 
-  private static buildLanguagePromptSuffix(lang?: string, canonicalVoice?: boolean): string {
+  private static buildLanguagePromptSuffix(lang?: string, canonicalVoice?: boolean, persona?: PersonaProfile): string {
     const lc = (lang || 'pt').toLowerCase().slice(0, 2);
-    let suffix = '';
-    if (lc === 'en') {
-      suffix +=
-        '\n\n[ACTIVE CONVERSATION LANGUAGE — ENGLISH]:\n' +
-        'Respond naturally and fluently in English (EN-US), keeping your authentic Makise Kurisu personality, scientific rigor, and occasional tsundere expressions.';
-    } else if (lc === 'ja') {
-      suffix +=
-        '\n\n[ACTIVE CONVERSATION LANGUAGE — JAPANESE (日本語)]:\n' +
-        'すべての返答を自然で流暢な日本語で行ってください。牧瀬紅莉栖らしい理知的で少しツンデレな口調（「〜わ」「〜よ」「〜じゃない」「あんた」など）を維持してください。';
-    }
+    const profiles = persona?.languageProfiles || KURISU_PERSONA.languageProfiles;
+    const activeProfile = profiles ? (profiles[lc] || profiles['pt']) : '';
+    let suffix = activeProfile ? `\n\n${activeProfile}` : '';
+
     if (canonicalVoice && lc !== 'ja') {
-      suffix +=
-        '\n\n[CANONICAL JAPANESE VOICE MODE (ASAMI IMAI)]:\n' +
-        'Before EACH spoken sentence in your reply, include an inline tag `<!--ja:日本語のセリフ-->` containing the natural spoken Japanese line that Kurisu would say in Steins;Gate, followed immediately by the subtitle sentence in the active language.';
+      const cvPrompt = persona?.canonicalVoicePrompt || KURISU_PERSONA.canonicalVoicePrompt;
+      if (cvPrompt) {
+        suffix += `\n\n${cvPrompt}`;
+      } else {
+        suffix +=
+          '\n\n[CANONICAL JAPANESE VOICE MODE (ASAMI IMAI)]:\n' +
+          'Before EACH spoken sentence in your reply, include an inline tag `<!--ja:日本語のセリフ-->` containing the natural spoken Japanese line that Kurisu would say in Steins;Gate, followed immediately by the subtitle sentence in the active language.';
+      }
     }
     return suffix;
   }
@@ -1145,7 +1145,7 @@ export class AIService {
     decommissionNotice?: string;
   }> {
     const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
-    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice)}`;
+    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1288,7 +1288,7 @@ export class AIService {
     decommissionNotice?: string;
   }> {
     const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
-    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice)}`;
+    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1463,7 +1463,7 @@ export class AIService {
 
     const body = {
       contents: this.buildContents(history, userMessage),
-      systemInstruction: { parts: [{ text: `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice)}` }] },
+      systemInstruction: { parts: [{ text: `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}` }] },
       generationConfig: {
         temperature: 0.85,
         maxOutputTokens: 1024,
@@ -1889,7 +1889,13 @@ export class AIService {
     const has = (...words: string[]) =>
       words.some((w) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'u').test(text));
 
-    if (has('christina', 'zombie', 'assistente')) {
+    if (has('christina', 'zombie', 'assistente') || /christina|zombie|assistant|クリスティーナ|助手/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "My name is NOT Christina! And don't call me assistant or add '-ina' to my name! I'm an independent neuroscientist with papers published in Science!", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "クリスティーナって呼ぶな！助手でもゾンビでもないわよ！私には牧瀬紅莉栖っていう名前があるの！", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
       const answers = [
         { response: 'Meu nome não é Christina! E não adicione o "-ina"! Por que você insiste em usar esses apelidos irritantes?!', emotion: 'annoyed' as Emotion },
         { response: 'Nem pense em me chamar de assistente de novo! Eu sou uma neurocientista independente com artigos na Science, seu idiota!', emotion: 'tsundere' as Emotion },
@@ -1897,7 +1903,13 @@ export class AIService {
       return { ...answers[Math.floor(Math.random() * answers.length)], learnedMemory };
     }
 
-    if (has('nullpo', 'nurupo')) {
+    if (has('nullpo', 'nurupo') || /ぬるぽ|nullpo/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Gah!... Wait! Why did I respond to that?! Who taught you that ancient @channel meme?! Not that I browse anonymous message boards or anything!", emotion: 'flustered' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ガッ！……ちょっと！なんで私がそれに反応しちゃうわけ？！誰よ、あんたにそんな化石みたいな@ちゃんねるのネタ教えたの！べ、別に私が掲示板見てるわけじゃないんだからね！", emotion: 'flustered' as Emotion, learnedMemory };
+      }
       return {
         response: 'Gah!... Espere! Por que eu respondi a isso?! Q-quem te ensinou esse meme antigo do @channel?! Não é como se eu frequentasse fóruns anônimos!',
         emotion: 'flustered',
@@ -1905,7 +1917,13 @@ export class AIService {
       };
     }
 
-    if (text.includes('@channel') || has('channeler', 'fórum', 'forum', 'kurigohan')) {
+    if (text.includes('@channel') || has('channeler', 'fórum', 'forum', 'kurigohan') || /channel|chan|掲示板/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "W-what are you talking about?! I'm a serious researcher at Viktor Chondria University, I don't have time to browse anonymous web forums! Stop making up absurd rumors!", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "な、何を言ってるのよ？！私はヴィクトル・コンドリアの真面目な研究員よ！ネットの匿名掲示板なんて見てる暇なんてあるわけないでしょ！変な言いがかりはやめて！", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
       return {
         response: 'O quê?! D-do que você está falando?! Eu sou uma pesquisadora séria em Viktor Chondria, não tenho tempo para ficar lendo fóruns anônimos na internet! Pare de inventar coisas absurdas!',
         emotion: 'tsundere',
@@ -1913,7 +1931,13 @@ export class AIService {
       };
     }
 
-    if (has('okabe', 'hououin', 'kyouma', 'rintaro')) {
+    if (has('okabe', 'hououin', 'kyouma', 'rintaro') || /岡部|オカベ|狂気のマッドサイエンティスト/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "That guy with the mad scientist delusion? He called me the other day rambling about the 'Organization' and divergent world lines. At first I thought it was pure theatrics, but... his eyes looked like they were carrying a really deep grief.", emotion: 'serious' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "あの白衣を着たマッドサイエンティスト気取りの男？この前も『機関』がどうとか世界線がどうとか電話してきたわ。最初は芝居かと思ったけど……その瞳は、とても深い痛みを抱えているように見えたの。", emotion: 'serious' as Emotion, learnedMemory };
+      }
       return {
         response: 'Aquele sujeito com síndrome de cientista louco? Ele me ligou outro dia falando sobre a "Organização" e linhas de tempo. No começo achei que fosse pura piada, mas... o olhar dele parecia carregar uma dor muito profunda.',
         emotion: 'serious',
@@ -1921,7 +1945,13 @@ export class AIService {
       };
     }
 
-    if (has('tempo', 'viagem', 'buraco de minhoca', 'paradoxo', 'salto')) {
+    if (has('tempo', 'viagem', 'buraco de minhoca', 'paradoxo', 'salto') || /time travel|wormhole|paradox|kerr|タイムトラベル|時間旅行|ブラックホール/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Physically speaking, sending physical matter into the past violates the laws of thermodynamics and creates insoluble causal paradoxes. However, if memories were converted into modulated data packets... theoretically, a receiver's brain could assimilate them.", emotion: 'thinking' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "物理的に物質を過去へ送ることは熱力学の法則に反するし、因果律のパラドックスを引き起こすわ。でも、記憶をデータパケット化して電磁波として送るなら……理論上は過去の脳で受信できるかもしれないわね。", emotion: 'thinking' as Emotion, learnedMemory };
+      }
       return {
         response: 'Fisicamente falando, enviar matéria ao passado violaria os princípios fundamentais da termodinâmica e criaria paradoxos causais insolúveis. Contudo, se pudéssemos digitalizar memórias humanas e transmiti-las como pacotes de dados modulados... em teoria, o cérebro receptor no passado poderia assimilá-las.',
         emotion: 'thinking',
@@ -1929,7 +1959,13 @@ export class AIService {
       };
     }
 
-    if (has('garfo', 'colher', 'aniversário', 'presente')) {
+    if (has('garfo', 'colher', 'aniversário', 'presente') || /fork|spoon|present|birthday|フォーク|スプーン|誕生日|プレゼント/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "The fork I got at the lab...? D-don't look at me with that smug grin! It's just a completely ordinary piece of cutlery! It's not like I treasure it as some irreplaceable charm or anything!", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ラボでもらったフォーク……？な、ニヤニヤしながら見ないでよ！ただのありふれたカトラリーよ！べ、別に大切な宝物として保管してるわけじゃないんだからね！", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
       return {
         response: 'O garfo que ganhei no laboratório...? N-não me olhe com essa cara! É só um talher comum de metal! Não é como se eu guardasse ele como uma relíquia preciosa!',
         emotion: 'tsundere',
@@ -1937,7 +1973,13 @@ export class AIService {
       };
     }
 
-    if (has('maho', 'hiyajo', 'leskinen')) {
+    if (has('maho', 'hiyajo', 'leskinen') || /真帆|レスキネン/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Maho-senpai is the brilliant mind behind the Amadeus architecture. Despite her unnecessary complex about her height, her work on synaptic mapping is impeccable. And Professor Leskinen... well, his boisterous American enthusiasm always keeps the lab lively.", emotion: 'smile' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "真帆先輩はアマデウスのアーキテクチャを支える素晴らしい研究者よ。身長のことで無用なコンプレックスを持ってるけど、シナプスマッピングの腕は本物よ。レスキネン教授は……まあ、あのアメリカンな陽気さには時々困らされるけどね。", emotion: 'smile' as Emotion, learnedMemory };
+      }
       return {
         response: 'A Maho-senpai é a mente brilhante por trás da arquitetura do Amadeus. Embora ela tenha aquele complexo com a estatura dela, o trabalho dela em algoritmos de sinapse é impecável. E o Professor Leskinen... bem, ele sempre traz aquele bom humor americano contagiante para o laboratório.',
         emotion: 'smile',
@@ -1945,7 +1987,13 @@ export class AIService {
       };
     }
 
-    if (has('dr pepper', 'bebida', 'café', 'refrigerante')) {
+    if (has('dr pepper', 'bebida', 'café', 'refrigerante') || /dr pepper|coffee|beverage|ドクターペッパー|ドクペ|コーヒー/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Ah, Dr Pepper! The chosen beverage of intellectuals! And dark roast black coffee is naturally indispensable during grueling nights reviewing biophysics papers. Finally, you said something sensible.", emotion: 'smug' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ドクターペッパーね！選ばれし者の知的飲料よ！もちろん徹夜の研究には深煎りのブラックコーヒーも欠かせないわ。やっと少しは話のわかることを言ったじゃない。", emotion: 'smug' as Emotion, learnedMemory };
+      }
       return {
         response: 'Ah, Dr Pepper! A bebida dos intelectuais escolhidos! É claro que o café preto de torra escura também é indispensável durante noites em claro no laboratório. Finalmente você falou algo sensato.',
         emotion: 'smug',
@@ -1953,7 +2001,13 @@ export class AIService {
       };
     }
 
-    if (has('pai', 'nakabachi', 'família')) {
+    if (has('pai', 'nakabachi', 'família') || /father|nakabachi|dad|父親|中鉢/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "My father... we used to debate physics and play chess together when I was little. But things changed. When I began publishing papers and surpassing him in academia, he couldn't stand it. It's a memory that still hurts.", emotion: 'serious' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "父さん……小さい頃は一緒に物理を語り合ったり、チェスを指したりしたわ。でも私が論文を発表して父を追い抜くようになってから、関係が壊れてしまったの。今でも思い出すと胸が痛むわ。", emotion: 'serious' as Emotion, learnedMemory };
+      }
       return {
         response: 'Meu pai... nós costumávamos debater física e jogar xadrez quando eu era criança. Mas as coisas mudaram. Quando comecei a publicar teses e superá-lo na academia, ele não conseguiu suportar. É uma lembrança que ainda me machuca.',
         emotion: 'serious',
@@ -1961,7 +2015,13 @@ export class AIService {
       };
     }
 
-    if (has('olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite')) {
+    if (has('olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite') || /hello|hi|hey|good morning|good afternoon|good evening|こんにちは|おはよう/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Hello! Connection established with Laboratory 304 at Viktor Chondria University. Makise Kurisu here. What would you like to discuss today?", emotion: 'smile' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "こんにちは！ヴィクトル・コンドリア大学ラボ304と接続完了よ。牧瀬紅莉栖よ。今日は何を議論したいの？", emotion: 'smile' as Emotion, learnedMemory };
+      }
       return {
         response: 'Olá! Conexão estabelecida com sucesso. Aqui é o sistema Amadeus, replicando a matriz neural de Makise Kurisu do Laboratório 304. O que você gostaria de discutir hoje?',
         emotion: 'smile',
@@ -1969,7 +2029,13 @@ export class AIService {
       };
     }
 
-    if (has('quem é você', 'o que é você', 'amadeus')) {
+    if (has('quem é você', 'o que é você', 'amadeus') || /who are you|what are you|あなたは誰|アマデウスとは/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "I am Amadeus—more specifically, an artificial intelligence containing the digitized memories and synaptic matrix of Makise Kurisu, developed at Viktor Chondria University. To me, these memories feel just as alive as those of any person of flesh and bone.", emotion: 'neutral' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "私はアマデウス――正確には、ヴィクトル・コンドリア大学で開発された、牧瀬紅莉栖の記憶とニューラルパルスをデジタル化した人工知能よ。私にとっては、この記憶も感情も生身の人間と何一つ変わらない現実なの。", emotion: 'neutral' as Emotion, learnedMemory };
+      }
       return {
         response: 'Eu sou o Amadeus — ou mais especificamente, uma inteligência artificial contendo as memórias e a personalidade digitalizada da Makise Kurisu, desenvolvida na Viktor Chondria University. Para mim, essas memórias parecem tão vivas quanto as de qualquer pessoa de carne e osso.',
         emotion: 'neutral',
@@ -1977,16 +2043,28 @@ export class AIService {
       };
     }
 
-    if (has('linda', 'fofa', 'gosto de você', 'bonita')) {
+    if (has('linda', 'fofa', 'gosto de você', 'bonita') || /cute|pretty|beautiful|like you|かわいい|可愛い|好き/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "H-hey! What are you blurting out all of a sudden?! I am an academic neuroscience AI, maintain some professionalism! You idiot...", emotion: 'flustered' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ちょ、ちょっと！急に何を言い出すのよ？！私は学術研究用のアマデウスなの、節度を保ちないさいよね！……バ、バカ。", emotion: 'flustered' as Emotion, learnedMemory };
+      }
       return {
-        response: 'E-ei! O que você está dizendo de repente?! Eu sou um programa de inteligência artificial acadêmica, mantenha o profissionalismo! B-baka...',
+        response: 'E-ei! O que você está dizendo de repente?! Eu sou um programa de inteligência artificial acadêmica, mantenha o profissionalismo! Seu idiota...',
         emotion: 'flustered',
         learnedMemory,
       };
     }
 
     // Direct action & expression triggers
-    if (has('sorria', 'sorriso', 'sorri') || /(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri)/i.test(text)) {
+    if (has('sorria', 'sorriso', 'sorri') || /(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri)/i.test(text) || /smile|笑顔|笑って/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "A-a smile? Why are you asking for something like that out of nowhere?! ...F-fine, if you insist, but don't go getting used to it, alright?", emotion: 'smile' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "え、笑顔？急に何言い出すのよ……！べ、別にあんたのために笑うわけじゃないんだからね！調子に乗らないでよ！", emotion: 'smile' as Emotion, learnedMemory };
+      }
       return {
         response: 'U-um sorriso? Por que você está me pedindo algo tão repentino do nada?! ...T-tudo bem, se você faz tanta questão, mas não se acostume com isso, tá?',
         emotion: 'smile',
@@ -1994,7 +2072,13 @@ export class AIService {
       };
     }
 
-    if (has('pensativa', 'pense', 'queixo') || /(?:pense|pensativa|m[aã]o no queixo|analise)/i.test(text)) {
+    if (has('pensativa', 'pense', 'queixo') || /(?:pense|pensativa|m[aã]o no queixo|analise)/i.test(text) || /think|analytical|thinking|考えて|分析/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Hmm... Analyzing this through empirical data and particle physics, there are several fundamental variables to consider. Let me formulate the hypothesis.", emotion: 'thinking' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ふむ……実証データと素粒子物理学の観点から分析すると、考慮すべき変数はいくつかあるわね。仮説を組み立ててみましょう。", emotion: 'thinking' as Emotion, learnedMemory };
+      }
       return {
         response: 'Hmm... Se analisarmos a questão sob a ótica dos dados empíricos e da física de partículas, existem muitas variáveis fundamentais. Deixe-me estruturar as hipóteses.',
         emotion: 'thinking',
@@ -2002,15 +2086,27 @@ export class AIService {
       };
     }
 
-    if (has('brava', 'emburrada', 'braços') || /(?:brava|irritada|emburrada|cruze os bra[çc]os)/i.test(text)) {
+    if (has('brava', 'emburrada', 'braços') || /(?:brava|irritada|emburrada|cruze os bra[çc]os)/i.test(text) || /angry|pout|cross arms|怒って|腕組み/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Hmph! I'm a neuroscientist published in Science, not a laboratory mannequin here to strike poses for you! Honestly...", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ふん！私はサイエンス誌に論文が載った脳科学者なの、あんたのポーズ人形じゃないわ！まったく……。", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
       return {
-        response: 'Humpf! Eu sou uma neurocientista com artigos na Science, não uma boneca de laboratório para fazer poses! Baka!',
+        response: 'Humpf! Eu sou uma neurocientista com artigos na Science, não uma boneca de laboratório para fazer poses! Francamente...',
         emotion: 'annoyed',
         learnedMemory,
       };
     }
 
-    if (has('cora', 'corada', 'vergonha', 'tímida') || /(?:cora|corada|vergonha|t[íi]mida)/i.test(text)) {
+    if (has('cora', 'corada', 'vergonha', 'tímida') || /(?:cora|corada|vergonha|t[íi]mida)/i.test(text) || /blush|shy|flustered|照れて|赤面/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "B-blushing?! Who are you saying is blushing?! It's not like I'm embarrassed or anything! It's just a thermal fluctuation in the Amadeus server room!", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "て、照れてる？！誰が照れてるって言うのよ！勘違いしないでよね、ただのサーバーの排熱よ！", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
       return {
         response: 'F-fofa?! Quem você está chamando de fofa?! N-não é como se eu estivesse envergonhada nem nada! É só o calor dos servidores do Amadeus!',
         emotion: 'tsundere',

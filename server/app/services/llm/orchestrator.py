@@ -334,34 +334,34 @@ class LLMOrchestrator:
             )
             memory_ctx_blocks.append(block)
 
-        # 3. Dynamic Few-Shot Exemplars from Kurisu Fine-Tuning Pack
+        # 3. Dynamic Few-Shot Exemplars from Kurisu Fine-Tuning Pack (language-aware)
         lang_code = (req.lang or "pt").strip().lower()[:2]
         exemplars = memory_store.search_exemplars(search_query, n_results=2, lang=lang_code)
         if exemplars:
-            ex_lines = [f"Operador: \"{ex['user']}\"\nKurisu: \"{ex['assistant']}\"" for ex in exemplars]
-            block = "[EXEMPLOS CANÔNICOS DE DIÁLOGO E TOM DA KURISU]:\n" + "\n\n".join(ex_lines)
+            speaker_op = "Operator" if lang_code == "en" else ("オペレーター" if lang_code == "ja" else "Operador")
+            speaker_ku = "Kurisu" if lang_code != "ja" else "紅莉栖"
+            ex_lines = [f"{speaker_op}: \"{ex['user']}\"\n{speaker_ku}: \"{ex['assistant']}\"" for ex in exemplars]
+            header = "[CANONICAL DIALOGUE EXEMPLARS]" if lang_code == "en" else ("[カノニカル対話サンプル]" if lang_code == "ja" else "[EXEMPLOS CANÔNICOS DE DIÁLOGO E TOM DA KURISU]")
+            block = f"{header}:\n" + "\n\n".join(ex_lines)
             memory_ctx_blocks.append(block)
 
-        if lang_code == "en":
-            memory_ctx_blocks.append(
-                "[LANGUAGE DIRECTIVE OVERRIDE: 100% FLUENT ENGLISH]\n"
-                "- Respond strictly in natural, sharp, academic English as Amadeus Makise Kurisu (Viktor Chondria Lab 304).\n"
-                "- Never reply in Portuguese and never use isolated Japanese romaji interjections ('Baka', '-kun', '-san').\n"
-                "- Keep all visual tags <!--emotion:...,pose:...,camera:...--> and memory tags <!--remember:...|...|...--> intact."
-            )
-        elif lang_code == "ja":
-            memory_ctx_blocks.append(
-                "[言語ディレクティブ最優先: 100% カノニカル日本語 (牧瀬紅莉栖)]\n"
-                "- 必ず『STEINS;GATE 0』の牧瀬紅莉栖（アマデウス紅莉栖、18歳、ヴィクトル・コンドリア大学ラボ304）として、自然で知的な日本語（一人称は「私」、理知的で少しツンデレな口調）のみで応答してください。\n"
-                "- ポルトガル語や英語で返答せず、視覚タグ <!--emotion:...,pose:...,camera:...--> と記憶タグ <!--remember:...|...|...--> はそのまま維持してください。"
-            )
+        # 4. Native Language & Style Profile
+        lang_profiles = persona.get("languageProfiles") or {}
+        active_lang_prompt = lang_profiles.get(lang_code) or lang_profiles.get("pt")
+        if active_lang_prompt:
+            memory_ctx_blocks.append(active_lang_prompt)
 
-        if getattr(req, "canonicalVoice", False) and lang_code in ("pt", "en"):
-            memory_ctx_blocks.append(
-                "[MODO DUBLAGEM CANÔNICA (VOZ ORIGINAL EM JAPONÊS + LEGENDA)]:\n"
-                "- Para CADA frase da sua resposta, inclua imediatamente antes do texto na língua do operador a tag <!--ja:セリフ--> contendo a fala equivalente autêntica de Makise Kurisu em japonês nativo (como Asami Imai em Steins;Gate 0).\n"
-                "- Exemplo: <!--emotion:wink,pose:default,camera:closeup--> <!--ja:冗談よ、そんなにムキにならないで。--> Brincadeira, não precisa levar tão a sério."
-            )
+        # 5. Canonical Japanese Voice Mode (Asami Imai Voiceline streaming + active subtitles)
+        if getattr(req, "canonicalVoice", False) and lang_code != "ja":
+            cv_prompt = persona.get("canonicalVoicePrompt")
+            if cv_prompt:
+                memory_ctx_blocks.append(cv_prompt)
+            else:
+                memory_ctx_blocks.append(
+                    "[MODO DUBLAGEM CANÔNICA (VOZ ORIGINAL EM JAPONÊS + LEGENDA)]:\n"
+                    "- Para CADA frase da sua resposta, inclua imediatamente antes do texto na língua do operador a tag <!--ja:セリフ--> contendo a fala equivalente autêntica de Makise Kurisu em japonês nativo (como Asami Imai em Steins;Gate 0).\n"
+                    "- Exemplo: <!--emotion:wink,pose:default,camera:closeup--> <!--ja:冗談よ、そんなにムキにならないで。--> Brincadeira, não precisa levar tão a sério."
+                )
 
         memory_ctx = ("\n\n" + "\n\n".join(memory_ctx_blocks)) if memory_ctx_blocks else ""
         system_prompt = persona.get("systemPrompt", "") + memory_ctx

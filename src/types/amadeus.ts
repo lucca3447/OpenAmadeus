@@ -76,6 +76,8 @@ export interface PersonaProfile {
   affiliation: string;
   avatarPrefix: string;
   systemPrompt: string;
+  languageProfiles?: Record<string, string>;
+  canonicalVoicePrompt?: string;
   memories: MemoryItem[];
 }
 
