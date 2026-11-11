@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Emotion } from '../types/amadeus';
 import { Sparkles } from 'lucide-react';
+import { EMOTION_LABELS as EMOTION_I18N, getUiText, normalizeAppLang } from '../i18n';
 
 interface SubtitleBoxProps {
   speakerName: string;
@@ -8,6 +9,7 @@ interface SubtitleBoxProps {
   emotion: Emotion;
   isProcessing: boolean;
   onTopicClick?: (topic: string) => void;
+  lang?: string;
 }
 
 const EMOTION_LABELS: Record<Emotion, { label: string; color: string }> = {
@@ -38,21 +40,15 @@ const EMOTION_LABELS: Record<Emotion, { label: string; color: string }> = {
   desperate: { label: 'Aflita / Urgente', color: 'text-rose-400 border-rose-500/50' },
 };
 
-const SUGGESTED_TOPICS = [
-  'Quem é você?',
-  'Como funciona sua memória sináptica RAG?',
-  'Consciência digital e neurociência',
-  'Síntese vocal neural e prosódia',
-  'Limites físicos da computação',
-];
-
 export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
   speakerName,
   text,
   emotion,
   isProcessing,
   onTopicClick,
+  lang,
 }) => {
+  const t = getUiText(lang).subtitle;
   const [displayedText, setDisplayedText] = useState('');
 
   useEffect(() => {
@@ -85,15 +81,15 @@ export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-mono scrollbar-none">
           <span className="text-zinc-400 flex items-center gap-1 text-[11px] shrink-0 mr-1">
             <Sparkles className="w-3 h-3 text-orange-400" />
-            <span>TÓPICOS:</span>
+            <span>{t.quickTopicsLabel}</span>
           </span>
-          {SUGGESTED_TOPICS.map((topic, i) => (
+          {t.topics.map((topic, i) => (
             <button
               key={i}
-              onClick={() => onTopicClick(topic)}
+              onClick={() => onTopicClick(topic.prompt)}
               className="px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300 hover:text-orange-400 hover:border-orange-500/60 transition-colors text-[11px] whitespace-nowrap"
             >
-              {topic}
+              {topic.label}
             </button>
           ))}
         </div>
@@ -114,7 +110,7 @@ export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
 
         {/* Top-Right Mood Status Tag */}
         <div className={`absolute -top-3 right-5 text-[10px] font-mono px-2.5 py-0.5 rounded-sm border bg-[#0e0c0a] ${emotionInfo.color}`}>
-          ESTADO: {emotionInfo.label.toUpperCase()}
+          {EMOTION_I18N[normalizeAppLang(lang)][emotion] || emotionInfo.label.toUpperCase()}
         </div>
 
         {/* Main Dialogue Area + 3D Spinning Gold Gimbal Ring */}
@@ -123,7 +119,7 @@ export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
             {isProcessing ? (
               <div className="flex items-center gap-2 text-orange-400 font-mono text-xs pt-2">
                 <span className="w-2 h-2 rounded-full bg-orange-400 animate-ping" />
-                <span>Consultando memória sináptica e sintetizando resposta...</span>
+                <span>{t.processingText}</span>
               </div>
             ) : (
               <p className="tracking-wide">

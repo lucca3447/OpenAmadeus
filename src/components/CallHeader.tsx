@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   MessageSquare,
   Video,
@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import { AIStatus } from '../services/aiService';
 import { BackendHealth } from '../services/backendService';
-import { LLMFallbackSettings, SettingsSectionId, VoiceSettings } from '../types/amadeus';
+import { AppLanguage, LLMFallbackSettings, SettingsSectionId, VoiceSettings } from '../types/amadeus';
+import { getUiText, normalizeAppLang } from '../i18n';
 
 interface CallHeaderProps {
   viewMode?: 'terminal' | 'call';
@@ -33,6 +34,9 @@ interface CallHeaderProps {
   llmSettings?: LLMFallbackSettings;
   onOpenSettingsWithSection?: (section: SettingsSectionId) => void;
   ttfaMs?: number | null;
+  lang?: string;
+  onChangeLang?: (lang: AppLanguage) => void;
+  onToggleCanonicalJp?: () => void;
 }
 
 export const CallHeader: React.FC<CallHeaderProps> = ({
@@ -52,7 +56,12 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
   llmSettings,
   onOpenSettingsWithSection,
   ttfaMs,
+  lang,
+  onChangeLang,
+  onToggleCanonicalJp,
 }) => {
+  const t = getUiText(lang).header;
+  const uiLang = normalizeAppLang(lang);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -89,9 +98,9 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
     aiStatus.kind === 'online'
       ? aiStatus.model.split('/').pop()?.slice(0, 16) || 'ONLINE'
       : aiStatus.kind === 'pending'
-        ? 'PROCESSANDO'
+        ? t.pendingBadge
         : aiStatus.kind === 'error'
-          ? 'ERRO LLM'
+          ? t.errorBadge
           : 'OFFLINE';
 
   return (
@@ -101,7 +110,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
         {onToggleSidebar && viewMode === 'terminal' && (
           <button
             onClick={onToggleSidebar}
-            title={isSidebarOpen ? 'Recolher Barra Lateral (Ctrl+B)' : 'Expandir Barra Lateral (Ctrl+B)'}
+            title={t.sidebarToggleTitle}
             className="p-1.5 rounded border border-zinc-800 bg-zinc-900/90 text-orange-400 hover:text-white hover:border-orange-500 transition-colors"
           >
             <Menu className="w-4 h-4" />
@@ -135,7 +144,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
           <div className="flex items-center p-0.5 rounded border border-amber-900/50 bg-[#080706]">
             <button
               onClick={() => onSwitchViewMode('terminal')}
-              title="Modo Bancada & Terminal"
+              title={t.viewTerminalTitle}
               className={`px-2.5 py-1 rounded-sm text-[11px] font-bold flex items-center gap-1.5 transition-all ${
                 viewMode === 'terminal'
                   ? 'bg-orange-500 text-black shadow-[0_0_12px_rgba(249,115,22,0.5)]'
@@ -143,11 +152,11 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">TERMINAL</span>
+              <span className="hidden sm:inline">{t.viewTerminal}</span>
             </button>
             <button
               onClick={() => onSwitchViewMode('call')}
-              title="Modo Chamada Neural"
+              title={t.viewCallTitle}
               className={`px-2.5 py-1 rounded-sm text-[11px] font-bold flex items-center gap-1.5 transition-all ${
                 viewMode === 'call'
                   ? 'bg-orange-500 text-black shadow-[0_0_12px_rgba(249,115,22,0.5)]'
@@ -155,7 +164,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
               }`}
             >
               <Video className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">CHAMADA</span>
+              <span className="hidden sm:inline">{t.viewCall}</span>
             </button>
           </div>
         )}
@@ -167,7 +176,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
         <button
           type="button"
           onClick={() => onOpenSettingsWithSection?.('cortex')}
-          title="Configurar Córtex LLM e Política de Fallback"
+          title={t.openCortexTitle}
           className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900/90 border border-zinc-800 hover:border-orange-500/50 transition-colors"
         >
           <Cpu className={`w-3.5 h-3.5 ${aiStatus.kind === 'error' ? 'text-rose-400' : 'text-orange-400'}`} />
@@ -187,7 +196,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
         <button
           type="button"
           onClick={() => onOpenSettingsWithSection?.('voice')}
-          title="Configurar Síntese Vocal e Modo Estrito TTS"
+          title={t.openAudioTitle}
           className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900/90 border border-zinc-800 hover:border-orange-500/50 transition-colors"
         >
           <Volume2 className="w-3.5 h-3.5 text-amber-400" />
@@ -203,7 +212,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
           </span>
           {ttfaMs != null && (
             <span
-              title="Time-To-First-Audio (TTFA) do último turno"
+              title={t.ttfaTitle}
               className="text-[9px] px-1.5 py-0.2 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
             >
               {ttfaMs}ms
@@ -242,11 +251,41 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
           </span>
         )}
 
+        {/* Language selector + canonical JP voice toggle */}
+        {onChangeLang && (
+          <select
+            value={uiLang}
+            onChange={(e) => onChangeLang(e.target.value as AppLanguage)}
+            title={t.langSelectorTitle}
+            aria-label={t.langSelectorTitle}
+            className="bg-zinc-900/90 border border-zinc-800 hover:border-orange-500/50 text-[11px] font-bold text-amber-200 rounded px-1.5 py-1 focus:outline-none"
+          >
+            <option value="pt">PT-BR</option>
+            <option value="en">EN</option>
+            <option value="ja">JA</option>
+          </select>
+        )}
+        {onToggleCanonicalJp && uiLang !== 'ja' && (
+          <button
+            type="button"
+            onClick={onToggleCanonicalJp}
+            title={t.jpVoiceToggleTitle}
+            aria-pressed={Boolean(voiceSettings?.canonicalJpVoice)}
+            className={`px-2 py-1 rounded text-[11px] font-bold border transition-all ${
+              voiceSettings?.canonicalJpVoice
+                ? 'bg-[#201509] border-orange-500 text-orange-400'
+                : 'bg-zinc-900/90 border-zinc-800 text-zinc-400 hover:text-orange-400'
+            }`}
+          >
+            {t.jpVoiceBadge}
+          </button>
+        )}
+
         {/* CRT Scanlines Toggle */}
         {onToggleScanlines && (
           <button
             onClick={onToggleScanlines}
-            title="Alternar Scanlines de Monitor CRT"
+            title={t.scanlinesTitle}
             className={`flex items-center gap-1 px-2 py-1 rounded transition-all text-[11px] font-bold ${
               scanlines
                 ? 'bg-[#201509] border border-orange-500 text-orange-400 shadow-[0_0_10px_rgba(249,115,22,0.3)]'
@@ -262,7 +301,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
         {onOpenLegal && (
           <button
             onClick={onOpenLegal}
-            title="Avisos Legais e Arquitetura Open-Source"
+            title={t.legalTitle}
             className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-900/90 border border-zinc-800 text-zinc-400 hover:text-orange-400 hover:border-orange-500/50 transition-colors text-[11px] font-bold"
           >
             <Scale className="w-3.5 h-3.5 text-orange-400" />
@@ -274,7 +313,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
         {onNewCall && viewMode === 'call' && (
           <button
             onClick={onNewCall}
-            title="Reiniciar Sessão de Diálogo"
+            title={t.newSessionTitle}
             className="hidden sm:flex items-center gap-1 px-2 py-1 rounded border border-zinc-800 bg-zinc-900/90 text-zinc-400 hover:text-orange-400 hover:border-orange-500/50 transition-colors text-[10px] font-bold"
           >
             <RefreshCw className="w-3 h-3 text-orange-400" />

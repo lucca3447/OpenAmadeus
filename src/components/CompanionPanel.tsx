@@ -1,7 +1,8 @@
-import React from 'react';
+﻿import React from 'react';
 import { CameraFraming, Emotion, CharacterPose } from '../types/amadeus';
 import { AmadeusSpriteView } from './AmadeusSpriteView';
 import { AudioOscilloscope } from './AudioOscilloscope';
+import { EMOTION_LABELS, getUiText, normalizeAppLang } from '../i18n';
 
 interface CompanionPanelProps {
   emotion: Emotion;
@@ -13,6 +14,7 @@ interface CompanionPanelProps {
   memoryPulse?: number;
   scanlines?: boolean;
   personaName: string;
+  lang?: string;
 }
 
 export const CompanionPanel: React.FC<CompanionPanelProps> = ({
@@ -25,7 +27,9 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
   memoryPulse = 0,
   scanlines = false,
   personaName,
+  lang,
 }) => {
+  const t = getUiText(lang).companion;
   return (
     <div className="hidden lg:flex w-80 xl:w-96 border-l border-orange-500/30 chalkboard-grid bg-[#0a090b]/95 flex-col items-center justify-between p-4 relative shrink-0 select-none font-mono">
       {/* Subtle Top Radial Spotlight */}
@@ -41,7 +45,7 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
             </span>
           </div>
           <span className="text-[10px] px-2.5 py-0.5 bg-black/80 border border-amber-900/60 text-orange-400 font-bold tracking-wider">
-            SINCRONIA ATIVA
+            {t.liveLinkBadge}
           </span>
         </div>
         <div className="bus-line-horizontal w-full" />
@@ -58,6 +62,7 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
           isProcessing={isProcessing}
           memoryPulse={memoryPulse}
           scanlines={scanlines}
+          lang={lang}
           className="w-full h-full"
         />
       </div>
@@ -67,26 +72,27 @@ export const CompanionPanel: React.FC<CompanionPanelProps> = ({
         <AudioOscilloscope
           isActive={isSpeaking}
           isListening={isListening}
+          lang={lang}
           className="h-14 w-full"
         />
 
         <div className="widescreen-steel-deck px-3 py-2 space-y-1">
           <div className="flex items-baseline text-[11px]">
             <span className="engraved-serif text-[10px] text-zinc-300 font-bold tracking-wider">
-              ESTADO EMOCIONAL
+              {t.stateLabel}
             </span>
             <div className="dotted-leader" />
             <span className="text-orange-400 font-bold uppercase tracking-wider text-[11px]">
-              {emotion.replace(/_/g, ' ')}
+              {EMOTION_LABELS[normalizeAppLang(lang)][emotion] || emotion}
             </span>
           </div>
           <div className="flex items-baseline text-[10px]">
             <span className="engraved-serif text-[9px] text-zinc-400 font-bold tracking-wider">
-              POSTURA / PALCO
+              {t.poseLabel}
             </span>
             <div className="dotted-leader" />
             <span className="text-amber-200/80 uppercase tracking-wider">
-              {pose.replace(/_/g, ' ')}
+              {t.poses[pose] || pose}
             </span>
           </div>
         </div>

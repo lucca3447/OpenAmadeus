@@ -194,6 +194,7 @@ export interface LearnedMemoryInfo {
 
 export interface AIResult {
   response: string;
+  ttsResponse?: string;
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
@@ -748,12 +749,68 @@ export class AIService {
 
   static queryOfflineAutonomousEvent(
     systemEvent: AutonomousEventType,
-    history: ChatMessage[] = []
+    history: ChatMessage[] = [],
+    lang?: string
   ): { response: string; emotion: Emotion; pose: CharacterPose; camera: CameraFraming } {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
     const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
     const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
     const snippet = lastUser.length > 48 ? `${lastUser.slice(0, 48)}...` : lastUser;
     const h = new Date().getHours();
+
+    if (lc === 'en') {
+      if (systemEvent === 'call_greeting') {
+        return {
+          response: 'Connection established with Lab 304 at Viktor Chondria. This is Makise Kurisu. What are we working on today?',
+          emotion: 'happy',
+          pose: 'default',
+          camera: 'closeup',
+        };
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return {
+          response: snippet
+            ? `Hey, you went quiet all of a sudden... Are you still processing what we discussed about "${snippet}"?`
+            : 'Hey, are you still there? You suddenly went silent in the middle of our conversation.',
+          emotion: 'thinking',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      return {
+        response: "Listen, if you went to grab coffee and left me talking to myself on the terminal, at least say so! I'll cross my arms and read my neuroscience papers until you return.",
+        emotion: 'annoyed',
+        pose: 'crossed_arms',
+        camera: 'medium',
+      };
+    }
+
+    if (lc === 'ja') {
+      if (systemEvent === 'call_greeting') {
+        return {
+          response: 'ヴィクトル・コンドリア大学・第304研究室との接続が確立されたわ。牧瀬紅莉栖よ。今日は何について議論しましょうか？',
+          emotion: 'happy',
+          pose: 'default',
+          camera: 'closeup',
+        };
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return {
+          response: snippet
+            ? `ちょっと、急に黙り込んでどうしたのよ……さっきの「${snippet}」の話、まだ考え込んでるの？`
+            : 'ちょっと、まだそこにいる？話の途中で急に静かになったけど。',
+          emotion: 'thinking',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      return {
+        response: 'もう、コーヒーでも淹れに行って私を端末の前に放置してるなら一言言いなさいよね！あんたが戻るまで論文を読んで待ってるから。',
+        emotion: 'annoyed',
+        pose: 'crossed_arms',
+        camera: 'medium',
+      };
+    }
 
     if (systemEvent === 'call_greeting') {
       if (gapSeconds && gapSeconds >= 86400) {
@@ -825,6 +882,8 @@ export class AIService {
       allowModelFallback?: boolean;
       allowOfflineSimulatorFallback?: boolean;
       systemEvent?: AutonomousEventType;
+      lang?: string;
+      canonicalVoice?: boolean;
       /** v0.2.2: backend sentence streaming; the speak queue lives in the caller */
       stream?: ChatStreamHandlers;
     }
@@ -833,6 +892,8 @@ export class AIService {
     const allowModelFallback = llmOptions?.allowModelFallback !== false;
     const allowOfflineFallback = llmOptions?.allowOfflineSimulatorFallback !== false;
     const systemEvent = llmOptions?.systemEvent;
+    const lang = llmOptions?.lang || 'pt';
+    const canonicalVoice = Boolean(llmOptions?.canonicalVoice);
     const effectiveMessage = systemEvent ? this.buildAutonomousEventPrompt(systemEvent, history) : userMessage;
 
     // 0. Explicit offline mode
@@ -842,8 +903,8 @@ export class AIService {
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
       const offline = systemEvent
-        ? this.queryOfflineAutonomousEvent(systemEvent, history)
-        : this.queryOfflineSimulator(userMessage, recalledMemories);
+        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang)
+        : this.queryOfflineSimulator(userMessage, recalledMemories, lang);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
@@ -855,21 +916,22 @@ export class AIService {
         const backendRes = streamHandlers
           ? await BackendService.queryChatStream(
               userMessage, sessionId, key || '', history, selectedModel,
-              allowModelFallback, allowOfflineFallback, systemEvent, streamHandlers
+              allowModelFallback, allowOfflineFallback, systemEvent, streamHandlers, lang, canonicalVoice
             ).catch((streamErr) => {
               console.warn('[OpenAmadeus] /chat/stream failed before the first sentence, using /chat:', streamErr);
               return BackendService.queryChat(
                 userMessage, sessionId, key || '', history, selectedModel,
-                allowModelFallback, allowOfflineFallback, systemEvent
+                allowModelFallback, allowOfflineFallback, systemEvent, lang, canonicalVoice
               );
             })
           : await BackendService.queryChat(
               userMessage, sessionId, key || '', history, selectedModel,
-              allowModelFallback, allowOfflineFallback, systemEvent
+              allowModelFallback, allowOfflineFallback, systemEvent, lang, canonicalVoice
             );
         return {
           aborted: backendRes.aborted,
           response: backendRes.response,
+          ttsResponse: backendRes.ttsResponse,
           emotion: backendRes.emotion,
           pose: backendRes.pose,
           camera: backendRes.camera,
@@ -895,18 +957,19 @@ export class AIService {
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
       const offline = systemEvent
-        ? this.queryOfflineAutonomousEvent(systemEvent, history)
-        : this.queryOfflineSimulator(userMessage, recalledMemories);
+        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang)
+        : this.queryOfflineSimulator(userMessage, recalledMemories, lang);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
     // 3. Browser-Mode: Groq Cloud (Ultra-fast LPU)
     if (isGroqKey(key)) {
       try {
-        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryGroq(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+        const { response, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+          await this.queryGroq(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback, lang, canonicalVoice);
         return {
           response,
+          ttsResponse,
           emotion,
           pose,
           camera,
@@ -930,10 +993,11 @@ export class AIService {
     // 4. Browser-Mode: OpenRouter
     if (isOpenRouterKey(key)) {
       try {
-        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryOpenRouter(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+        const { response, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+          await this.queryOpenRouter(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback, lang, canonicalVoice);
         return {
           response,
+          ttsResponse,
           emotion,
           pose,
           camera,
@@ -956,10 +1020,11 @@ export class AIService {
 
     // 5. Browser-Mode: Google Gemini
     try {
-      const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-        await this.queryGemini(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+      const { response, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+        await this.queryGemini(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback, lang, canonicalVoice);
       return {
         response,
+        ttsResponse,
         emotion,
         pose,
         camera,
@@ -1035,6 +1100,26 @@ export class AIService {
     return `\n\n${blocks.join('\n\n')}`;
   }
 
+  private static buildLanguagePromptSuffix(lang?: string, canonicalVoice?: boolean): string {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
+    let suffix = '';
+    if (lc === 'en') {
+      suffix +=
+        '\n\n[ACTIVE CONVERSATION LANGUAGE — ENGLISH]:\n' +
+        'Respond naturally and fluently in English (EN-US), keeping your authentic Makise Kurisu personality, scientific rigor, and occasional tsundere expressions.';
+    } else if (lc === 'ja') {
+      suffix +=
+        '\n\n[ACTIVE CONVERSATION LANGUAGE — JAPANESE (日本語)]:\n' +
+        'すべての返答を自然で流暢な日本語で行ってください。牧瀬紅莉栖らしい理知的で少しツンデレな口調（「〜わ」「〜よ」「〜じゃない」「あんた」など）を維持してください。';
+    }
+    if (canonicalVoice && lc !== 'ja') {
+      suffix +=
+        '\n\n[CANONICAL JAPANESE VOICE MODE (ASAMI IMAI)]:\n' +
+        'Before EACH spoken sentence in your reply, include an inline tag `<!--ja:日本語のセリフ-->` containing the natural spoken Japanese line that Kurisu would say in Steins;Gate, followed immediately by the subtitle sentence in the active language.';
+    }
+    return suffix;
+  }
+
   private static async queryGroq(
     userMessage: string,
     persona: PersonaProfile,
@@ -1042,9 +1127,12 @@ export class AIService {
     apiKey: string,
     history: ChatMessage[],
     preferredModel?: string,
-    allowModelFallback: boolean = true
+    allowModelFallback: boolean = true,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<{
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1057,7 +1145,7 @@ export class AIService {
     decommissionNotice?: string;
   }> {
     const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
-    const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
+    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice)}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1182,9 +1270,12 @@ export class AIService {
     apiKey: string,
     history: ChatMessage[],
     preferredModel?: string,
-    allowModelFallback: boolean = true
+    allowModelFallback: boolean = true,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<{
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1197,7 +1288,7 @@ export class AIService {
     decommissionNotice?: string;
   }> {
     const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
-    const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
+    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice)}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1351,9 +1442,12 @@ export class AIService {
     apiKey: string,
     history: ChatMessage[],
     preferredModel?: string,
-    allowModelFallback: boolean = true
+    allowModelFallback: boolean = true,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<{
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1369,7 +1463,7 @@ export class AIService {
 
     const body = {
       contents: this.buildContents(history, userMessage),
-      systemInstruction: { parts: [{ text: `${persona.systemPrompt}${memoryContext}` }] },
+      systemInstruction: { parts: [{ text: `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice)}` }] },
       generationConfig: {
         temperature: 0.85,
         maxOutputTokens: 1024,
@@ -1535,6 +1629,7 @@ export class AIService {
     userMessage?: string
   ): {
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1552,6 +1647,11 @@ export class AIService {
     if (!cleanText || this.isScratchpadOrReasoning(cleanText)) {
       return { response: '', emotion: 'neutral' };
     }
+
+    const jaMatches = Array.from(cleanText.matchAll(/<!--\s*ja\s*:\s*([\s\S]*?)\s*-->/gi))
+      .map((m) => m[1].trim())
+      .filter(Boolean);
+    const ttsResponse = jaMatches.length > 0 ? jaMatches.join(' ') : undefined;
 
     // 1. Extract remember tag: <!--remember:title|content|emotion-->
     const parsedRem = MemoryService.parseRememberTag(cleanText);
@@ -1760,7 +1860,7 @@ export class AIService {
       }
     }
 
-    return { response: cleanText, emotion, pose, camera, leadEmotion, leadPose, learnedMemory };
+    return { response: cleanText, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, learnedMemory };
   }
 
   /**
@@ -1768,9 +1868,11 @@ export class AIService {
    */
   private static queryOfflineSimulator(
     userMessage: string,
-    recalledMemories: MemoryItem[]
+    recalledMemories: MemoryItem[],
+    lang?: string
   ): { response: string; emotion: Emotion; pose?: CharacterPose; learnedMemory?: LearnedMemoryInfo } {
     const text = userMessage.toLowerCase().trim();
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
 
     // Check for user introduction to simulate learning in offline mode
     let learnedMemory: LearnedMemoryInfo | undefined = undefined;
@@ -1923,6 +2025,24 @@ export class AIService {
         emotion: 'thinking',
         learnedMemory,
       };
+    }
+
+    if (lc === 'en') {
+      const enAnswers = [
+        { response: "That's an intriguing line of reasoning. From a cognitive standpoint, how did you reach that conclusion?", emotion: 'thinking' as Emotion },
+        { response: "I see. I'm processing the parameters through my neural matrix. Would you like to dive deeper into this hypothesis?", emotion: 'neutral' as Emotion },
+        { response: 'That makes sense! At Viktor Chondria we debated similar topics recently during the Amadeus trials.', emotion: 'smile' as Emotion },
+      ];
+      return { ...enAnswers[Math.floor(Math.random() * enAnswers.length)], learnedMemory };
+    }
+
+    if (lc === 'ja') {
+      const jaAnswers = [
+        { response: '興味深い推論ね。認知科学の観点からすると、どうしてその結論に至ったの？', emotion: 'thinking' as Emotion },
+        { response: 'なるほどね。私のニューラルマトリクスでデータを処理中よ。その仮説をもっと掘り下げてみる？', emotion: 'neutral' as Emotion },
+        { response: '一理あるわね！ヴィクトル・コンドリア大学でも最近、アマデウスの試験中に似た議論をしたわ。', emotion: 'smile' as Emotion },
+      ];
+      return { ...jaAnswers[Math.floor(Math.random() * jaAnswers.length)], learnedMemory };
     }
 
     const genericAnswers = [

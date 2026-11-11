@@ -25,10 +25,12 @@ import {
   SettingsSectionId,
   LLMFallbackSettings,
   TtsFallbackEngine,
+  AppLanguage,
 } from '../types/amadeus';
 import { SpeechService } from '../services/speechService';
 import { AIService } from '../services/aiService';
 import { BackendService } from '../services/backendService';
+import { getBcp47Lang, getUiText, normalizeAppLang } from '../i18n';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -44,6 +46,7 @@ interface SettingsModalProps {
   onToggleScanlines: (enabled: boolean) => void;
   defaultCamera?: 'auto' | 'closeup' | 'medium' | 'full';
   onSaveDefaultCamera?: (camera: 'auto' | 'closeup' | 'medium' | 'full') => void;
+  lang?: string;
 }
 
 const CAPSULE_SECTIONS: { id: SettingsSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -129,7 +132,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onToggleScanlines,
   defaultCamera = 'auto',
   onSaveDefaultCamera,
+  lang,
 }) => {
+  const ui = getUiText(lang);
+  const t = ui.settingsModal;
+  const currentAppLang = normalizeAppLang(voiceSettings.lang || lang);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
   const [tempApiKey, setTempApiKey] = useState(apiKey);
   const [tempSttKey, setTempSttKey] = useState<string>(
@@ -583,6 +590,93 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* ==================== SECTION 2: VOICE (TTS) ==================== */}
             {activeSection === 'voice' && (
               <div className="space-y-6">
+                {/* Trilingual & Canonical Voice Settings */}
+                <div className="p-4 border border-amber-900/60 bg-black/60 space-y-4">
+                  <div className="flex items-center justify-between border-b border-amber-900/40 pb-2">
+                    <span className="engraved-serif text-xs font-bold text-orange-400 tracking-wider">
+                      {t.langSectionTitle}
+                    </span>
+                    <span className="text-[10px] font-mono text-zinc-400 uppercase">
+                      TRILINGUAL ENGINE
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="engraved-label block text-xs">
+                      {t.langLabel}
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {(['pt', 'en', 'ja'] as AppLanguage[]).map((lCode) => {
+                        const isSelected = currentAppLang === lCode;
+                        return (
+                          <button
+                            key={lCode}
+                            type="button"
+                            onClick={() =>
+                              onSaveVoiceSettings({
+                                ...voiceSettings,
+                                lang: getBcp47Lang(lCode),
+                              })
+                            }
+                            className={`py-2 px-3 border text-left font-mono text-xs transition-all ${
+                              isSelected
+                                ? 'border-orange-400 bg-orange-500/20 text-amber-100 shadow-[0_0_12px_rgba(249,115,22,0.3)]'
+                                : 'border-amber-900/40 bg-black/50 text-zinc-400 hover:text-zinc-200'
+                            }`}
+                          >
+                            <div className="font-bold text-orange-400 uppercase">{lCode.toUpperCase()}</div>
+                            <div className="text-[10px] text-zinc-400 truncate mt-0.5">
+                              {t.langOptions[lCode]}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {currentAppLang !== 'ja' && (
+                    <div className="pt-3 border-t border-amber-900/40 space-y-2">
+                      <div className="flex items-baseline justify-between">
+                        <span className="engraved-label text-xs">
+                          {t.canonicalJpTitle}
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            className="engraved-toggle"
+                            data-active={Boolean(voiceSettings.canonicalJpVoice)}
+                            onClick={() =>
+                              onSaveVoiceSettings({
+                                ...voiceSettings,
+                                canonicalJpVoice: true,
+                              })
+                            }
+                          >
+                            ON
+                          </button>
+                          <span className="text-zinc-600 font-serif">/</span>
+                          <button
+                            type="button"
+                            className="engraved-toggle"
+                            data-active={!voiceSettings.canonicalJpVoice}
+                            onClick={() =>
+                              onSaveVoiceSettings({
+                                ...voiceSettings,
+                                canonicalJpVoice: false,
+                              })
+                            }
+                          >
+                            OFF
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
+                        {t.canonicalJpDesc}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 {/* Primary Engine Row */}
                 <div className="space-y-2">
                   <span className="engraved-label block">Motor Primário de Síntese Vocal</span>

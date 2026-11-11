@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import {
   Plus,
   Search,
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { CallSession } from '../types/amadeus';
 import { BackendHealth } from '../services/backendService';
+import { getUiText, getBcp47Lang } from '../i18n';
 
 interface AppSidebarProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ interface AppSidebarProps {
   onOpenMemory: () => void;
   onOpenSettings: () => void;
   backendHealth?: BackendHealth | null;
+  lang?: string;
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
@@ -36,7 +38,9 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   onOpenMemory,
   onOpenSettings,
   backendHealth,
+  lang,
 }) => {
+  const t = getUiText(lang).sidebar;
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredSessions = sessions.filter((s) => {
@@ -52,7 +56,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     if (isToday) {
       return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
     }
-    return `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
+    return `${d.toLocaleDateString(getBcp47Lang(lang), { day: '2-digit', month: '2-digit' })}`;
   };
 
   if (!isOpen) return null;
@@ -69,14 +73,14 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_8px_#fb923c]" />
               <span className="engraved-serif font-bold text-amber-100 tracking-widest text-xs">
-                REGISTROS DE SESSÃO
+                {t.headerTitle}
               </span>
             </div>
             <div className="bus-line-horizontal w-full mt-1" />
           </div>
           <button
             onClick={onClose}
-            title="Recolher Barra Lateral (Ctrl+B)"
+            title={t.closeSidebarTitle}
             className="w-7 h-7 rounded-full border border-amber-900/60 bg-black/70 flex items-center justify-center text-zinc-400 hover:text-amber-200 hover:border-orange-400 transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -89,7 +93,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           className="copper-capsule w-full py-2 px-3.5 text-amber-100 hover:text-white font-bold text-xs flex items-center justify-center gap-2"
         >
           <Plus className="w-4 h-4 text-orange-400" />
-          <span className="engraved-serif tracking-widest text-[11px]">NOVA SESSÃO NEURAL</span>
+          <span className="engraved-serif tracking-widest text-[11px]">{t.newSessionBtn}</span>
         </button>
 
         {/* Search Input */}
@@ -113,7 +117,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
         {filteredSessions.length === 0 ? (
           <div className="py-12 px-4 text-center text-zinc-500 text-[11px] space-y-1 border border-dashed border-amber-900/30 bg-black/30">
-            <p className="engraved-serif text-zinc-400 font-bold">NENHUM REGISTRO</p>
+            <p className="engraved-serif text-zinc-400 font-bold">{t.emptySessions}</p>
             <p className="text-[10px] text-zinc-500 font-sans">
               Os diálogos arquivados no barramento aparecerão aqui.
             </p>
@@ -155,7 +159,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                         {formatDate(session.endedAt || session.startedAt)}
                       </span>
                       <span>•</span>
-                      <span>{session.messageCount} blocos</span>
+                      <span>{session.messageCount} {t.msgsCount}</span>
                     </div>
                   </div>
                 </div>
@@ -163,11 +167,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm('Deseja excluir este registro de sessão?')) {
+                    if (confirm(t.deleteSessionTitle + '?')) {
                       onDeleteSession(session.id);
                     }
                   }}
-                  title="Excluir Registro"
+                  title={t.deleteSessionTitle}
                   className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-950/60 hover:text-rose-400 transition-all text-zinc-500"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -186,7 +190,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         >
           <Brain className="w-4 h-4 text-sky-400 shrink-0" />
           <span className="engraved-serif font-bold text-[11px] tracking-widest">
-            CÓRTEX & MEMÓRIAS
+            {t.cortexRagBtn}
           </span>
         </button>
 
@@ -196,7 +200,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         >
           <Sliders className="w-4 h-4 text-orange-400 shrink-0" />
           <span className="engraved-serif font-bold text-[11px] tracking-widest">
-            SETUP MENU
+            {t.settingsBtn}
           </span>
         </button>
 

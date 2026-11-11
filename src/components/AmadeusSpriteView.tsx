@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
+import { getUiText } from '../i18n';
 import { CameraFraming, CameraMode, CharacterPose, Emotion, MouthState } from '../types/amadeus';
 import {
   inferCameraFraming,
@@ -20,6 +21,7 @@ interface AmadeusSpriteViewProps {
   memoryPulse?: number;
   scanlines?: boolean;
   className?: string;
+  lang?: string;
 }
 
 const CAMERA_CYCLE: CameraMode[] = ['auto', 'closeup', 'medium', 'full'];
@@ -47,7 +49,9 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
   memoryPulse = 0,
   scanlines = false,
   className = '',
+  lang,
 }) => {
+  const t = getUiText(lang).sprite;
   const [mouthState, setMouthState] = useState<MouthState>('closed');
   const [voiceAmplitude, setVoiceAmplitude] = useState<number>(0);
   const [isBlinking, setIsBlinking] = useState(false);
@@ -427,10 +431,10 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
             <div className="space-y-1.5 max-w-xs">
               <span className="engraved-serif text-[10px] px-2.5 py-0.5 bg-black/80 border border-amber-900/60 text-orange-400 tracking-widest font-bold">
-                SILHUETA VETORIAL ATIVA
+                {t.fallbackSilhouette}
               </span>
               <p className="text-[11px] text-zinc-400 font-mono leading-relaxed">
-                Sprites locais não detectados. Para vincular os sprites, execute{' '}
+                {' '}
                 <code className="text-amber-300 bg-black/80 px-1 py-0.5 border border-amber-900/50">
                   python scripts/setup_sprites.py
                 </code>

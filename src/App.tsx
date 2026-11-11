@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import {
   AutonomousEventType,
   CameraFraming,
@@ -45,6 +45,7 @@ import { ChatFeedStream } from './components/ChatFeedStream';
 import { CompanionPanel } from './components/CompanionPanel';
 import { PromptBar } from './components/PromptBar';
 import { Phone, MicOff, X, Sparkles } from 'lucide-react';
+import { getBcp47Lang, getUiText, normalizeAppLang } from './i18n';
 
 const newId = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -280,7 +281,7 @@ export const App: React.FC = () => {
             const fallbackId = liveModels[0]?.id || OFFLINE_MODEL_ID;
             const fallbackLabel = liveModels[0]?.label || fallbackId;
             setModelNotice(
-              `[Aviso de Provedor] O modelo anteriormente selecionado não está mais disponível. Migrado para ${fallbackLabel}.`
+              `${t.appNotices.modelMigratedPrefix} ${fallbackLabel}.`
             );
             localStorage.setItem('amadeus_selected_model', fallbackId);
             return fallbackId;
@@ -363,7 +364,13 @@ export const App: React.FC = () => {
     setIsSpeaking(false);
   };
 
+  const uiLang = normalizeAppLang(voiceSettings.lang);
+  const t = getUiText(uiLang);
+  const canonicalJp = Boolean(voiceSettings.canonicalJpVoice) && uiLang !== 'ja';
+  const langOpts = { lang: uiLang, canonicalVoice: canonicalJp };
+
   const buildSpeakOptions = (emotion?: string): SpeakOptions => ({
+      lang: canonicalJp ? 'ja-JP' : getBcp47Lang(uiLang),
       voiceURI: voiceSettings.voiceURI,
       rate: voiceSettings.rate,
       pitch: voiceSettings.pitch,
@@ -468,6 +475,7 @@ export const App: React.FC = () => {
         currentModel,
         {
           ...llmSettings,
+          ...langOpts,
           stream: {
             onMeta: (m) => {
               currentMeta = { ...currentMeta, emotion: m.emotion, pose: m.pose, camera: m.camera };
@@ -477,7 +485,7 @@ export const App: React.FC = () => {
               if (m.pose) setCurrentPose(m.pose);
               if (m.camera) setCurrentCamera(m.camera);
             },
-            onSentence: (sentence, _index, visual) => {
+            onSentence: (sentence, _index, visual, ttsText) => {
               streamedAny = true;
               if (visual?.emotion) {
                 preloadEmotionSprites(visual.emotion, visual.pose || currentMeta.pose || 'default', visual.camera || currentMeta.camera);
@@ -517,7 +525,8 @@ export const App: React.FC = () => {
                 setHistory(partialHistory);
                 MemoryService.saveActiveSession(sessionId, partialHistory);
               };
-              if (speaker) speaker.enqueue(sentence, reveal, visual?.emotion);
+              // canonical JP mode: speak the Japanese line, subtitle stays in the UI language
+              if (speaker) speaker.enqueue((canonicalJp && ttsText) || sentence, reveal, visual?.emotion);
               else reveal();
             },
           },
@@ -591,7 +600,7 @@ export const App: React.FC = () => {
           });
           setPersona(MemoryService.getPersona(persona.id));
         }
-        setLearnedNotification(`Nova memória gravada: "${result.learnedMemory.title}"`);
+        setLearnedNotification(`${t.appNotices.learnedToastPrefix}: "${result.learnedMemory.title}"`);
       }
 
       preloadEmotionSprites(result.emotion, result.pose, result.camera);
@@ -632,12 +641,12 @@ export const App: React.FC = () => {
         setHistory(updatedHistory);
         MemoryService.saveActiveSession(sessionId, updatedHistory);
         setSessions(MemoryService.getSessionLogs());
-        speak(result.response, result.emotion);
+        speak((canonicalJp && result.ttsResponse) || result.response, result.emotion);
       }
     } catch (err: any) {
       speaker?.cancel();
       console.error('Failed to query Amadeus:', err);
-      const message = '[ERRO DE CONEXÃO COM O AMADEUS]';
+      const message = t.appNotices.connectionError;
       setCurrentSubtitle(message);
       setErrorNotice(message);
       setCurrentEmotion('worried');
@@ -648,7 +657,7 @@ export const App: React.FC = () => {
   };
 
   const triggerCallGreeting = async (targetSessionId: string, shouldSpeak: boolean) => {
-    const localGreet = AIService.queryOfflineAutonomousEvent('call_greeting', []);
+    const localGreet = AIService.queryOfflineAutonomousEvent('call_greeting', [], uiLang);
     const initialMsgId = newId();
     const initialMsgs: ChatMessage[] = [
       {
@@ -688,7 +697,7 @@ export const App: React.FC = () => {
         [],
         targetSessionId,
         currentModel,
-        { ...llmSettings, systemEvent: 'call_greeting' }
+        { ...llmSettings, ...langOpts, systemEvent: 'call_greeting' }
       );
       if (!result.isError && result.response) {
         const liveMsg: ChatMessage = {
@@ -708,7 +717,7 @@ export const App: React.FC = () => {
         setCurrentCamera(result.camera);
         MemoryService.saveActiveSession(targetSessionId, [liveMsg], true);
         setSessions(MemoryService.getSessionLogs());
-        if (shouldSpeak) speak(result.response, result.emotion);
+        if (shouldSpeak) speak((canonicalJp && result.ttsResponse) || result.response, result.emotion);
         return;
       }
     } catch (e) {
@@ -795,8 +804,10 @@ export const App: React.FC = () => {
       separateGroqSttKey: voiceSettings.separateGroqSttKey || localStorage.getItem('amadeus_groq_stt_key') || '',
       allowSttWebSpeechFallback: voiceSettings.allowSttWebSpeechFallback !== false,
       vadSensitivity: voiceSettings.vadSensitivity ?? 1.0,
+      lang: getBcp47Lang(uiLang),
     });
   }, [
+    uiLang,
     voiceSettings.micMode,
     voiceSettings.sttKeyMode,
     voiceSettings.separateGroqSttKey,
@@ -865,7 +876,7 @@ export const App: React.FC = () => {
 
   const handleToggleMic = () => {
     if (!SpeechService.isRecognitionSupported()) {
-      setMicError('Este navegador não suporta reconhecimento de voz. Use Google Chrome ou Microsoft Edge.');
+      setMicError(t.appNotices.micUnsupported);
       return;
     }
     SpeechService.toggleListening();
@@ -923,7 +934,7 @@ export const App: React.FC = () => {
           history,
           sessionId,
           currentModel,
-          { ...llmSettings, systemEvent: nextStage }
+          { ...llmSettings, ...langOpts, systemEvent: nextStage }
         );
         if (!result.isError && result.response) {
           const finalPose = result.pose || 'crossed_arms';
@@ -950,7 +961,7 @@ export const App: React.FC = () => {
           setSessions(MemoryService.getSessionLogs());
 
           if (initiativeMode === 'voice') {
-            speak(result.response, result.emotion);
+            speak((canonicalJp && result.ttsResponse) || result.response, result.emotion);
           }
         }
       } catch (err) {
@@ -1016,6 +1027,7 @@ export const App: React.FC = () => {
   if (callState === 'incoming') {
     return (
       <IncomingCallScreen
+        lang={uiLang}
         persona={persona}
         onAccept={handleAcceptCall}
         onDecline={() => setCallState('disconnected')}
@@ -1034,17 +1046,15 @@ export const App: React.FC = () => {
             <Phone className="w-6 h-6 rotate-[135deg]" />
           </div>
           <div className="engraved-heading text-rose-400 font-bold text-lg tracking-widest">
-            SESSÃO ENCERRADA
+            {t.disconnected.title}
           </div>
-          <div className="text-xs text-zinc-400 font-sans">
-            A sessão neural com Makise Kurisu foi finalizada. O histórico e os vetores sinápticos foram arquivados localmente.
-          </div>
+          <div className="text-xs text-zinc-400 font-sans">{t.disconnected.desc}</div>
           <button
             onClick={handleRestartCall}
             className="copper-capsule w-full py-3 text-amber-200 font-bold text-xs hover:text-white transition-all flex items-center justify-center gap-2"
           >
             <Phone className="w-4 h-4 text-orange-400" />
-            <span className="engraved-serif tracking-widest">RECONECTAR AO OPENAMADEUS</span>
+            <span className="engraved-serif tracking-widest">{t.disconnected.reconnectBtn}</span>
           </button>
         </div>
       </div>
@@ -1059,6 +1069,7 @@ export const App: React.FC = () => {
 
       {/* Top Header Bar */}
       <CallHeader
+        lang={uiLang}
         viewMode={viewMode}
         onSwitchViewMode={handleSwitchViewMode}
         scanlines={scanlines}
@@ -1075,6 +1086,8 @@ export const App: React.FC = () => {
         llmSettings={llmSettings}
         onOpenSettingsWithSection={handleOpenSettingsWithSection}
         ttfaMs={ttfaMs}
+        onChangeLang={(l) => handleSaveVoiceSettings({ ...voiceSettings, lang: getBcp47Lang(l) })}
+        onToggleCanonicalJp={() => handleSaveVoiceSettings({ ...voiceSettings, canonicalJpVoice: !voiceSettings.canonicalJpVoice })}
       />
 
       {/* Microphone problem banner */}
@@ -1109,6 +1122,7 @@ export const App: React.FC = () => {
           <>
             {/* Left Collapsible Sidebar */}
             <AppSidebar
+              lang={uiLang}
               isOpen={isSidebarOpen}
               onClose={() => setIsSidebarOpen(false)}
               sessions={sessions}
@@ -1124,6 +1138,7 @@ export const App: React.FC = () => {
             {/* Central Chat Feed & Prompt Bar */}
             <main className="flex-1 flex flex-col justify-between overflow-hidden relative">
               <ChatFeedStream
+                lang={uiLang}
                 messages={history}
                 isProcessing={isProcessing}
                 errorNotice={errorNotice}
@@ -1135,6 +1150,8 @@ export const App: React.FC = () => {
               />
 
               <PromptBar
+
+                lang={uiLang}
                 onSendMessage={handleSendMessage}
                 isListening={isListening}
                 onToggleMic={handleToggleMic}
@@ -1163,6 +1180,7 @@ export const App: React.FC = () => {
 
             {/* Right Companion Panel: Kurisu Live Stage */}
             <CompanionPanel
+              lang={uiLang}
               emotion={currentEmotion}
               pose={currentPose}
               camera={effectiveCamera}
@@ -1180,6 +1198,7 @@ export const App: React.FC = () => {
             {/* Center Character Stage */}
             <div className="relative flex-1 w-full min-h-0 overflow-hidden flex items-center justify-center">
               <AmadeusSpriteView
+                lang={uiLang}
                 emotion={currentEmotion}
                 pose={currentPose}
                 camera={effectiveCamera}
@@ -1197,6 +1216,7 @@ export const App: React.FC = () => {
               {/* Atmospheric Voice Oscilloscope prominently above subtitles in Call Mode */}
               <div className="w-full max-w-5xl mx-auto">
                 <AudioOscilloscope
+                  lang={uiLang}
                   isActive={isSpeaking}
                   isListening={isListening}
                   className="h-12 w-full"
@@ -1205,6 +1225,7 @@ export const App: React.FC = () => {
 
               {/* Widescreen Brushed Steel Deck Subtitle Box */}
               <SubtitleBox
+                lang={uiLang}
                 speakerName={persona.name}
                 text={currentSubtitle}
                 emotion={currentEmotion}
@@ -1214,6 +1235,7 @@ export const App: React.FC = () => {
 
               {/* Clockwork Astrolabe & Metallic Pill Call Control Bar */}
               <ControlBar
+                lang={uiLang}
                 onSendMessage={handleSendMessage}
                 isListening={isListening}
                 onToggleMic={handleToggleMic}
@@ -1245,6 +1267,7 @@ export const App: React.FC = () => {
       <React.Suspense fallback={null}>
         {isMemoryModalOpen && (
           <MemoryInspectorModal
+            lang={uiLang}
             isOpen={isMemoryModalOpen}
             onClose={() => setIsMemoryModalOpen(false)}
             persona={persona}
@@ -1255,6 +1278,7 @@ export const App: React.FC = () => {
 
         {isSettingsModalOpen && (
           <SettingsModal
+            lang={uiLang}
             isOpen={isSettingsModalOpen}
             onClose={() => setIsSettingsModalOpen(false)}
             initialSection={settingsSection}
@@ -1273,6 +1297,7 @@ export const App: React.FC = () => {
 
         {isLegalModalOpen && (
           <LegalNoticeModal
+            lang={uiLang}
             isOpen={isLegalModalOpen}
             onClose={() => setIsLegalModalOpen(false)}
           />

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+﻿import React, { useState, useRef, useEffect } from 'react';
 import {
   Mic,
   MicOff,
@@ -16,6 +16,7 @@ import {
 
 import { MODEL_OPTIONS, ModelOption, AIProvider } from '../services/aiService';
 import { MicMode } from '../types/amadeus';
+import { getUiText } from '../i18n';
 
 interface PromptBarProps {
   onSendMessage: (text: string) => void;
@@ -37,14 +38,8 @@ interface PromptBarProps {
   isQwen?: boolean;
   onEndCall?: () => void;
   disabled?: boolean;
+  lang?: string;
 }
-
-const SUGGESTED_TOPICS = [
-  { label: 'Arquitetura Neural', prompt: 'Como sua arquitetura de memória e raciocínio funciona?' },
-  { label: 'Memória RAG', prompt: 'Como você armazena e recupera memórias sinápticas de longo prazo?' },
-  { label: 'Neurociência Digital', prompt: 'É possível mapear estados emocionais e cognitivos em redes neurais?' },
-  { label: 'Síntese Vocal', prompt: 'Como funcionam os motores de síntese acústica e prosódia neural?' },
-];
 
 export const PromptBar: React.FC<PromptBarProps> = ({
   onSendMessage,
@@ -66,7 +61,10 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   isQwen = false,
   onEndCall,
   disabled = false,
+  lang,
 }) => {
+  const ui = getUiText(lang);
+  const t = ui.controls;
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -105,9 +103,9 @@ export const PromptBar: React.FC<PromptBarProps> = ({
       <div className="flex items-center gap-1.5 overflow-x-auto pb-2 text-[11px] scrollbar-none">
         <span className="text-zinc-400 font-bold flex items-center gap-1 mr-1 shrink-0">
           <Sparkles className="w-3 h-3 text-orange-400" />
-          <span>TÓPICOS:</span>
+          <span>{ui.subtitle.quickTopicsLabel}</span>
         </span>
-        {SUGGESTED_TOPICS.map((topic, i) => (
+        {ui.chatFeed.suggestions.map((topic, i) => (
           <button
             key={i}
             type="button"
@@ -135,9 +133,11 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                 ? `[VOZ] ${interimTranscript}`
                 : isListening
                   ? micMode === 'hands_free'
-                    ? 'Hands-Free ativo (fale a qualquer momento)...'
-                    : 'Escutando sua fala (solte Espaço ou clique para enviar)...'
-                  : 'Envie uma mensagem ou segure [Espaço] fora do campo para falar...'
+                    ? t.placeholderListeningVad
+                    : t.placeholderListeningPtt
+                  : disabled
+                    ? t.placeholderProcessing
+                    : t.placeholderDefault
             }
             className="w-full bg-transparent border-none text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none resize-none px-2 py-1 font-sans max-h-36 leading-relaxed"
           />
@@ -175,7 +175,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                 <button
                   type="button"
                   onClick={onStopSpeaking}
-                  title="Interromper Fala Imediatamente (Barge-In Manual)"
+                  title={t.stopVoiceTitle}
                   className="copper-capsule px-3 py-1 flex items-center gap-1.5 text-amber-300 hover:text-white border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.45)] animate-pulse"
                 >
                   <Square className="w-3 h-3 fill-amber-400 text-amber-400" />
@@ -190,10 +190,10 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                 disabled={disabled && !isListening}
                 title={
                   isListening
-                    ? 'Parar / Enviar Reconhecimento de Voz'
+                    ? t.micPttTitle
                     : micMode === 'hands_free'
-                      ? 'Ativar Microfone Contínuo (Hands-Free + Barge-in)'
-                      : 'Ativar Microfone (Push-to-Talk ou segure [Espaço])'
+                      ? t.micVadTitle
+                      : t.micPttTitle
                 }
                 className={`p-1.5 rounded-full border transition-all ${
                   isListening
@@ -210,9 +210,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                   type="button"
                   onClick={onToggleMicMode}
                   title={
-                    micMode === 'hands_free'
-                      ? 'Modo Hands-Free Ativo (VAD + Barge-in) — Clique para alternar para Push-to-Talk ([Espaço])'
-                      : 'Modo Push-to-Talk Ativo (Atalho [Espaço]) — Clique para alternar para Hands-Free'
+                    t.modeToggleTitle
                   }
                   className={`px-2 py-1 rounded-full border text-[10px] font-bold flex items-center gap-1 transition-all ${
                     micMode === 'hands_free'
@@ -231,9 +229,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                   type="button"
                   onClick={onToggleStream}
                   title={
-                    streamEnabled
-                      ? 'Streaming em Tempo Real Ativo (~500ms) — Clique para WAV Completo'
-                      : 'Modo WAV Completo Ativo (Estável) — Clique para Streaming em Tempo Real'
+                    t.streamTitle
                   }
                   className={`p-1.5 rounded-full border transition-all ${
                     streamEnabled
@@ -249,7 +245,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
               <button
                 type="button"
                 onClick={onToggleVoice}
-                title={voiceEnabled ? 'Síntese Vocal Ativa' : 'Síntese Vocal Silenciada'}
+                title={voiceEnabled ? t.voiceOnTitle : t.voiceOffTitle}
                 className={`p-1.5 rounded-full border transition-all ${
                   voiceEnabled
                     ? 'border-orange-500/60 bg-[#201509] text-orange-400 shadow-[0_0_10px_rgba(249,115,22,0.3)]'
@@ -263,11 +259,11 @@ export const PromptBar: React.FC<PromptBarProps> = ({
               <button
                 type="submit"
                 disabled={disabled || !input.trim()}
-                title="Transmitir Comando (Enter)"
+                title={t.sendTitle}
                 className="copper-capsule h-8 px-3.5 flex items-center gap-1.5 text-amber-200 hover:text-white disabled:opacity-40"
               >
                 <Send className="w-3.5 h-3.5 text-orange-400" />
-                <span className="engraved-serif text-[11px] font-bold tracking-widest">TRANSMIT</span>
+                <span className="engraved-serif text-[11px] font-bold tracking-widest">{t.sendBtn}</span>
               </button>
 
               {/* Metallic Red CANCEL Pill */}
@@ -275,7 +271,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
                 <button
                   type="button"
                   onClick={onEndCall}
-                  title="Encerrar Chamada Neural"
+                  title={t.endCallTitle}
                   className="h-8 px-3 rounded-full bg-gradient-to-b from-rose-900/80 to-black border border-rose-500/60 text-rose-200 hover:text-white hover:border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)] transition-all flex items-center gap-1.5"
                 >
                   <PhoneOff className="w-3.5 h-3.5 text-rose-400" />

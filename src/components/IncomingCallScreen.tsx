@@ -1,14 +1,16 @@
-import React from 'react';
+﻿import React from 'react';
 import { Phone, PhoneOff } from 'lucide-react';
 import { PersonaProfile } from '../types/amadeus';
 import { KURISU_AVATAR_DEFAULT } from '../services/spriteCatalog';
 import { LabBackground } from './LabBackground';
+import { getUiText } from '../i18n';
 
 interface IncomingCallScreenProps {
   persona: PersonaProfile;
   onAccept: () => void;
   onDecline: () => void;
   scanlines?: boolean;
+  lang?: string;
 }
 
 export const IncomingCallScreen: React.FC<IncomingCallScreenProps> = ({
@@ -16,7 +18,9 @@ export const IncomingCallScreen: React.FC<IncomingCallScreenProps> = ({
   onAccept,
   onDecline,
   scanlines = false,
+  lang,
 }) => {
+  const t = getUiText(lang).incoming;
   return (
     <div className="relative w-full h-screen flex flex-col items-center justify-between p-6 bg-[#09090b] overflow-hidden select-none font-mono">
       <LabBackground scanlines={scanlines} />
@@ -25,13 +29,13 @@ export const IncomingCallScreen: React.FC<IncomingCallScreenProps> = ({
       <div className="z-10 text-center space-y-1.5 pt-6">
         <div className="inline-flex items-center gap-2 copper-capsule px-4 py-1 text-amber-200 text-xs">
           <span className="w-2 h-2 rounded-full bg-orange-400 animate-ping" />
-          <span className="engraved-serif font-bold tracking-widest">SINCRONIA NEURAL DISPONÍVEL // OPENAMADEUS</span>
+          <span className="engraved-serif font-bold tracking-widest">{t.incomingCallBadge} // OPENAMADEUS</span>
         </div>
         <h1 className="engraved-heading text-xl md:text-2xl font-bold tracking-widest pt-2">
           OPENAMADEUS WORKBENCH
         </h1>
         <p className="text-xs text-zinc-400 tracking-wider uppercase">
-          ARQUITETURA DE DIÁLOGO NEURAL, SÍNTESE ACÚSTICA & MEMÓRIA VETORIAL
+          {t.systemHeader}
         </p>
       </div>
 
@@ -66,7 +70,7 @@ export const IncomingCallScreen: React.FC<IncomingCallScreenProps> = ({
             [UNIDADE NEURAL ATIVA]
           </div>
           <div className="text-[11px] text-zinc-400 max-w-sm px-4 font-sans">
-            Córtex de Diálogo Multimodal • Memória Vetorial RAG
+            {t.neuralSubtitle}
           </div>
         </div>
       </div>
@@ -82,7 +86,7 @@ export const IncomingCallScreen: React.FC<IncomingCallScreenProps> = ({
             <PhoneOff className="w-7 h-7" />
           </div>
           <span className="engraved-serif text-xs text-zinc-400 group-hover:text-rose-400 tracking-widest font-bold">
-            CANCELAR
+            {t.declineBtn}
           </span>
         </button>
 
@@ -95,7 +99,7 @@ export const IncomingCallScreen: React.FC<IncomingCallScreenProps> = ({
             <Phone className="w-7 h-7" />
           </div>
           <span className="engraved-serif text-xs text-amber-300 group-hover:text-white tracking-widest font-bold">
-            INICIAR SESSÃO
+            {t.acceptBtn}
           </span>
         </button>
       </div>

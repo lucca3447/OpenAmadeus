@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import {
   Volume2,
   Copy,
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { ChatMessage } from '../types/amadeus';
 import { KURISU_AVATAR_DEFAULT } from '../services/spriteCatalog';
+import { EMOTION_LABELS, getUiText, normalizeAppLang } from '../i18n';
 
 interface ChatFeedStreamProps {
   messages: ChatMessage[];
@@ -22,6 +23,7 @@ interface ChatFeedStreamProps {
   onReplayAudio: (text: string, emotion?: string) => void;
   personaAvatarUrl?: string;
   personaName: string;
+  lang?: string;
 }
 
 export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
@@ -34,7 +36,9 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
   onReplayAudio,
   personaAvatarUrl = KURISU_AVATAR_DEFAULT,
   personaName,
+  lang,
 }) => {
+  const t = getUiText(lang).chatFeed;
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
@@ -255,11 +259,11 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
 
           <div className="space-y-1.5 max-w-md">
             <h2 className="engraved-heading text-base md:text-lg font-bold tracking-widest">
-              BANCADA NEURAL OPENAMADEUS SINCRONIZADA
+              {t.emptyTitle}
             </h2>
             <div className="bus-line-horizontal w-48 mx-auto my-1" />
             <p className="text-xs text-zinc-400 font-sans leading-relaxed">
-              O córtex de diálogo e a memória vetorial estão ativos. Transmita um comando abaixo ou selecione um tópico de investigação.
+              {t.emptyDesc}
             </p>
           </div>
         </div>
@@ -303,14 +307,14 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
                       isUser ? 'text-amber-200/90' : 'text-orange-400'
                     }`}
                   >
-                    {isUser ? 'OPERADOR' : personaName.toUpperCase()}
+                    {isUser ? t.youLabel : personaName.toUpperCase()}
                   </span>
                   {msg.timestamp && (
                     <span className="text-[10px] text-zinc-500">{formatTime(msg.timestamp)}</span>
                   )}
                   {msg.emotion && !isUser && (
                     <span className="text-[9px] px-2 py-0.2 bg-black/80 border border-amber-900/60 text-amber-300 uppercase tracking-wider">
-                      {msg.emotion}
+                      {EMOTION_LABELS[normalizeAppLang(lang)][msg.emotion] || msg.emotion}
                     </span>
                   )}
                 </div>
@@ -332,7 +336,7 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
                     <button
                       onClick={() => onReplayAudio(msg.content, msg.emotion)}
                       className="hover:text-amber-200 flex items-center gap-1 transition-colors"
-                      title="Vocalizar Resposta (TTS)"
+                      title={t.replayVoiceTitle}
                     >
                       <Volume2 className="w-3.5 h-3.5 text-orange-400" />
                       <span className="engraved-serif text-[10px] font-bold tracking-wider">
@@ -382,7 +386,7 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
           </div>
           <div className="widescreen-steel-deck px-4 py-3 text-xs font-mono text-amber-200 flex items-center gap-2.5">
             <span className="w-2 h-2 rounded-full bg-orange-400 animate-ping" />
-            <span>Processando tensores de diálogo e consultando memória vetorial...</span>
+            <span>{t.processingBadge}</span>
           </div>
         </div>
       )}
@@ -396,7 +400,7 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
             <button
               onClick={onDismissError}
               className="text-rose-300 hover:text-white p-1"
-              title="Fechar aviso"
+              title={t.dismissNoticeTitle}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -413,7 +417,7 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
             <button
               onClick={onDismissModelNotice}
               className="text-amber-300 hover:text-white p-1 transition-colors"
-              title="Fechar aviso de modelo"
+              title={t.dismissNoticeTitle}
             >
               <X className="w-3.5 h-3.5" />
             </button>

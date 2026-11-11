@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import {
   Mic,
   MicOff,
@@ -13,6 +13,7 @@ import {
   Send,
 } from 'lucide-react';
 import { MicMode } from '../types/amadeus';
+import { getUiText } from '../i18n';
 
 interface ControlBarProps {
   onSendMessage: (message: string) => void;
@@ -32,6 +33,7 @@ interface ControlBarProps {
   onToggleStream?: () => void;
   isQwen?: boolean;
   disabled?: boolean;
+  lang?: string;
 }
 
 export const ControlBar: React.FC<ControlBarProps> = ({
@@ -52,7 +54,9 @@ export const ControlBar: React.FC<ControlBarProps> = ({
   onToggleStream,
   isQwen = false,
   disabled = false,
+  lang,
 }) => {
+  const t = getUiText(lang).controls;
   const [inputValue, setInputValue] = useState('');
 
   const handleSend = (e?: React.FormEvent) => {
@@ -73,10 +77,10 @@ export const ControlBar: React.FC<ControlBarProps> = ({
           disabled={disabled && !isListening}
           title={
             isListening
-              ? 'Microfone Ativo (Clique para enviar/pausar)'
+              ? t.micPttTitle
               : micMode === 'hands_free'
-                ? 'Ativar Microfone Contínuo (Hands-Free + Barge-in)'
-                : 'Ativar Microfone (Push-to-Talk ou segure [Espaço])'
+                ? t.micVadTitle
+                : t.micPttTitle
           }
           className={`relative w-10 h-10 rounded-full flex items-center justify-center transition-all border ${
             isListening
@@ -94,9 +98,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             type="button"
             onClick={onToggleMicMode}
             title={
-              micMode === 'hands_free'
-                ? 'Modo Hands-Free Ativo (VAD + Barge-in) — Clique para alternar para Push-to-Talk ([Espaço])'
-                : 'Modo Push-to-Talk Ativo (Atalho [Espaço]) — Clique para alternar para Hands-Free'
+              t.modeToggleTitle
             }
             className={`h-9 px-2.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all border ${
               micMode === 'hands_free'
@@ -114,7 +116,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
           <button
             type="button"
             onClick={onStopSpeaking}
-            title="Interromper Fala Imediatamente (Barge-In Manual)"
+            title={t.stopVoiceTitle}
             className="copper-capsule px-3.5 py-1.5 flex items-center gap-1.5 text-amber-300 hover:text-white border-amber-400 shadow-[0_0_14px_rgba(245,158,11,0.45)] animate-pulse"
           >
             <Square className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
@@ -134,9 +136,11 @@ export const ControlBar: React.FC<ControlBarProps> = ({
               ? `[VOZ] ${interimTranscript}`
               : isListening
                 ? micMode === 'hands_free'
-                  ? 'Hands-Free ativo (fale a qualquer momento)...'
-                  : 'Escutando sua voz (solte Espaço ou clique para enviar)...'
-                : 'Transmitir comando ou segure [Espaço] para falar...'
+                  ? t.placeholderListeningVad
+                  : t.placeholderListeningPtt
+                : disabled
+                  ? t.placeholderProcessing
+                  : t.placeholderDefault
           }
           disabled={disabled}
           className="flex-1 h-10 bg-[#080706]/95 border border-amber-900/60 focus:border-orange-400 rounded-full px-4 text-sm text-zinc-100 placeholder-zinc-500 outline-none font-sans shadow-inner transition-colors"
@@ -144,11 +148,11 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         <button
           type="submit"
           disabled={disabled || !inputValue.trim()}
-          title="Transmitir Comando (Enter)"
+          title={t.sendTitle}
           className="copper-capsule h-10 px-4 flex items-center gap-1.5 text-amber-200 hover:text-white disabled:opacity-40 shrink-0"
         >
           <Send className="w-3.5 h-3.5 text-orange-400" />
-          <span className="engraved-serif text-xs font-bold tracking-widest">TRANSMIT</span>
+          <span className="engraved-serif text-xs font-bold tracking-widest">{t.sendBtn}</span>
         </button>
       </form>
 
@@ -159,9 +163,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             type="button"
             onClick={onToggleStream}
             title={
-              streamEnabled
-                ? 'Streaming em Tempo Real Ativo (~500ms) — Clique para WAV Completo'
-                : 'Modo WAV Completo Ativo (Estável) — Clique para Streaming em Tempo Real'
+              t.streamTitle
             }
             className={`w-9 h-9 rounded-full flex items-center justify-center transition-all border ${
               streamEnabled
@@ -177,7 +179,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         <button
           type="button"
           onClick={onToggleVoice}
-          title={voiceEnabled ? 'Síntese Vocal Ativa (Clique para silenciar)' : 'Síntese Vocal Silenciada'}
+          title={voiceEnabled ? t.voiceOnTitle : t.voiceOffTitle}
           className={`w-9 h-9 rounded-full flex items-center justify-center transition-all border ${
             voiceEnabled
               ? 'bg-[#201509] border-orange-500/60 text-orange-400 shadow-[0_0_12px_rgba(249,115,22,0.3)]'
@@ -191,7 +193,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         <button
           type="button"
           onClick={onOpenMemory}
-          title="Inspecionar Córtex & Memórias Sinápticas"
+          title={t.memoryBtnTitle}
           className="w-9 h-9 rounded-full bg-[#120e0b] border border-amber-900/60 text-sky-400 hover:text-white hover:border-sky-400/60 transition-colors flex items-center justify-center"
         >
           <Brain className="w-4 h-4" />
@@ -201,7 +203,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         <button
           type="button"
           onClick={onOpenSettings}
-          title="Abrir Bancada de Configuração (Setup Menu)"
+          title={t.settingsBtnTitle}
           className="w-9 h-9 rounded-full bg-[#120e0b] border border-amber-900/60 text-zinc-300 hover:text-orange-400 hover:border-orange-500/60 transition-colors flex items-center justify-center"
         >
           <Settings className="w-4 h-4" />
@@ -211,7 +213,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
         <button
           type="button"
           onClick={onEndCall}
-          title="Encerrar Chamada Neural"
+          title={t.endCallTitle}
           className="h-9 px-3.5 rounded-full bg-gradient-to-b from-rose-900/80 to-black border border-rose-500/60 text-rose-200 hover:text-white hover:border-rose-400 shadow-[0_0_14px_rgba(244,63,94,0.35)] transition-all flex items-center gap-1.5"
         >
           <PhoneOff className="w-3.5 h-3.5 text-rose-400" />
