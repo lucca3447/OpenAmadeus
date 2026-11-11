@@ -186,7 +186,7 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
     let lastAcousticTimestamp = 0;
 
-    const unsubscribe = SpeechService.addLipSyncListener((isOpen, amplitude) => {
+    const unsubscribe = SpeechService.addLipSyncListener((isOpen, amplitude, formantMouth) => {
       if (!isSpeaking) {
         setMouthState('closed');
         setVoiceAmplitude(0);
@@ -197,7 +197,9 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
       }
       setVoiceAmplitude(isOpen ? Math.min(1, amplitude) : 0);
 
-      if (!isOpen) {
+      if (formantMouth) {
+        setMouthState(formantMouth);
+      } else if (!isOpen) {
         setMouthState('closed');
       } else if (amplitude > 0.45) {
         setMouthState('open');
