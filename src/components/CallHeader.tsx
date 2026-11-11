@@ -35,7 +35,11 @@ interface CallHeaderProps {
   onOpenSettingsWithSection?: (section: SettingsSectionId) => void;
   ttfaMs?: number | null;
   lang?: string;
+  uiLang?: AppLanguage;
+  convLang?: AppLanguage;
   onChangeLang?: (lang: AppLanguage) => void;
+  onChangeUiLang?: (lang: AppLanguage) => void;
+  onChangeConvLang?: (lang: AppLanguage) => void;
   onToggleCanonicalJp?: () => void;
 }
 
@@ -57,11 +61,16 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
   onOpenSettingsWithSection,
   ttfaMs,
   lang,
+  uiLang,
+  convLang,
   onChangeLang,
+  onChangeUiLang,
+  onChangeConvLang,
   onToggleCanonicalJp,
 }) => {
-  const t = getUiText(lang).header;
-  const uiLang = normalizeAppLang(lang);
+  const effectiveUiLang = uiLang ? normalizeAppLang(uiLang) : normalizeAppLang(lang);
+  const effectiveConvLang = convLang ? normalizeAppLang(convLang) : normalizeAppLang(voiceSettings?.lang || lang);
+  const t = getUiText(effectiveUiLang).header;
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -251,10 +260,25 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
           </span>
         )}
 
-        {/* Language selector + canonical JP voice toggle */}
-        {onChangeLang && (
+        {/* Dual Language selectors: UI & Conversation */}
+        {onChangeUiLang ? (
+          <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-800 hover:border-amber-500/50 rounded px-1.5 py-1 transition-colors">
+            <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase select-none">{t.badgeUi || 'UI'}:</span>
+            <select
+              value={effectiveUiLang}
+              onChange={(e) => onChangeUiLang(e.target.value as AppLanguage)}
+              title={t.uiLangSelectorTitle}
+              aria-label={t.uiLangSelectorTitle}
+              className="bg-transparent text-[11px] font-bold text-amber-200 focus:outline-none cursor-pointer"
+            >
+              <option value="pt" className="bg-zinc-900 text-zinc-100">PT</option>
+              <option value="en" className="bg-zinc-900 text-zinc-100">EN</option>
+              <option value="ja" className="bg-zinc-900 text-zinc-100">JA</option>
+            </select>
+          </div>
+        ) : onChangeLang ? (
           <select
-            value={uiLang}
+            value={effectiveUiLang}
             onChange={(e) => onChangeLang(e.target.value as AppLanguage)}
             title={t.langSelectorTitle}
             aria-label={t.langSelectorTitle}
@@ -264,8 +288,26 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
             <option value="en">EN</option>
             <option value="ja">JA</option>
           </select>
+        ) : null}
+
+        {onChangeConvLang && (
+          <div className="flex items-center gap-1 bg-zinc-900/90 border border-zinc-800 hover:border-orange-500/50 rounded px-1.5 py-1 transition-colors">
+            <span className="text-[9px] font-mono font-bold text-orange-400 uppercase select-none">{t.badgeTalk || 'FALA'}:</span>
+            <select
+              value={effectiveConvLang}
+              onChange={(e) => onChangeConvLang(e.target.value as AppLanguage)}
+              title={t.convLangSelectorTitle}
+              aria-label={t.convLangSelectorTitle}
+              className="bg-transparent text-[11px] font-bold text-orange-300 focus:outline-none cursor-pointer"
+            >
+              <option value="pt" className="bg-zinc-900 text-zinc-100">PT</option>
+              <option value="en" className="bg-zinc-900 text-zinc-100">EN</option>
+              <option value="ja" className="bg-zinc-900 text-zinc-100">JA</option>
+            </select>
+          </div>
         )}
-        {onToggleCanonicalJp && uiLang !== 'ja' && (
+
+        {onToggleCanonicalJp && effectiveConvLang !== 'ja' && (
           <button
             type="button"
             onClick={onToggleCanonicalJp}

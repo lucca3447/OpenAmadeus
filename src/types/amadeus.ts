@@ -109,6 +109,7 @@ export interface VoiceSettings {
   volume: number;
   autoSpeak: boolean;
   lang: string;
+  uiLang?: AppLanguage;
   canonicalJpVoice?: boolean;
   engine?: 'qwen3' | 'kokoro' | 'edge_rvc';
   qwenMode?: 'remote' | 'local' | 'auto';

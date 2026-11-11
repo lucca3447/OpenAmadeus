@@ -47,6 +47,8 @@ interface SettingsModalProps {
   defaultCamera?: 'auto' | 'closeup' | 'medium' | 'full';
   onSaveDefaultCamera?: (camera: 'auto' | 'closeup' | 'medium' | 'full') => void;
   lang?: string;
+  uiLang?: AppLanguage;
+  onChangeUiLang?: (lang: AppLanguage) => void;
 }
 
 const CAPSULE_SECTIONS: { id: SettingsSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -133,10 +135,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   defaultCamera = 'auto',
   onSaveDefaultCamera,
   lang,
+  uiLang,
+  onChangeUiLang,
 }) => {
-  const ui = getUiText(lang);
+  const ui = getUiText(uiLang || lang);
   const t = ui.settingsModal;
-  const currentAppLang = normalizeAppLang(voiceSettings.lang || lang);
+  const currentUiLang = normalizeAppLang(uiLang || lang);
+  const currentConvLang = normalizeAppLang(voiceSettings.lang || lang);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
   const [tempApiKey, setTempApiKey] = useState(apiKey);
   const [tempSttKey, setTempSttKey] = useState<string>(
@@ -601,16 +606,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </span>
                   </div>
 
+                  {/* 1. Interface Language (UI) */}
                   <div className="space-y-2">
-                    <label className="engraved-label block text-xs">
-                      {t.langLabel}
-                    </label>
+                    <div>
+                      <label className="engraved-label block text-xs">
+                        {t.uiLangLabel || 'Idioma da Interface (Menus, Modais e Botões):'}
+                      </label>
+                      <p className="text-[11px] text-zinc-400 font-sans mt-0.5">
+                        {t.uiLangDesc || 'Define o idioma visual da aplicação (rótulos, painéis, modais e avisos).'}
+                      </p>
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       {(['pt', 'en', 'ja'] as AppLanguage[]).map((lCode) => {
-                        const isSelected = currentAppLang === lCode;
+                        const isSelected = currentUiLang === lCode;
                         return (
                           <button
-                            key={lCode}
+                            key={`ui-${lCode}`}
+                            type="button"
+                            onClick={() => {
+                              onChangeUiLang?.(lCode);
+                              onSaveVoiceSettings({
+                                ...voiceSettings,
+                                uiLang: lCode,
+                              });
+                            }}
+                            className={`py-2 px-3 border text-left font-mono text-xs transition-all ${
+                              isSelected
+                                ? 'border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+                                : 'border-amber-900/40 bg-black/50 text-zinc-400 hover:text-zinc-200'
+                            }`}
+                          >
+                            <div className="font-bold text-amber-300 uppercase">{lCode.toUpperCase()}</div>
+                            <div className="text-[10px] text-zinc-400 truncate mt-0.5">
+                              {t.langOptions[lCode]}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 2. Conversation Language (Dialogue, Voice, STT) */}
+                  <div className="pt-3 border-t border-amber-900/40 space-y-2">
+                    <div>
+                      <label className="engraved-label block text-xs">
+                        {t.convLangLabel || 'Idioma da Conversa (Diálogo, Voz e STT):'}
+                      </label>
+                      <p className="text-[11px] text-zinc-400 font-sans mt-0.5">
+                        {t.convLangDesc || 'Define o idioma no qual a Makise Kurisu escuta pelo microfone, raciocina e responde.'}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {(['pt', 'en', 'ja'] as AppLanguage[]).map((lCode) => {
+                        const isSelected = currentConvLang === lCode;
+                        return (
+                          <button
+                            key={`conv-${lCode}`}
                             type="button"
                             onClick={() =>
                               onSaveVoiceSettings({
@@ -634,7 +685,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
 
-                  {currentAppLang !== 'ja' && (
+                  {/* 3. Canonical Voice Toggle (only when conversation language is not Japanese) */}
+                  {currentConvLang !== 'ja' && (
                     <div className="pt-3 border-t border-amber-900/40 space-y-2">
                       <div className="flex items-baseline justify-between">
                         <span className="engraved-label text-xs">

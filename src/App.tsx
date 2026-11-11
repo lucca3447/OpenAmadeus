@@ -11,6 +11,7 @@ import {
   MemoryItem,
   LLMFallbackSettings,
   SettingsSectionId,
+  AppLanguage,
 } from './types/amadeus';
 import { MemoryService } from './services/memoryService';
 import {
@@ -364,13 +365,38 @@ export const App: React.FC = () => {
     setIsSpeaking(false);
   };
 
-  const uiLang = normalizeAppLang(voiceSettings.lang);
+  const [uiLang, setUiLang] = useState<AppLanguage>(() => {
+    const stored = localStorage.getItem('amadeus_ui_lang');
+    if (stored) return normalizeAppLang(stored);
+    return normalizeAppLang(voiceSettings.uiLang || voiceSettings.lang || 'pt');
+  });
+
+  const handleSelectUiLang = (newLang: AppLanguage) => {
+    setUiLang(newLang);
+    localStorage.setItem('amadeus_ui_lang', newLang);
+    setVoiceSettings((prev) => {
+      const updated = { ...prev, uiLang: newLang };
+      localStorage.setItem('amadeus_voice_settings', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const handleSelectConvLang = (newLang: AppLanguage) => {
+    const bcp = getBcp47Lang(newLang);
+    setVoiceSettings((prev) => {
+      const updated = { ...prev, lang: bcp };
+      localStorage.setItem('amadeus_voice_settings', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const convLang = normalizeAppLang(voiceSettings.lang);
   const t = getUiText(uiLang);
-  const canonicalJp = Boolean(voiceSettings.canonicalJpVoice) && uiLang !== 'ja';
-  const langOpts = { lang: uiLang, canonicalVoice: canonicalJp };
+  const canonicalJp = Boolean(voiceSettings.canonicalJpVoice) && convLang !== 'ja';
+  const langOpts = { lang: convLang, canonicalVoice: canonicalJp };
 
   const buildSpeakOptions = (emotion?: string): SpeakOptions => ({
-      lang: canonicalJp ? 'ja-JP' : getBcp47Lang(uiLang),
+      lang: canonicalJp ? 'ja-JP' : getBcp47Lang(convLang),
       voiceURI: voiceSettings.voiceURI,
       rate: voiceSettings.rate,
       pitch: voiceSettings.pitch,
@@ -657,7 +683,7 @@ export const App: React.FC = () => {
   };
 
   const triggerCallGreeting = async (targetSessionId: string, shouldSpeak: boolean) => {
-    const localGreet = AIService.queryOfflineAutonomousEvent('call_greeting', [], uiLang);
+    const localGreet = AIService.queryOfflineAutonomousEvent('call_greeting', [], convLang);
     const initialMsgId = newId();
     const initialMsgs: ChatMessage[] = [
       {
@@ -804,10 +830,10 @@ export const App: React.FC = () => {
       separateGroqSttKey: voiceSettings.separateGroqSttKey || localStorage.getItem('amadeus_groq_stt_key') || '',
       allowSttWebSpeechFallback: voiceSettings.allowSttWebSpeechFallback !== false,
       vadSensitivity: voiceSettings.vadSensitivity ?? 1.0,
-      lang: getBcp47Lang(uiLang),
+      lang: getBcp47Lang(convLang),
     });
   }, [
-    uiLang,
+    convLang,
     voiceSettings.micMode,
     voiceSettings.sttKeyMode,
     voiceSettings.separateGroqSttKey,
@@ -1070,6 +1096,8 @@ export const App: React.FC = () => {
       {/* Top Header Bar */}
       <CallHeader
         lang={uiLang}
+        uiLang={uiLang}
+        convLang={convLang}
         viewMode={viewMode}
         onSwitchViewMode={handleSwitchViewMode}
         scanlines={scanlines}
@@ -1086,7 +1114,9 @@ export const App: React.FC = () => {
         llmSettings={llmSettings}
         onOpenSettingsWithSection={handleOpenSettingsWithSection}
         ttfaMs={ttfaMs}
-        onChangeLang={(l) => handleSaveVoiceSettings({ ...voiceSettings, lang: getBcp47Lang(l) })}
+        onChangeUiLang={handleSelectUiLang}
+        onChangeConvLang={handleSelectConvLang}
+        onChangeLang={handleSelectConvLang}
         onToggleCanonicalJp={() => handleSaveVoiceSettings({ ...voiceSettings, canonicalJpVoice: !voiceSettings.canonicalJpVoice })}
       />
 
@@ -1279,6 +1309,8 @@ export const App: React.FC = () => {
         {isSettingsModalOpen && (
           <SettingsModal
             lang={uiLang}
+            uiLang={uiLang}
+            onChangeUiLang={handleSelectUiLang}
             isOpen={isSettingsModalOpen}
             onClose={() => setIsSettingsModalOpen(false)}
             initialSection={settingsSection}
