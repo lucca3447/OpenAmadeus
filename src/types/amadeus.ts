@@ -90,6 +90,7 @@ export interface ChatMessage {
   pose?: CharacterPose;
   camera?: CameraFraming;
   recalledMemories?: string[];
+  ttsResponse?: string;
 }
 
 export interface CallSession {

@@ -20,7 +20,7 @@ interface ChatFeedStreamProps {
   onDismissError?: () => void;
   modelNotice?: string | null;
   onDismissModelNotice?: () => void;
-  onReplayAudio: (text: string, emotion?: string) => void;
+  onReplayAudio: (text: string, emotion?: string, ttsResponse?: string) => void;
   personaAvatarUrl?: string;
   personaName: string;
   lang?: string;
@@ -334,7 +334,7 @@ export const ChatFeedStream: React.FC<ChatFeedStreamProps> = ({
                 {!isUser && (
                   <div className="flex items-center gap-3 text-[11px] font-mono text-zinc-400 pt-0.5 select-none">
                     <button
-                      onClick={() => onReplayAudio(msg.content, msg.emotion)}
+                      onClick={() => onReplayAudio(msg.content, msg.emotion, msg.ttsResponse)}
                       className="hover:text-amber-200 flex items-center gap-1 transition-colors"
                       title={t.replayVoiceTitle}
                     >

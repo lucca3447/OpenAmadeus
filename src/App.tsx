@@ -403,11 +403,13 @@ export const App: React.FC = () => {
       volume: voiceSettings.volume,
       engine: voiceSettings.engine || 'qwen3',
       qwenMode: voiceSettings.qwenMode || 'remote',
-      qwenRemoteUrl: voiceSettings.qwenMode === 'local' ? undefined : voiceSettings.qwenRemoteUrl,
+      qwenRemoteUrl: voiceSettings.qwenMode === 'local' ? undefined : (voiceSettings.qwenRemoteUrl || 'https://serves-pending-accept-firmware.trycloudflare.com'),
       emotion,
       stream: voiceSettings.engine === 'qwen3' ? Boolean(voiceSettings.stream) : false,
       useNeural: voiceSettings.useNeural !== false,
-      neuralVoice: voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural',
+      neuralVoice: canonicalJp
+        ? (voiceSettings.neuralVoice?.startsWith('ja-JP') ? voiceSettings.neuralVoice : 'ja-JP-NanamiNeural')
+        : (voiceSettings.neuralVoice || 'pt-BR-FranciscaNeural'),
       useRvc: Boolean(voiceSettings.useRvc),
       rvcModel: voiceSettings.rvcModel || 'KurisuRVCv147',
       rvcPitch: voiceSettings.rvcPitch ?? 0,
@@ -427,8 +429,8 @@ export const App: React.FC = () => {
       },
   });
 
-  const speak = (text: string, emotion?: string) => {
-    if (!voiceSettings.enabled || !voiceSettings.autoSpeak) return;
+  const speak = (text: string, emotion?: string, ttsResponse?: string, force = false) => {
+    if (!voiceSettings.enabled || (!force && !voiceSettings.autoSpeak)) return;
     const sentAt = performance.now();
     const opts = buildSpeakOptions(emotion);
     const origStart = opts.onStart;
@@ -438,7 +440,8 @@ export const App: React.FC = () => {
       console.info(`[OpenAmadeus] ttfa_ms=${ms}`);
       origStart?.();
     };
-    SpeechService.speak(text, opts);
+    const spokenText = (canonicalJp && ttsResponse) ? ttsResponse : text;
+    SpeechService.speak(spokenText, opts);
   };
 
   // Process user input
@@ -484,6 +487,7 @@ export const App: React.FC = () => {
     let streamedAny = false;
     let ttfaLogged = false;
     let subtitleText = '';
+    let accumulatedTtsText = '';
     let currentMeta: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming; recalledIds?: string[] } = {
       emotion: 'neutral',
       pose: 'default',
@@ -513,6 +517,9 @@ export const App: React.FC = () => {
             },
             onSentence: (sentence, _index, visual, ttsText) => {
               streamedAny = true;
+              if (ttsText) {
+                accumulatedTtsText = accumulatedTtsText ? `${accumulatedTtsText} ${ttsText}` : ttsText;
+              }
               if (visual?.emotion) {
                 preloadEmotionSprites(visual.emotion, visual.pose || currentMeta.pose || 'default', visual.camera || currentMeta.camera);
               }
@@ -529,8 +536,10 @@ export const App: React.FC = () => {
                   if (visual.pose) setCurrentPose(visual.pose);
                   if (visual.camera) setCurrentCamera(visual.camera);
                 }
-                subtitleText = subtitleText ? `${subtitleText} ${sentence}` : sentence;
-                setCurrentSubtitle(subtitleText);
+                if (sentence) {
+                  subtitleText = subtitleText ? `${subtitleText} ${sentence}` : sentence;
+                  setCurrentSubtitle(subtitleText);
+                }
                 if (!ttfaLogged) {
                   ttfaLogged = true;
                   const ms = Math.round(performance.now() - sentAt);
@@ -546,14 +555,24 @@ export const App: React.FC = () => {
                   pose: currentMeta.pose,
                   camera: currentMeta.camera,
                   recalledMemories: currentMeta.recalledIds ?? matched.map((m: MemoryItem) => m.id),
+                  ttsResponse: accumulatedTtsText || undefined,
                 };
                 const partialHistory = [...nextHistory, partialMsg];
                 setHistory(partialHistory);
                 MemoryService.saveActiveSession(sessionId, partialHistory);
               };
               // canonical JP mode: speak the Japanese line, subtitle stays in the UI language
-              if (speaker) speaker.enqueue((canonicalJp && ttsText) || sentence, reveal, visual?.emotion);
-              else reveal();
+              if (canonicalJp) {
+                if (ttsText) {
+                  if (speaker) speaker.enqueue(ttsText, reveal, visual?.emotion);
+                  else reveal();
+                } else {
+                  reveal();
+                }
+              } else {
+                if (speaker) speaker.enqueue(sentence, reveal, visual?.emotion);
+                else reveal();
+              }
             },
           },
         }
@@ -644,6 +663,7 @@ export const App: React.FC = () => {
               pose: result.pose,
               camera: result.camera,
               recalledMemories: finalRecalledIds,
+              ttsResponse: accumulatedTtsText || result.ttsResponse || undefined,
             },
           ];
           setHistory(syncedHistory);
@@ -662,12 +682,13 @@ export const App: React.FC = () => {
           pose: result.pose,
           camera: result.camera,
           recalledMemories: finalRecalledIds,
+          ttsResponse: result.ttsResponse,
         };
         const updatedHistory = [...nextHistory, aiMessage];
         setHistory(updatedHistory);
         MemoryService.saveActiveSession(sessionId, updatedHistory);
         setSessions(MemoryService.getSessionLogs());
-        speak((canonicalJp && result.ttsResponse) || result.response, result.emotion);
+        speak(result.response, result.emotion, result.ttsResponse);
       }
     } catch (err: any) {
       speaker?.cancel();
@@ -734,6 +755,7 @@ export const App: React.FC = () => {
           emotion: result.emotion,
           pose: result.pose || 'default',
           camera: result.camera,
+          ttsResponse: result.ttsResponse,
         };
         setAiStatus(result.status);
         setHistory((prev) => (prev.length <= 1 ? [liveMsg] : prev));
@@ -743,7 +765,7 @@ export const App: React.FC = () => {
         setCurrentCamera(result.camera);
         MemoryService.saveActiveSession(targetSessionId, [liveMsg], true);
         setSessions(MemoryService.getSessionLogs());
-        if (shouldSpeak) speak((canonicalJp && result.ttsResponse) || result.response, result.emotion);
+        if (shouldSpeak) speak(result.response, result.emotion, result.ttsResponse);
         return;
       }
     } catch (e) {
@@ -978,6 +1000,7 @@ export const App: React.FC = () => {
             emotion: result.emotion,
             pose: finalPose,
             camera: result.camera,
+            ttsResponse: result.ttsResponse,
           };
           setHistory((prev) => {
             const updated = [...prev, idleMsg];
@@ -987,7 +1010,7 @@ export const App: React.FC = () => {
           setSessions(MemoryService.getSessionLogs());
 
           if (initiativeMode === 'voice') {
-            speak((canonicalJp && result.ttsResponse) || result.response, result.emotion);
+            speak(result.response, result.emotion, result.ttsResponse);
           }
         }
       } catch (err) {
@@ -1175,7 +1198,7 @@ export const App: React.FC = () => {
                 onDismissError={() => setErrorNotice(null)}
                 modelNotice={modelNotice}
                 onDismissModelNotice={() => setModelNotice(null)}
-                onReplayAudio={speak}
+                onReplayAudio={(text, emotion, ttsResponse) => speak(text, emotion, ttsResponse, true)}
                 personaName={persona.name}
               />
 

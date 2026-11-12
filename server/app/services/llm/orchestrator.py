@@ -13,7 +13,7 @@ from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.openrouter import get_openrouter_candidate_models
-from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
+from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts, split_ja_sentences
 from app.services.llm.streaming import stream_candidates, openai_delta, gemini_delta, gemini_stream_url
 
 _model_cache: Dict[str, str] = {}
@@ -767,13 +767,13 @@ class LLMOrchestrator:
         first_emotion = "neutral"
         cur_meta: Dict[str, str] = {"emotion": "neutral", "pose": "default", "camera": "closeup"}
         shifted_this_sentence = False
-        pending_ja: Optional[str] = None
+        pending_ja_queue: List[str] = []
         meta_sent = False
         completed = False
 
         def handle(events):
             """Turns splitter events into outgoing events, guaranteeing one meta before the 1st sentence and per-sentence visual shifts."""
-            nonlocal meta_sent, first_emotion, cur_meta, shifted_this_sentence, pending_ja
+            nonlocal meta_sent, first_emotion, cur_meta, shifted_this_sentence
             out = []
             for kind, val in events:
                 if kind == "directive":
@@ -786,7 +786,7 @@ class LLMOrchestrator:
                     else:
                         shifted_this_sentence = True
                 elif kind == "ja":
-                    pending_ja = f"{pending_ja} {val}".strip() if pending_ja else val
+                    pending_ja_queue.extend(split_ja_sentences(val))
                 elif kind == "sentence":
                     if not meta_sent:
                         pose, camera = infer_pose_and_camera("", "neutral", user_message=user_ctx)
@@ -798,9 +798,8 @@ class LLMOrchestrator:
                     shifted_this_sentence = False
                     spoken.append(val)
                     sent_payload: Dict[str, Any] = {"event": "sentence", "text": val, "index": len(spoken) - 1, **cur_meta}
-                    if pending_ja:
-                        sent_payload["ttsText"] = pending_ja
-                        pending_ja = None
+                    if pending_ja_queue:
+                        sent_payload["ttsText"] = pending_ja_queue.pop(0)
                     out.append(sent_payload)
             return out
 
@@ -881,6 +880,10 @@ class LLMOrchestrator:
                         yield out
                 for out in handle(splitter.flush()):
                     yield out
+                if pending_ja_queue:
+                    leftover_ja = " ".join(pending_ja_queue)
+                    pending_ja_queue.clear()
+                    yield {"event": "sentence", "text": "", "ttsText": leftover_ja, "index": len(spoken), **cur_meta}
 
             if not spoken:
                 raise GeminiError(502, "Resposta vazia ou raciocínio interno sem diálogo.")

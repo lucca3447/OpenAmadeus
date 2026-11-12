@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
+from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts, split_ja_sentences
 from app.services.offline_simulator import offline_simulator
 from app.services.voice_service import resolve_qwen_language
 from app.services.qwen_tts.qwen_worker import sanitize_for_qwen, prepare_worker_segments
@@ -104,6 +104,15 @@ class TestSentenceStream(unittest.TestCase):
             prepare_worker_segments("クリスティーナって呼ぶな！私は牧瀬紅莉栖よ。", max_single_pass_chars=8, language="Japanese"),
             ["クリスティーナって呼ぶな！", "私は牧瀬紅莉栖よ。"],
         )
+
+    def test_split_ja_sentences(self):
+        text = "私の名前は紅莉栖よ！助手じゃないわ！コードを書きなさい。"
+        parts = split_ja_sentences(text)
+        self.assertEqual(parts, ["私の名前は紅莉栖よ！", "助手じゃないわ！", "コードを書きなさい。"])
+
+        single = "ほら、あなたのコードが世界を変えるわ"
+        self.assertEqual(split_ja_sentences(single), ["ほら、あなたのコードが世界を変えるわ"])
+        self.assertEqual(split_ja_sentences(""), [])
 
     def test_offline_simulator_trilingual_responses(self):
         pt_res, _, _ = offline_simulator("Olá", {}, [], lang="pt")

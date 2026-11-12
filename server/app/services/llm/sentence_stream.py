@@ -24,6 +24,17 @@ def extract_ja_tts(raw_text: str) -> str:
     return " ".join(parts)
 
 
+_JA_BOUNDARY = re.compile(r'[^。！？]+(?:[。！？]+[\'\")\]」』]*|$)')
+
+
+def split_ja_sentences(text: str) -> List[str]:
+    """Splits a Japanese passage into individual sentences based on punctuation."""
+    if not text:
+        return []
+    parts = [m.group(0).strip() for m in _JA_BOUNDARY.finditer(text) if m.group(0).strip()]
+    return parts if parts else [text.strip()]
+
+
 def _hold_from(buf: str) -> int:
     """Index where an unfinished opener (or a partial prefix of one) starts, else len(buf)."""
     low = buf.lower()
