@@ -31,7 +31,13 @@ class KurisuRVCPipeline:
         self.device = device
         self.is_half = is_half
 
-        # 1. Load HuBERT
+        # 1. Load HuBERT (switch to japanese-hubert-base when checkpoint declares it)
+        if model_path and hubert_path and hubert_path.lower().endswith((".pt", ".pth")):
+            import os
+            if os.path.exists(model_path):
+                ckpt_meta = torch.load(model_path, map_location="cpu", weights_only=False)
+                if "japanese-hubert" in str(ckpt_meta.get("embedder_model", "")).lower():
+                    hubert_path = "yky-h/japanese-hubert-base"
         self.hubert = HubertWrapper(hubert_path, is_half=is_half, device=device)
 
         # 2. Load RMVPE Pitch Estimator

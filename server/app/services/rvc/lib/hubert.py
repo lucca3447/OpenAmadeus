@@ -1,9 +1,13 @@
+import os
 import sys
 import types
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchaudio
 import torchaudio.models.wav2vec2.utils.import_fairseq as imp
+
+JAPANESE_HUBERT_ID = "yky-h/japanese-hubert-base"
 
 
 class DummyModule(types.ModuleType):
@@ -41,24 +45,33 @@ class HubertWrapper(nn.Module):
         super().__init__()
         self.device = device
         self.is_half = is_half
+        self.final_proj = None
+        self.is_hf = not (model_path or "").lower().endswith((".pt", ".pth")) or os.path.isdir(model_path or "")
 
-        register_fairseq_interceptor()
-        ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
-        converted = imp._convert_state_dict(ckpt["model"])
-        
-        self.model = torchaudio.models.hubert_base()
-        self.model.load_state_dict(converted, strict=False)
-        self.model.eval()
-
-        if "final_proj.weight" in ckpt["model"]:
-            w = ckpt["model"]["final_proj.weight"]
-            b = ckpt["model"]["final_proj.bias"]
-            self.final_proj = nn.Linear(w.shape[1], w.shape[0])
-            self.final_proj.weight.data.copy_(w)
-            self.final_proj.bias.data.copy_(b)
-            self.final_proj.eval()
+        if self.is_hf:
+            from transformers import AutoModel
+            repo_or_dir = model_path or JAPANESE_HUBERT_ID
+            try:
+                self.model = AutoModel.from_pretrained(repo_or_dir, local_files_only=True)
+            except Exception:
+                self.model = AutoModel.from_pretrained(repo_or_dir)
+            self.model.eval()
         else:
-            self.final_proj = None
+            register_fairseq_interceptor()
+            ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
+            converted = imp._convert_state_dict(ckpt["model"])
+
+            self.model = torchaudio.models.hubert_base()
+            self.model.load_state_dict(converted, strict=False)
+            self.model.eval()
+
+            if "final_proj.weight" in ckpt["model"]:
+                w = ckpt["model"]["final_proj.weight"]
+                b = ckpt["model"]["final_proj.bias"]
+                self.final_proj = nn.Linear(w.shape[1], w.shape[0])
+                self.final_proj.weight.data.copy_(w)
+                self.final_proj.bias.data.copy_(b)
+                self.final_proj.eval()
 
         if is_half:
             self.model = self.model.half()
@@ -70,13 +83,14 @@ class HubertWrapper(nn.Module):
             self.final_proj = self.final_proj.to(device)
 
     def extract_features(self, source, padding_mask=None, output_layer=12):
-        if self.is_half:
-            source = source.half()
-        else:
-            source = source.float()
-        source = source.to(self.device)
-
         with torch.no_grad():
-            feats_list, _ = self.model.extract_features(source, num_layers=output_layer)
-            out_feats = feats_list[output_layer - 1]
-            return [out_feats]
+            if self.is_hf:
+                wav = F.layer_norm(source.float(), source.shape[-1:])
+                wav = wav.half() if self.is_half else wav
+                out = self.model(wav.to(self.device), output_hidden_states=True)
+                hs = out.hidden_states
+                return [hs[output_layer] if output_layer < len(hs) else out.last_hidden_state]
+
+            wav = source.half() if self.is_half else source.float()
+            feats_list, _ = self.model.extract_features(wav.to(self.device), num_layers=output_layer)
+            return [feats_list[output_layer - 1]]
