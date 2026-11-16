@@ -1,4 +1,4 @@
-# 🧠 OpenAmadeus Backend Core (`v0.2.2`)
+# 🧠 OpenAmadeus Backend Core (`v0.3.0`)
 
 High-performance Python backend server for the **Amadeus System**, orchestrating continuous episodic memory (RAG), psychological persona simulation, multi-provider LLM routing, and a 4-stage neural voice cascade with CUDA Graphs acceleration.
 
@@ -36,7 +36,7 @@ The backend operates as a decoupled, fault-tolerant multi-service pipeline:
 
 ### Key Subsystems:
 1. **FastAPI Core Gateway (`:8000`)**:
-   - **Hybrid RAG Memory Engine**: Persistent **ChromaDB** (`server/data/memory_db`) storing semantic embeddings and 130 curated ChatML dialogue exemplars (`server/training/kurisu_finetuning_dataset_enhanced.jsonl`), coupled with **SQLite** (`server/data/amadeus.db`) for multi-turn session persistence.
+   - **Hybrid RAG Memory Engine**: Persistent **ChromaDB** (`server/data/memory_db`) storing semantic embeddings and **154 curated PT-BR/EN/JA ChatML dialogue exemplars** (`server/training/kurisu_finetuning_dataset_enhanced.jsonl`), coupled with **SQLite** (`server/data/amadeus.db`) for multi-turn session persistence, End-of-Call session summarization, and a deterministic trilingual *Steins;Gate* Lorebook.
    - **Multi-Provider LLM Orchestrator**: Dynamic routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`google/gemma-4-31b-it:free`, `nvidia/nemotron-3.5-lightning:free`), and a local deterministic **Heuristic Offline Simulator** (`offline_simulator.py`).
    - **Voice Service (`voice_service.py`)**: 4-stage automated fallback cascade with health diagnostics, round-trip pinging, and text sanitization (`clean_text_for_tts`).
 
@@ -44,15 +44,15 @@ The backend operates as a decoupled, fault-tolerant multi-service pipeline:
 
 ## 🎙️ Neural Voice Models & Asset Setup
 
-### 1. Kurisu Qwen3-TTS 1.7B (End-to-End Neural Streaming)
-* **Hugging Face Repository**: [starrydark/Makise_Kurisu_Qwen3_TTS](https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS)
+### 1. Kurisu Qwen3-TTS 1.7B Multilingual — JA / EN / PT-BR (End-to-End Neural Streaming)
+* **Hugging Face Repository (Official `v0.3.0`)**: [lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added](https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added) (extends [starrydark/Makise_Kurisu_Qwen3_TTS](https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS) JA/EN base synthesis with Brazilian Portuguese via bilingual-replay LoRA)
 * **Acceleration Engine**: [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) (CUDA Graphs + Static KV Cache).
 * **Automatic Download**: Weights (~3.8 GB) download automatically on first startup via Hugging Face Hub into `~/.cache/huggingface/hub/`.
 * **Manual Offline Clone (Optional)**:
-  `server/weights/kurisu_qwen3/` takes precedence over Hugging Face and can hold either our fine-tuned cumulative PT-BR + multilingual checkpoint (based on `starrydark/Makise_Kurisu_Qwen3_TTS`) or a direct clone of the upstream repository:
+  `server/weights/kurisu_qwen3/` takes precedence over Hugging Face:
   ```bash
   git lfs install
-  git clone https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS server/weights/kurisu_qwen3
+  git clone https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added server/weights/kurisu_qwen3
   ```
 
 ### 2. Kurisu RVC v2 (Timbre Morphing)

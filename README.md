@@ -1,15 +1,16 @@
 # OpenAmadeus Companion
 
-A full-stack, modular multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), audio-reactive procedural lip-sync, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
+A full-stack, modular **trilingual (Japanese / English / Brazilian Portuguese)** multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), F1/F2 spectral formant lip-sync, Silero neural VAD, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS Multilingual with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
 
-[![Version](https://img.shields.io/badge/version-0.2.2-blue.svg)](https://semver.org/)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://semver.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Qwen3-TTS](https://img.shields.io/badge/Qwen3--TTS-1.7B_BF16-624AFF)](https://huggingface.co/starrydark/Kurisu_Qwen3_TTS)
+[![Qwen3-TTS](https://img.shields.io/badge/Qwen3--TTS-JA_%7C_EN_%7C_PTBR_1.7B-624AFF)](https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added)
 [![Faster-Qwen3-TTS](https://img.shields.io/badge/CUDA_Graphs-~391ms_TTFA-00C853)](https://github.com/andimarafioti/faster-qwen3-tts)
+[![Silero VAD](https://img.shields.io/badge/Silero_VAD-ONNX_Web-0097A7)](https://github.com/snakers4/silero-vad)
 [![Kokoro-TTS](https://img.shields.io/badge/Kokoro--TTS-82M_Offline-FF9800)](https://github.com/hexgrad/kokoro)
 [![Kurisu-RVC](https://img.shields.io/badge/RVC_v2-Kurisu--RVC-FF6B6B)](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_RAG-orange)](https://www.trychroma.com/)
@@ -17,13 +18,13 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
 
 ## 📸 Interface & Demonstrations
 
-| Conversational HUD & Active Sprite | Immersive Visual Novel Mode |
+| Conversational HUD & Active Sprite | Immersive Japanese Visual Novel Call Mode |
 | :---: | :---: |
-| ![Chat Interface - Workbench HUD](docs/screenshots/01_workbench_terminal_hud.png)<br><sub>*Conversational Workbench HUD featuring session history, audio-reactive Kurisu sprite stage, and real-time oscilloscope*</sub> | ![Visual Novel Call Mode](docs/screenshots/02_call_mode_visual_novel.png)<br><sub>*Full-screen Visual Novel call mode with warm backlighting, retro dialogue bar, and circadian sign-off*</sub> |
+| ![Chat Interface - Workbench HUD](docs/screenshots/01_workbench_terminal_hud.png)<br><sub>*Workbench HUD showing decoupled UI & Conversation languages (`UI: EN` / `TALK: PT` / `JP VOICE`), Silero VAD badge, and audio-reactive Kurisu sprite*</sub> | ![Visual Novel Call Mode (JA)](docs/screenshots/02_call_mode_visual_novel.png)<br><sub>*Full-screen Visual Novel call mode in Japanese (`UI: JA` / `対話: JA`) with Silero VAD listening and canonical dialogue cadence*</sub> |
 
-| Cortex & Episodic Memory Inspector (RAG) | System Configuration (LLM & Neural TTS) |
+| Cortex & Trilingual Synaptic Inspector (JA / EN / PT) | Multilingual Voice & Neural TTS Settings |
 | :---: | :---: |
-| ![Cortex & Synaptic Inspector](docs/screenshots/03_cortex_synaptic_inspector.png)<br><sub>*Real-time inspection and management of semantic vector memory blocks (ChromaDB vector store + persistent SQLite sessions)*</sub> | ![System Settings Modal](docs/screenshots/06_settings_neural_voice_tts.png)<br><sub>*Neural voice synthesis calibration: Qwen3-TTS 1.7B streaming, Kokoro-TTS 82M, and Edge-TTS + RVC v2*</sub> |
+| ![Cortex & Synaptic Inspector](docs/screenshots/03_cortex_synaptic_inspector.png)<br><sub>*Japanese UI Synaptic Inspector displaying ChromaDB vector memories with trilingual JA/EN/PT retrieval tags and SQLite session counts*</sub> | ![System Settings Modal](docs/screenshots/06_settings_neural_voice_tts.png)<br><sub>*Independent Interface vs. Conversation language controls, Japanese Voice + Translated Subtitles toggle, and Qwen3-TTS 1.7B streaming*</sub> |
 
 <p align="center">
   <img src="docs/screenshots/05_settings_llm_credentials.png" alt="Cortex LLM Credentials & Impatience Telemetry" width="880">
@@ -38,26 +39,27 @@ A full-stack, modular multimodal conversational AI runtime inspired by the **Ama
 ### Core Highlights
 
 - **4-Stage Universal Voice Engine Cascade (`server/app/services/voice_service.py`)**:
-  - **Stage 1 — Kurisu Qwen3-TTS (`qwen3` — Remote Colab Tunnel or Local CUDA GPU)**: End-to-end 1.7B neural synthesis (`starrydark/Kurisu_Qwen3_TTS` built on [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)) accelerated via [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) static KV cache + CUDA Graphs, achieving **~391 ms Time-To-First-Audio (TTFA)** and **1.92x Real-Time Factor (RTF)** on a single NVIDIA L4 GPU.
-  - **Stage 2 — Kokoro-TTS 82M + Optional Kurisu RVC v2 (`kokoro` — Local Offline CPU/GPU)**: Ultra-lightweight 82M-parameter Brazilian Portuguese neural synthesis ([hexgrad / Kokoro-82M](https://github.com/hexgrad/kokoro) `pf_dora`, ~80–150 ms latency, ~350 MB footprint) optionally piped through **Kurisu RVC v2** ([FrancescoCaracciolo/Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)) to morph speech into the canonical character voice timbre.
-  - **Stage 3 — Microsoft Edge-TTS + Optional Kurisu RVC v2 (`edge_rvc` — Zero-Setup Cloud CPU)**: Runs out-of-the-box on any machine with 0 MB local weight downloads (`pt-BR-FranciscaNeural`, `pt-BR-ThalitaNeural`, `ja-JP-NanamiNeural`).
-  - **Stage 4 — Browser Web Speech API Fallback**: Automatic client-side `SpeechSynthesisUtterance` fallback with word-boundary syllable lip-sync if the backend is unreachable.
+  - **Stage 1 — Kurisu Qwen3-TTS 1.7B Multilingual (`qwen3` — Remote Colab Tunnel or Local CUDA GPU)**: End-to-end trilingual neural synthesis (**Japanese, English, and Brazilian Portuguese**) using [lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added](https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added) (extending `starrydark/Makise_Kurisu_Qwen3_TTS` / [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) with Brazilian Portuguese while preserving Japanese and English via bilingual-replay LoRA in [Amadeus_Qwen3_TTS_PTBR_LoRA.ipynb](notebooks/Amadeus_Qwen3_TTS_PTBR_LoRA.ipynb)), accelerated via [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) static KV cache + CUDA Graphs at **~391 ms TTFA** and **1.92x RTF** on an NVIDIA L4 GPU.
+  - **Stage 2 — Kokoro-TTS 82M + Optional Kurisu RVC v2 (`kokoro` — Local Offline CPU/GPU)**: Ultra-lightweight 82M-parameter offline synthesis ([hexgrad / Kokoro-82M](https://github.com/hexgrad/kokoro), ~80–150 ms latency, ~350 MB footprint) optionally piped through **Kurisu RVC v2** ([FrancescoCaracciolo/Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC) `KurisuRVCv147`) with configurable consonant `protect` (`rvcProtect`), RMS envelope matching, and auto-detected Japanese HuBERT (`yky-h/japanese-hubert-base`) support.
+  - **Stage 3 — Microsoft Edge-TTS + Optional Kurisu RVC v2 (`edge_rvc` — Zero-Setup Cloud CPU)**: Multilingual synthesis running out-of-the-box with 0 MB local weight downloads (`ja-JP-NanamiNeural`, `en-US-JennyNeural`, `pt-BR-FranciscaNeural`), optionally morphed through Kurisu RVC v2.
+  - **Stage 4 — Browser Web Speech API Fallback**: Automatic client-side `SpeechSynthesisUtterance` fallback (`ja-JP` / `en-US` / `pt-BR`) with word-boundary syllable lip-sync if the backend is unreachable.
 - **Real-Time PCM16 Streaming & Web Audio DSP Chain**:
-  - Server-side $C^0$ boundary continuity ramp (120-sample / 5 ms linear interpolation across 24 kHz chunk borders) eliminating inter-chunk clicks, paired with `clean_text_for_tts` punctuation sanitization, pure-weight SFT acoustic stability (`QWEN_USE_EMOTION_INSTRUCT=false` by default to prevent attention glitches), and 21 empirical acoustic reference targets (`emotion_mapper.py`).
+  - Server-side $C^0$ boundary continuity ramp (120-sample / 5 ms linear interpolation across 24 kHz chunk borders) eliminating inter-chunk clicks, paired with language-aware `clean_text_for_tts` punctuation/hesitation sanitization, pure-weight SFT acoustic stability (`QWEN_USE_EMOTION_INSTRUCT=false` by default to prevent attention glitches), and 21 empirical acoustic reference targets (`emotion_mapper.py`).
   - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 480 ms jitter buffer, `1.65x` (+4.3 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-20 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
-- **Visual State Machine & Audio-Reactive HUD**:
-  - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across poses (`default`, `crossed_arms`, `backview`) and camera framings (`closeup`, `medium`, `full`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), organic inference, 2-beat expression shifts, emotion-aligned blinking (preserving winks and smiles), and native fallback to a procedural holographic silhouette when sprites are absent.
-  - Real-time FFT vocal-band frequency analysis (`300–3500 Hz`) driving mouth flap frames, natural double-blink cycles, and an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`).
-- **Hands-Free Bidirectional Voice Call & Real Barge-In (`src/services/speechService.ts`)**:
-  - High-speed STT powered by **Groq Whisper Turbo** (`whisper-large-v3-turbo`) with Web Audio VAD, echo cancellation, domain prompt biasing, and real-time **barge-in** interruption.
+- **Visual State Machine, F1/F2 Formant Lip-Sync & Audio-Reactive HUD**:
+  - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across poses (`default`, `crossed_arms`, `backview`) and camera framings (`closeup`, `medium`, `full`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), trilingual `infer_sentence_shift`, 2-beat expression shifts, emotion-aligned blinking, and a procedural holographic silhouette fallback when sprites are absent.
+  - Real-time spectral **F1/F2 formant vowel classification** (`classifyFormantMouth` in `src/services/speechService.ts`) driving 3 canonical mouth frames (`00` silence, `01` mid/close vowels `250–550 Hz`, `02` open vowels `600–950 Hz`), alongside an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`).
+- **Neural Silero VAD, Hands-Free Voice Call & Real Barge-In (`src/services/speechService.ts`)**:
+  - Client-side **Silero VAD v5** neural voice activity detection via [@ricky0123/vad-web](https://github.com/ricky0123/vad) + **ONNX Runtime Web** (`public/vad/`), eliminating false barge-in interruptions from keyboard typing, mouse clicks, and breathing before forwarding speech segments to **Groq Whisper Turbo** (`whisper-large-v3-turbo`) with PT/EN/JA silence-hallucination filtering (`WHISPER_HALLUCINATION_RE`).
   - Configurable 3-mode call behavior (`OFF` / `SILENT` / `ACTIVE VOICE`) with Push-to-Talk or hands-free toggle.
-- **Temporal Hiatus Telemetry ($\Delta t$), Live Call Greeting & Contextual Impatience**:
-  - Injects dynamic `[TELEMETRIA DA CHAMADA AMADEUS]` tracking local time, elapsed absence since last contact ($\Delta t$), circadian banter, turn count, dynamic live AI call greeting, and 2-stage mid-call impatience.
-  - Cross-session episodic bridge (`[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]`) so Kurisu naturally follows up on previous conversations.
-- **Trilingual Foundation (PT-BR / EN / JA Ready)**:
-  - Language-aware phonetic sanitization (`clean_text_for_tts(text, lang)`), multilingual regex intent triggers, and language-filtered Few-Shot exemplar retrieval.
-- **Dynamic Few-Shot RAG & Episodic Memory (`server/training/` & [ChromaDB](https://www.trychroma.com/))**:
-  - Automatically indexes **130 curated ChatML dialogue exemplars** (`kurisu_finetuning_dataset_enhanced.jsonl`) into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) alongside persistent **SQLite** session logs (`server/data/amadeus.db`), providing few-shot conditioning for canonical dialogue, visual poses, camera zooms, and learned facts (`<!--remember:...-->`).
+- **Trilingual Experience (PT-BR / EN / JA) & Canonical Japanese Voice Mode (`canonicalJpVoice`)**:
+  - Full UI localization (`src/i18n.ts`) decoupled from conversation language (`uiLang` vs `convLang`), with native persona style profiles, `[LANGUAGE ANCHOR]` prompt isolation, trilingual autonomous call events (`call_greeting`, `idle_stage_1`, `idle_stage_2`), and CJK-aware client RAG (`memoryService.ts`).
+  - **Canonical Japanese Voice Mode**: Inline `<!--ja:セリフ-->` sentence-by-sentence streaming synthesis in authentic Japanese with active PT-BR or EN subtitles and automatic safe fallback to `convLang` audio if a sentence omits the tag.
+- **Temporal Hiatus Telemetry ($\Delta t$), Live Call Greeting & End-of-Call Summarization**:
+  - Injects dynamic call telemetry tracking local time, elapsed absence since last contact ($\Delta t$), circadian banter, turn count, live AI call greeting, and 2-stage mid-call impatience.
+  - Automatic single-pass **End-of-Call Session Summarization** (`memory_store.py`) and cross-session episodic bridge (`[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]`).
+- **Dynamic Few-Shot RAG, Canonical Lorebook & Episodic Memory (`server/training/` & [ChromaDB](https://www.trychroma.com/))**:
+  - Automatically indexes **154 curated trilingual ChatML dialogue exemplars** (`kurisu_finetuning_dataset_enhanced.jsonl`) with hash-based re-sync and **36 PT/EN/JA canonical memories** into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) + persistent **SQLite** (`server/data/amadeus.db`), paired with a deterministic trilingual **Steins;Gate Lorebook** (*IBN 5100*, *SERN / Z-Report*, *Prof. Leskinen*, *Kerr Black Hole*, *Operation Skuld*).
 - **Multi-Provider LLM Orchestration (`server/app/services/llm/`)**:
   - Fault-tolerant routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`gemma-4-31b-it:free`, `nemotron-3.5-lightning:free`), local **Ollama**, and an offline **Heuristic Simulator** (`offline_simulator.py`).
 
@@ -78,21 +80,23 @@ OpenAmadeus scales from CPU-only laptops to local NVIDIA GPUs and free/low-cost 
 ```mermaid
 flowchart TD
     subgraph Client["Frontend — React 19 / TypeScript / Vite (:5173)"]
-        UI["HUD, ChatFeedStream & SettingsModal"]
-        SpriteEngine["AmadeusSpriteView (174 Sprite Pack / 58 Portrait Frames / Hologram)"]
+        UI["HUD, ChatFeedStream, SettingsModal & Trilingual i18n (PT/EN/JA)"]
+        SpriteEngine["AmadeusSpriteView (174 Sprite Pack / F1-F2 Formant Lip-Sync / Hologram)"]
         Oscilloscope["AudioOscilloscope (HTML5 Canvas FFT)"]
-        Reader["speechService.ts: PCM16 Stream Reader + Remainder Byte Buffer"]
+        MicVAD["Silero VAD v5 (@ricky0123/vad-web ONNX) + Groq Whisper STT"]
+        Reader["speechService.ts: PCM16 Stream Reader + SentenceSpeaker"]
         DSP["Web Audio DSP: Jitter (+480ms) -> Make-up Gain (1.65x) -> Compressor (-20dB) -> AnalyserNode"]
         UI --> Reader
+        MicVAD --> UI
         Reader --> DSP
         DSP --> SpriteEngine
         DSP --> Oscilloscope
     end
 
     subgraph Server["Backend — FastAPI Core Gateway (:8000)"]
-        Router["API v1 Router (/chat, /tts, /memories, /sessions)"]
-        Orchestrator["Multi-Provider LLM Orchestrator + Lore Phonetic Normalizer"]
-        EmotionParser["Emotion Tag Parser & clean_text_for_tts Sanitizer"]
+        Router["API v1 Router (/chat, /chat/stream, /tts, /memories, /sessions)"]
+        Orchestrator["Multi-Provider LLM Orchestrator + Trilingual Lorebook"]
+        EmotionParser["Emotion Tag Parser, SentenceStream & clean_text_for_tts"]
         VoiceManager["voice_service.py (4-Stage Fallback Controller)"]
         Router --> Orchestrator
         Router --> VoiceManager
@@ -102,10 +106,10 @@ flowchart TD
     end
 
     subgraph VoiceEngines["Modular Voice Synthesis Engines"]
-        QwenWorker["Kurisu Qwen3-TTS Worker (:8005 or Colab Tunnel) — FasterQwen3TTS CUDA Graphs + C0 Ramp"]
+        QwenWorker["Kurisu Qwen3-TTS Multilingual (JA/EN/PT-BR, :8005 or Colab) — FasterQwen3TTS + C0 Ramp"]
         KokoroEngine["Kokoro-TTS 82M (lang_code='p', voice='pf_dora')"]
-        EdgeTTS["Microsoft Edge-TTS (pt-BR-FranciscaNeural / ja-JP-NanamiNeural)"]
-        RVCWorker["Kurisu RVC v2 Pipeline (KurisuRVCv147 + HuBERT + RMVPE)"]
+        EdgeTTS["Microsoft Edge-TTS (pt-BR / en-US / ja-JP)"]
+        RVCWorker["Kurisu RVC v2 Pipeline (KurisuRVCv147 + HuBERT/JP-HuBERT + RMVPE)"]
         VoiceManager --> QwenWorker
         VoiceManager --> KokoroEngine
         VoiceManager --> EdgeTTS
@@ -118,8 +122,8 @@ flowchart TD
     end
 
     subgraph Persistence["Hybrid Memory & Fine-Tuning Layer"]
-        SQLite[("SQLite: amadeus.db")]
-        ChromaDB[("ChromaDB: memory_db + 130 Few-Shot Kurisu Dialogues")]
+        SQLite[("SQLite: amadeus.db + End-of-Call Summaries")]
+        ChromaDB[("ChromaDB: memory_db + 154 Trilingual Few-Shot Dialogues")]
     end
 
     subgraph ExternalLLMs["LLM Inference Providers"]
@@ -142,19 +146,20 @@ flowchart TD
 
 Switch between voice engines dynamically at runtime via the in-app **Settings Modal (⚙️)**:
 
-### 1. Kurisu Qwen3-TTS 1.7B (End-to-End Neural Streaming)
-- **Hugging Face Checkpoint**: `starrydark/Makise_Kurisu_Qwen3_TTS` (`CustomVoice` 1.7B BF16, speaker ID `kurisu`, built on [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)).
+### 1. Kurisu Qwen3-TTS 1.7B Multilingual — JA / EN / PT-BR (End-to-End Neural Streaming)
+- **Hugging Face Checkpoint (Official `v0.3.0`)**: [lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added](https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added) — extends `starrydark/Makise_Kurisu_Qwen3_TTS` / [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) (native Japanese & English) by adding Brazilian Portuguese (`vn_only ep2` bilingual-replay LoRA via [notebooks/Amadeus_Qwen3_TTS_PTBR_LoRA.ipynb](notebooks/Amadeus_Qwen3_TTS_PTBR_LoRA.ipynb)), keeping speaker ID `kurisu` intact across all 3 languages.
 - **Acceleration Runtime**: [andimarafioti/faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) (captures the 28-layer Talker and 15-step Code Predictor into static-cache CUDA Graphs, cutting per-step latency from ~330 ms to ~54 ms).
-- **Automatic Weight Caching**: Weights (~3.8 GB) are downloaded automatically on first startup into `~/.cache/huggingface/hub/`.
+- **Automatic Weight Caching**: Weights (~3.8 GB) are downloaded automatically on first startup into `~/.cache/huggingface/hub/` (controlled by `QWEN_MODEL_ID`).
 - **Manual Offline Clone (Optional)**:
-  `server/weights/kurisu_qwen3/` overrides the Hugging Face download when present, and may contain either our fine-tuned cumulative PT-BR + multilingual checkpoint (built on top of `starrydark/Makise_Kurisu_Qwen3_TTS`) or a direct clone of the upstream checkpoint:
+  `server/weights/kurisu_qwen3/` overrides the Hugging Face download when present:
   ```bash
   git lfs install
-  git clone https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS server/weights/kurisu_qwen3
+  git clone https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added server/weights/kurisu_qwen3
   ```
 
 ### 2. Kurisu RVC v2 (Retrieval-based Voice Conversion)
-- **Hugging Face Checkpoint**: [FrancescoCaracciolo/Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)
+- **Hugging Face Checkpoint**: [FrancescoCaracciolo/Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC) (`KurisuRVCv147.pth` + `KurisuRVCv147.index`).
+- **Pipeline Features**: Supports configurable consonant `protect` (`rvcProtect`), RMS envelope matching, and auto-detection of Japanese HuBERT (`yky-h/japanese-hubert-base`) checkpoints via `transformers`.
 - **Directory Layout**: Place `KurisuRVCv147.pth` and `KurisuRVCv147.index` inside `server/weights/kurisu_rvc/`:
   ```text
   server/
@@ -194,7 +199,7 @@ python scripts/setup_sprites.py
 ### Step 1: Launch Frontend (`:5173`)
 
 ```bash
-npm install
+npm install   # postinstall automatically copies Silero VAD ONNX & WASM assets to public/vad/
 npm run dev
 ```
 The visual novel interface will be live at **`http://localhost:5173`**.
@@ -242,7 +247,7 @@ python -m app.services.qwen_tts.qwen_worker
 ## 🧠 Kurisu Fine-Tuning & Dynamic Few-Shot RAG Pack (`server/training/`)
 
 The `server/training/` directory ships with a complete persona alignment toolkit:
-- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (130 refined canonical dialogue exemplars with `<!--emotion:...-->`, `<!--pose:...-->`, `<!--camera:...-->` and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/), injecting the most semantically relevant canon responses into every LLM prompt.
+- **Automatic Dynamic Few-Shot RAG (Zero Setup)**: On startup, `memory_store.py` indexes `kurisu_finetuning_dataset_enhanced.jsonl` (**154 curated PT-BR / EN / JA ChatML dialogue exemplars** with `<!--emotion:...-->`, `<!--pose:...-->`, `<!--camera:...-->`, and `<!--remember:...-->` tags) into [ChromaDB](https://www.trychroma.com/) with hash-based auto-resync, injecting the most semantically relevant canon responses in the active language into every LLM prompt.
 
 <p align="center">
   <img src="docs/screenshots/04_cortex_memory_injection.png" alt="Synaptic Memory Block Injection" width="880">
@@ -294,45 +299,51 @@ docker compose up --build -d
 ```text
 OpenAmadeus/
 ├── notebooks/
-│   ├── Amadeus_Qwen3_TTS_Colab.ipynb  # Remote Colab GPU worker (FasterQwen3TTS + Cloudflare Tunnel)
-│   └── spike_faster_qwen3.py          # TTFA/RTF benchmark & audio parity validation script
+│   ├── Amadeus_Qwen3_TTS_Colab.ipynb      # Remote Colab GPU worker (FasterQwen3TTS + Cloudflare Tunnel)
+│   ├── Amadeus_Qwen3_TTS_PTBR_LoRA.ipynb  # LoRA training notebook adding PT-BR while preserving JA/EN
+│   └── spike_faster_qwen3.py              # TTFA/RTF benchmark & audio parity validation script
 ├── public/
-│   ├── amadeus-icon.svg               # Application vector emblem
-│   └── assets/sprites/kurisu/         # Local destination for optional 174 sprite PNGs (gitignored)
+│   ├── amadeus-icon.svg                   # Application vector emblem
+│   ├── vad/                               # Local Silero VAD ONNX & ONNX Runtime WASM assets (postinstall)
+│   └── assets/sprites/kurisu/             # Local destination for optional 174 sprite PNGs (gitignored)
 ├── scripts/
-│   └── setup_sprites.py               # Sprite asset pack validator and directory initializer
-├── server/                            # FastAPI Python Backend
+│   ├── copy-vad-assets.mjs                # Copies @ricky0123/vad-web & onnxruntime-web files to public/vad/
+│   ├── eval_emotion_fidelity.py           # Emotion/tag fidelity evaluation helper
+│   ├── optimize_sprites.py                # Sprite image optimizer
+│   └── setup_sprites.py                   # Sprite asset pack validator and directory initializer
+├── server/                                # FastAPI Python Backend
 │   ├── app/
-│   │   ├── api/v1/endpoints/          # Modular route handlers (chat, voice, memory, persona)
-│   │   ├── core/                      # config.py paths, model lists, and FastAPI lifespan
-│   │   ├── db/                        # Hybrid SQLite + ChromaDB vector persistence (memory_store.py)
-│   │   ├── schemas/                   # Pydantic request/response contracts (chat, memory, voice)
+│   │   ├── api/v1/endpoints/              # Modular route handlers (chat, voice, memory, persona)
+│   │   ├── core/                          # config.py paths, model lists, and FastAPI lifespan
+│   │   ├── db/                            # Hybrid SQLite + ChromaDB vector persistence (memory_store.py)
+│   │   ├── schemas/                       # Pydantic request/response contracts (chat, memory, voice)
 │   │   └── services/
-│   │       ├── llm/                   # Multi-provider orchestrator (gemini.py, groq.py, openrouter.py)
-│   │       ├── qwen_tts/              # qwen_worker.py, qwen_manager.py, emotion_mapper.py (21 empirical acoustic targets)
-│   │       ├── kokoro_tts/            # kokoro_manager.py (82M PT-BR local synthesis)
-│   │       ├── rvc/                   # rvc_manager.py, rvc_worker.py, pipeline.py (HuBERT/RMVPE)
-│   │       ├── voice_service.py       # 4-stage voice cascade & clean_text_for_tts sanitizer
-│   │       ├── emotion_service.py     # Sentiment tag extraction & pose synchronization
-│   │       └── offline_simulator.py   # Zero-internet heuristic dialogue fallback
-│   ├── personas/                      # Persona definitions and system prompts (kurisu.json)
-│   ├── training/                      # 130-pair ChatML dataset, Unsloth LoRA script, Ollama Modelfile
-│   ├── tests/                         # Unit, benchmark & E2E suites (test_qwen_tts.py, test_backend.py)
-│   ├── weights/                       # Local model directory (kurisu_rvc/, kurisu_qwen3/, models/)
-│   ├── main.py                        # FastAPI gateway entry point
-│   ├── remote_worker.py               # Standalone remote worker runner
-│   ├── requirements.txt               # Universal CPU backend dependencies
-│   └── requirements-qwen.txt          # GPU worker dependencies (faster-qwen3-tts, transformers==5.15.1)
-├── src/                               # React 19 + TypeScript + Vite Frontend
-│   ├── components/                    # AmadeusSpriteView, AudioOscilloscope, etc.
-│   ├── data/personas/                 # Frontend persona metadata (kurisu.ts)
-│   ├── services/                      # speechService.ts (Web Audio PCM16 DSP), aiService, spriteCatalog
-│   ├── types/                         # TypeScript domain contracts (amadeus.ts)
-│   ├── App.tsx                        # Main visual novel & call state orchestrator
-│   └── main.tsx                       # React DOM entry point
-├── docker-compose.yml                 # Full-stack multi-container orchestration
-├── Dockerfile                         # Multi-stage frontend production build
-└── package.json                       # Frontend dependencies and build scripts
+│   │       ├── llm/                       # Multi-provider orchestrator, Lorebook, SentenceStream (gemini, groq, openrouter)
+│   │       ├── qwen_tts/                  # qwen_worker.py, qwen_manager.py, emotion_mapper.py (21 empirical targets)
+│   │       ├── kokoro_tts/                # kokoro_manager.py (82M PT-BR local synthesis)
+│   │       ├── rvc/                       # rvc_manager.py, rvc_worker.py, pipeline.py & lib/ (HuBERT, RMVPE, PureTorchIndex)
+│   │       ├── voice_service.py           # 4-stage voice cascade & trilingual clean_text_for_tts sanitizer
+│   │       ├── emotion_service.py         # Sentiment/pose/camera parsing & trilingual shift inference
+│   │       └── offline_simulator.py       # Zero-internet trilingual heuristic dialogue fallback
+│   ├── personas/                          # Persona definitions, languageProfiles & canonical memories (kurisu.json)
+│   ├── training/                          # 154-pair PT/EN/JA ChatML dataset, Unsloth LoRA script, Ollama Modelfile
+│   ├── tests/                             # Unit, streaming, RAG & RVC suites (test_chat_stream.py, test_rvc_hubert.py, etc.)
+│   ├── weights/                           # Local model directory (kurisu_rvc/, kurisu_qwen3/, models/)
+│   ├── main.py                            # FastAPI gateway entry point
+│   ├── remote_worker.py                   # Standalone remote worker runner
+│   ├── requirements.txt                   # Universal CPU backend dependencies
+│   └── requirements-qwen.txt              # GPU worker dependencies (faster-qwen3-tts, transformers==5.15.1)
+├── src/                                   # React 19 + TypeScript + Vite Frontend
+│   ├── components/                        # AmadeusSpriteView, AudioOscilloscope, SettingsModal, etc.
+│   ├── data/personas/                     # Frontend persona metadata (kurisu.ts)
+│   ├── services/                          # speechService.ts (Silero VAD + F1/F2 Lip-Sync + PCM16 DSP), vadGate, aiService, memoryService
+│   ├── types/                             # TypeScript domain contracts (amadeus.ts)
+│   ├── i18n.ts                            # Complete PT-BR / EN / JA UI translation dictionary
+│   ├── App.tsx                            # Main visual novel & call state orchestrator
+│   └── main.tsx                           # React DOM entry point
+├── docker-compose.yml                     # Full-stack multi-container orchestration
+├── Dockerfile                             # Multi-stage frontend production build
+└── package.json                           # Frontend dependencies and build scripts
 ```
 
 ## 🧪 Testing & Quality Assurance
@@ -368,14 +379,27 @@ Contributions, bug reports, and acoustic calibration improvements are welcome!
    - `test(voice): ...` for unit and integration tests
 4. **Verification**: Ensure all Python unit tests and `npx tsc --noEmit` pass cleanly before opening a Pull Request.
 
-## 🙏 Credits 
+## 🙏 Credits & Third-Party References
 
-- **[starrydark / Kurisu_Qwen3_TTS](https://huggingface.co/starrydark/Kurisu_Qwen3_TTS)**: Fine-tuned neural voice synthesis model of Makise Kurisu based on Alibaba Cloud Qwen3-TTS 1.7B.
-- **[andimarafioti / faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts)**: Real-time Qwen3-TTS inference engine using static KV cache and CUDA Graphs.
-- **[FrancescoCaracciolo / Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)**: Trained Makise Kurisu RVC v2 voice model (`KurisuRVCv147.pth` and `KurisuRVCv147.index`).
-- **[Alibaba Cloud / Qwen Team](https://github.com/QwenLM/Qwen3-TTS)**: Qwen3-TTS base architecture and 12 Hz speech tokenizer.
-- **[hexgrad / Kokoro-82M](https://github.com/hexgrad/kokoro)**: Lightweight 82M-parameter open-weight multilingual neural TTS engine.
-- **RVC Community & Microsoft Azure / Edge-TTS**: Open-source retrieval-based voice conversion and cloud neural speech synthesis.
+OpenAmadeus builds upon the following open-source libraries, pre-trained weights, and research works:
+
+### Voice Synthesis & Voice Conversion
+- **[lucca3447 / Makise_Kurisu_Qwen3_TTS_PTBR_added](https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added)**: Multilingual Makise Kurisu 1.7B voice checkpoint extending upstream JA/EN synthesis with Brazilian Portuguese (`vn_only ep2` bilingual-replay LoRA), preserving studio-grade vocal identity across **JA, EN, and PT-BR**.
+- **[QwenLM / Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** *(Apache-2.0)*: Base 1.7B speech synthesis architecture and 12 Hz discrete speech tokenizer by The Qwen Team, Alibaba Cloud.
+- **[starrydark / Makise_Kurisu_Qwen3_TTS](https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS)**: Upstream Makise Kurisu 1.7B SFT checkpoint used as our fine-tuning base.
+- **[andimarafioti / faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts)** *(Apache-2.0)*: Real-time Qwen3-TTS inference runtime using static KV cache and CUDA Graphs (`Marafioti, A., 2026`).
+- **[RVC-Project / Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)** *(MIT)*: Open-source Retrieval-based Voice Conversion architecture (`SynthesizerTrnMs768NSFsid` inference pipeline).
+- **[FrancescoCaracciolo / Kurisu-RVC](https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC)**: Pre-trained Makise Kurisu RVC v2 voice model (`KurisuRVCv147.pth` & `KurisuRVCv147.index`).
+- **[Dream-High / RMVPE](https://github.com/Dream-High/RMVPE)** *(Apache-2.0)*: Robust vocal pitch estimation (`Wei et al., 2023, "RMVPE: A Robust Model for Vocal Pitch Estimation in Polyphonic Music", arXiv:2306.15412`).
+- **[rinna / japanese-hubert-base](https://huggingface.co/rinna/japanese-hubert-base)** *(via [yky-h/japanese-hubert-base](https://huggingface.co/yky-h/japanese-hubert-base))*: Japanese HuBERT acoustic feature extractor (`Sawada et al., PACLIC 2024, "Release of Pre-Trained Models for the Japanese Language"`).
+- **[hexgrad / Kokoro-82M](https://github.com/hexgrad/kokoro)** *(Apache-2.0)*: Lightweight 82M-parameter open-weight multilingual neural TTS engine.
+- **[rany2 / edge-tts](https://github.com/rany2/edge-tts)** *(LGPL-3.0)* & Microsoft Azure Neural TTS: Zero-setup cloud neural speech synthesis.
+
+### Voice Activity Detection (VAD), Audio & RAG
+- **[snakers4 / silero-vad](https://github.com/snakers4/silero-vad)** *(MIT)*: Pre-trained enterprise-grade Silero VAD v5 neural speech detector (`Silero Team, 2024, "Silero VAD: pre-trained enterprise-grade Voice Activity Detector (VAD), Number Detector and Language Classifier"`).
+- **[ricky0123 / vad](https://github.com/ricky0123/vad) (`@ricky0123/vad-web`)** *(ISC)*: Browser AudioWorklet / MicVAD wrapper running Silero VAD locally in WebAssembly.
+- **[microsoft / onnxruntime](https://github.com/microsoft/onnxruntime) (`onnxruntime-web`)** *(MIT)*: In-browser WebAssembly / SIMD neural inference runtime powering Silero VAD.
+- **[chroma-core / chroma](https://github.com/chroma-core/chroma)** *(Apache-2.0)*: Open-source vector database powering dynamic few-shot & episodic RAG.
 
 ## ⚖️ Legal Disclaimer & Intellectual Property Notice
 
