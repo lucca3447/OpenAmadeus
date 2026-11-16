@@ -160,10 +160,10 @@ def _resolve_model_source() -> str:
     """
     Resolves the model directory with automatic upstream sync:
     1. Local override in weights/kurisu_qwen3 or Kurisu_Qwen3_TTS
-    2. Hugging Face Hub latest snapshot for starrydark/Makise_Kurisu_Qwen3_TTS (auto-syncs on startup)
+    2. Hugging Face Hub latest snapshot for lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added (auto-syncs on startup)
     3. Offline fallback to local cached snapshots in ~/.cache/huggingface/hub/
     """
-    model_id = os.environ.get("QWEN_MODEL_ID", "starrydark/Makise_Kurisu_Qwen3_TTS")
+    model_id = os.environ.get("QWEN_MODEL_ID", "lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added")
     current_file_dir = os.path.dirname(os.path.abspath(__file__))
     server_root = os.path.abspath(os.path.join(current_file_dir, "..", "..", ".."))
 
