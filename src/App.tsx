@@ -414,6 +414,7 @@ export const App: React.FC = () => {
       rvcModel: voiceSettings.rvcModel || 'KurisuRVCv147',
       rvcPitch: voiceSettings.rvcPitch ?? 0,
       rvcIndexRate: voiceSettings.rvcIndexRate ?? 0.75,
+      rvcProtect: voiceSettings.rvcProtect ?? 0.33,
       allowTtsFallback: voiceSettings.allowTtsFallback !== false,
       allowedTtsFallbacks: voiceSettings.allowedTtsFallbacks || [
         'qwen_local',

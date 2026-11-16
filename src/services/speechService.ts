@@ -85,6 +85,7 @@ export interface SpeakOptions {
   rvcModel?: string;
   rvcPitch?: number;
   rvcIndexRate?: number;
+  rvcProtect?: number;
   allowTtsFallback?: boolean;
   allowedTtsFallbacks?: string[];
   onStart?: () => void;
@@ -995,6 +996,7 @@ export class SpeechService {
           rvcModel: options.rvcModel || 'KurisuRVCv147',
           rvcPitch: options.rvcPitch ?? 0,
           rvcIndexRate: options.rvcIndexRate ?? 0.75,
+          rvcProtect: options.rvcProtect ?? 0.33,
           allowTtsFallback: options.allowTtsFallback !== false,
           allowedTtsFallbacks: options.allowedTtsFallbacks || ['qwen_local', 'kokoro', 'edge_rvc'],
         }),

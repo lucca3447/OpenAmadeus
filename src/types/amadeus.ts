@@ -122,6 +122,7 @@ export interface VoiceSettings {
   rvcModel?: string;
   rvcPitch?: number;
   rvcIndexRate?: number;
+  rvcProtect?: number;
   micMode?: MicMode;
   sttKeyMode?: SttKeyMode;
   separateGroqSttKey?: string;

@@ -18,6 +18,7 @@ class TTSRequest(BaseModel):
     rvc_model: Optional[str] = Field("KurisuRVCv147", alias="rvcModel")
     rvc_pitch: Optional[int] = Field(0, alias="rvcPitch")
     rvc_index_rate: Optional[float] = Field(0.75, alias="rvcIndexRate")
+    rvc_protect: Optional[float] = Field(0.33, alias="rvcProtect")
     stream: Optional[bool] = False
     allow_fallback: Optional[bool] = Field(True, alias="allowTtsFallback")
     allowed_fallbacks: Optional[List[str]] = Field(

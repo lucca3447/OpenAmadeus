@@ -45,13 +45,14 @@ The backend operates as a decoupled, fault-tolerant multi-service pipeline:
 ## 🎙️ Neural Voice Models & Asset Setup
 
 ### 1. Kurisu Qwen3-TTS 1.7B (End-to-End Neural Streaming)
-* **Hugging Face Repository**: [starrydark/Kurisu_Qwen3_TTS](https://huggingface.co/starrydark/Kurisu_Qwen3_TTS)
+* **Hugging Face Repository**: [starrydark/Makise_Kurisu_Qwen3_TTS](https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS)
 * **Acceleration Engine**: [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) (CUDA Graphs + Static KV Cache).
 * **Automatic Download**: Weights (~3.8 GB) download automatically on first startup via Hugging Face Hub into `~/.cache/huggingface/hub/`.
 * **Manual Offline Clone (Optional)**:
+  `server/weights/kurisu_qwen3/` takes precedence over Hugging Face and can hold either our fine-tuned cumulative PT-BR + multilingual checkpoint (based on `starrydark/Makise_Kurisu_Qwen3_TTS`) or a direct clone of the upstream repository:
   ```bash
   git lfs install
-  git clone https://huggingface.co/starrydark/Kurisu_Qwen3_TTS server/weights/kurisu_qwen3
+  git clone https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS server/weights/kurisu_qwen3
   ```
 
 ### 2. Kurisu RVC v2 (Timbre Morphing)

@@ -1078,6 +1078,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               onSaveVoiceSettings({ ...voiceSettings, rvcIndexRate: val })
                             }
                           />
+                          <PlasmaMeter
+                            label="RVC Protect"
+                            displayValue={`${(voiceSettings.rvcProtect ?? 0.33).toFixed(2)}`}
+                            min={0.0}
+                            max={0.5}
+                            step={0.05}
+                            value={voiceSettings.rvcProtect ?? 0.33}
+                            onChange={(val) =>
+                              onSaveVoiceSettings({ ...voiceSettings, rvcProtect: val })
+                            }
+                          />
                         </div>
                       </div>
                     )}

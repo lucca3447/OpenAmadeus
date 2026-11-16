@@ -154,6 +154,7 @@ async def synthesize_speech(
     rvc_model: Optional[str] = "KurisuRVCv147",
     rvc_pitch: int = 0,
     rvc_index_rate: float = 0.75,
+    rvc_protect: float = 0.33,
     engine: str = "qwen3",
     qwen_mode: Optional[str] = "remote",
     qwen_remote_url: Optional[str] = None,
@@ -305,6 +306,7 @@ async def synthesize_speech(
                         audio_bytes=kokoro_wav,
                         pitch_shift=rvc_pitch,
                         index_rate=rvc_index_rate,
+                        protect=rvc_protect,
                         model_name=rvc_model or "KurisuRVCv147",
                     )
                     if converted_wav:
@@ -357,6 +359,7 @@ async def synthesize_speech(
             audio_bytes=edge_audio_bytes,
             pitch_shift=rvc_pitch,
             index_rate=rvc_index_rate,
+            protect=rvc_protect,
             model_name=rvc_model or "KurisuRVCv147",
         )
         if converted_wav:

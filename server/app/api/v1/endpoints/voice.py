@@ -20,6 +20,7 @@ async def text_to_speech(req: TTSRequest):
         rvc_model=req.rvc_model or "KurisuRVCv147",
         rvc_pitch=req.rvc_pitch or 0,
         rvc_index_rate=req.rvc_index_rate if req.rvc_index_rate is not None else 0.75,
+        rvc_protect=req.rvc_protect if req.rvc_protect is not None else 0.33,
         engine=req.engine or "qwen3",
         qwen_mode=req.qwen_mode or "remote",
         qwen_remote_url=req.qwen_remote_url,

@@ -143,13 +143,14 @@ flowchart TD
 Switch between voice engines dynamically at runtime via the in-app **Settings Modal (⚙️)**:
 
 ### 1. Kurisu Qwen3-TTS 1.7B (End-to-End Neural Streaming)
-- **Hugging Face Checkpoint**: `starrydark/Kurisu_Qwen3_TTS` (`CustomVoice` 1.7B BF16, speaker ID `kurisu`, built on [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)).
+- **Hugging Face Checkpoint**: `starrydark/Makise_Kurisu_Qwen3_TTS` (`CustomVoice` 1.7B BF16, speaker ID `kurisu`, built on [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)).
 - **Acceleration Runtime**: [andimarafioti/faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) (captures the 28-layer Talker and 15-step Code Predictor into static-cache CUDA Graphs, cutting per-step latency from ~330 ms to ~54 ms).
 - **Automatic Weight Caching**: Weights (~3.8 GB) are downloaded automatically on first startup into `~/.cache/huggingface/hub/`.
 - **Manual Offline Clone (Optional)**:
+  `server/weights/kurisu_qwen3/` overrides the Hugging Face download when present, and may contain either our fine-tuned cumulative PT-BR + multilingual checkpoint (built on top of `starrydark/Makise_Kurisu_Qwen3_TTS`) or a direct clone of the upstream checkpoint:
   ```bash
   git lfs install
-  git clone https://huggingface.co/starrydark/Kurisu_Qwen3_TTS server/weights/kurisu_qwen3
+  git clone https://huggingface.co/starrydark/Makise_Kurisu_Qwen3_TTS server/weights/kurisu_qwen3
   ```
 
 ### 2. Kurisu RVC v2 (Retrieval-based Voice Conversion)

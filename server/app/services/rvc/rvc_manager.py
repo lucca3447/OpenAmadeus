@@ -103,7 +103,8 @@ class RVCManager:
         audio_bytes: bytes,
         pitch_shift: int = 0,
         index_rate: float = 0.75,
-        model_name: Optional[str] = "KurisuRVCv147",
+        protect: float = 0.33,
+        model_name: Optional[str] = None,
     ) -> Optional[bytes]:
         is_healthy = await cls.is_worker_healthy()
         if not is_healthy:
@@ -116,6 +117,7 @@ class RVCManager:
         params = {
             "pitch_shift": pitch_shift,
             "index_rate": index_rate,
+            "protect": protect,
         }
         if model_name:
             params["model_name"] = model_name
