@@ -358,8 +358,8 @@ export const UI_TEXT = {
         en: 'English (EN-US) — Interface & Dialogue in English',
         ja: '日本語 (JA-JP) — インターフェースと対話を日本語に設定',
       },
-      canonicalJpTitle: 'Dublagem Canônica em Japonês (Voz Asami Imai + Legenda Traduzida)',
-      canonicalJpDesc: 'Quando ativo em PT-BR ou EN, a Kurisu responde com legenda no seu idioma, mas sintetiza a voz em Japonês nativo no Qwen3-TTS (timbre original de Steins;Gate 0 sem sotaque estrangeiro).',
+      canonicalJpTitle: 'Voz em Japonês + Legenda Traduzida',
+      canonicalJpDesc: 'Quando ativo em PT-BR ou EN, a Kurisu exibe legendas no seu idioma e sintetiza a fala em Japonês pelo Qwen3-TTS.',
       sectionHeaders: {
         cortex: {
           title: 'Córtex LLM & Credenciais',
@@ -768,8 +768,8 @@ export const UI_TEXT = {
         en: 'English (EN-US) — Interface & Dialogue in English',
         ja: '日本語 (JA-JP) — インターフェースと対話を日本語に設定',
       },
-      canonicalJpTitle: 'Canonical Japanese Dubbing (Asami Imai Voice + Translated Subtitles)',
-      canonicalJpDesc: 'When enabled in PT-BR or EN, Kurisu displays subtitles in your chosen language while speaking authentic Japanese via Qwen3-TTS (original Steins;Gate 0 timbre without foreign accent drift).',
+      canonicalJpTitle: 'Japanese Voice + Translated Subtitles',
+      canonicalJpDesc: 'When enabled in PT-BR or EN, Kurisu displays subtitles in your chosen language while speaking natural Japanese via Qwen3-TTS.',
       sectionHeaders: {
         cortex: {
           title: 'LLM Cortex & Credentials',
@@ -1178,8 +1178,8 @@ export const UI_TEXT = {
         en: 'English (EN-US) — 英語（UI・対話）',
         ja: '日本語 (JA-JP) — 日本語（UI・対話・原作ボイス）',
       },
-      canonicalJpTitle: 'カノニカル日本語ボイス（今井麻美ボイス＋翻訳字幕モード）',
-      canonicalJpDesc: 'PT-BRまたはEN選択時に有効化すると、字幕は選択言語で表示しつつ、音声はQwen3-TTSの純粋な日本語（『STEINS;GATE 0』本来の発音・声質）で発話します。',
+      canonicalJpTitle: '日本語ボイス＋翻訳字幕',
+      canonicalJpDesc: 'PT-BRまたはEN選択時に有効化すると、字幕は選択言語で表示しつつ、音声はQwen3-TTSの自然な日本語で発話します。',
       sectionHeaders: {
         cortex: {
           title: 'LLM コルテックス・認証情報',

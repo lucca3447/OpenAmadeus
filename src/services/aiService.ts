@@ -1210,7 +1210,7 @@ export class AIService {
         suffix += `\n\n${cvPrompt}`;
       } else {
         suffix +=
-          '\n\n[CANONICAL JAPANESE VOICE MODE (ASAMI IMAI)]:\n' +
+          '\n\n[JAPANESE VOICE + TRANSLATED SUBTITLES MODE]:\n' +
           'Before EACH spoken sentence in your reply, include an inline tag `<!--ja:日本語のセリフ-->` containing the natural spoken Japanese line that Kurisu would say in Steins;Gate, followed immediately by the subtitle sentence in the active language.';
       }
     }

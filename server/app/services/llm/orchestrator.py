@@ -462,15 +462,15 @@ class LLMOrchestrator:
         if active_lang_prompt:
             memory_ctx_blocks.append(active_lang_prompt)
 
-        # 5. Canonical Japanese Voice Mode (Asami Imai Voiceline streaming + active subtitles)
+        # 5. Japanese Voice + Translated Subtitles Mode
         if canonical_voice:
             cv_prompt = persona.get("canonicalVoicePrompt")
             if cv_prompt:
                 memory_ctx_blocks.append(cv_prompt)
             else:
                 memory_ctx_blocks.append(
-                    "[MODO DUBLAGEM CANÔNICA (VOZ ORIGINAL EM JAPONÊS + LEGENDA)]:\n"
-                    "- Para CADA frase da sua resposta, inclua imediatamente antes do texto na língua do operador a tag <!--ja:セリフ--> contendo a fala equivalente autêntica de Makise Kurisu em japonês nativo (como Asami Imai em Steins;Gate 0).\n"
+                    "[MODO VOZ EM JAPONÊS + LEGENDA TRADUZIDA]:\n"
+                    "- Para CADA frase da sua resposta, inclua imediatamente antes do texto na língua do operador a tag <!--ja:セリフ--> contendo a fala equivalente autêntica de Makise Kurisu em japonês nativo.\n"
                     "- Exemplo: <!--emotion:wink,pose:default,camera:closeup--> <!--ja:冗談よ、そんなにムキにならないで。--> Brincadeira, não precisa levar tão a sério."
                 )
 
