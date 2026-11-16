@@ -56,23 +56,26 @@ def clean_text_for_tts(text: str, lang: str = "pt") -> str:
     - De-stutters single-letter prefixes ('Q-quem' -> 'Quem', 'L-linda' -> 'Linda', 'N-não' -> 'Não')
     """
     clean_text = clean_speech_text(text)
-    is_pt = (lang or "pt").lower().startswith("pt")
-    # 1. Replace combined punctuation (?!, !?, etc.) with a single question mark
-    clean_text = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", clean_text)
+    lc = (lang or "pt").strip().lower()[:2]
+    is_pt = lc == "pt"
+    is_ja = lc == "ja"
+    # 1. Replace combined punctuation (?!, !?, ？!, ！?) with a single question mark
+    clean_text = re.sub(r"[?？]+[!！]+[!?？！]*|[!！]+[?？]+[!?？！]*", "？" if is_ja else "?", clean_text)
     if is_pt:
         # 2. Replace exclamation marks with '.' to prevent glottal-stop syllable truncation in PT-BR
         clean_text = re.sub(r"!+", ".", clean_text)
         clean_text = re.sub(r"([.,])\s*\.", r"\1", clean_text)
 
-        # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum)
-        # that trigger Japanese VN vocal sighs/moans ("gemidos")
+    if lc in ("pt", "en"):
+        # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum, Er)
+        # that trigger vocal sighs/moans
         clean_text = re.sub(
-            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+|e+r+)\b\s*[,;:.]*\s*",
             "",
             clean_text,
         )
 
-    # 4. General single-letter stutters: Q-quem -> Quem, Q... quem -> Quem, L-linda -> Linda, N-não -> Não
+    # 4. General single-letter stutters: Q-quem -> Quem, D-don't -> Don't
     def _un_stutter(m: re.Match) -> str:
         prefix = m.group(1)
         word = m.group(2)
@@ -81,6 +84,11 @@ def clean_text_for_tts(text: str, lang: str = "pt") -> str:
         return m.group(0)
 
     clean_text = re.sub(r"\b([A-Za-zÀ-ÿ])(?:\s*\.{2,}\s*|-)([a-zà-ÿ]+)\b", _un_stutter, clean_text)
+
+    if is_ja:
+        # Preserve Japanese phrasing for qwen_worker.sanitize_for_qwen (converts ellipses to 。 / 、)
+        clean_text = re.sub(r"\s+", " ", clean_text).strip()
+        return clean_text
 
     # 5. Replace trailing ellipses with '.' and mid-sentence ellipses with ', '
     # to eliminate 2-3s silent gaps and breath hallucinations

@@ -61,7 +61,7 @@ export interface PcmTimeline {
 
 export interface SentenceSpeaker {
   /** Prefetches /tts in queue order and plays after the previous sentence; onAudible runs when this sentence starts sounding. */
-  enqueue(text: string, onAudible?: () => void, emotion?: string): void;
+  enqueue(text: string, onAudible?: () => void, emotion?: string, overrideOpts?: Partial<SpeakOptions>): void;
   /** No more sentences: resolves options.onEnd after the last audio finishes. */
   end(): void;
   cancel(): void;
@@ -156,7 +156,7 @@ export function normalizeForSpeech(rawText: string, lang: string = 'pt-BR'): str
 }
 
 const WHISPER_HALLUCINATION_RE =
-  /^(?:obrigad[oa](?:\s+por\s+assistir)?|legendas?\s+pela\s+comunidade.*|inscreva-se(?:\s+no\s+canal)?|amara\.org.*|subtitles\s+by.*|thank\s+you\s+for\s+watching.*|you|\.+|,|\?+|!+|\s*)$/i;
+  /^(?:obrigad[oa](?:\s+por\s+assistir)?|legendas?\s+pela\s+comunidade.*|inscreva-se(?:\s+no\s+canal)?|amara\.org.*|subtitles\s+by.*|thank\s+you\s+for\s+watching.*|you|ご視聴ありがとうございました[。.]*|チャンネル登録.*|字幕.*|おやすみなさい[。.]*|\.+|,|\?+|!+|\s*)$/i;
 
 /**
  * Filters silence hallucinations and fixes phonetic PT-BR STT transcriptions for lore/tech terms
@@ -1269,13 +1269,17 @@ export class SpeechService {
     let errorShown = false;
 
     return {
-      enqueue: (text, onAudible, emotion) => {
-        const clean = normalizeForSpeech(text, options.lang);
+      enqueue: (text, onAudible, emotion, overrideOpts) => {
+        const sentenceOpts: SpeakOptions = {
+          ...options,
+          ...(overrideOpts || {}),
+          ...(emotion ? { emotion } : {}),
+        };
+        const clean = normalizeForSpeech(text, sentenceOpts.lang);
         if (!clean) {
           chain = chain.then(() => onAudible?.());
           return;
         }
-        const sentenceOpts = emotion ? { ...options, emotion } : options;
         // Serialize GPU worker HTTP fetches so sentence N+1 prefetches right after sentence N finishes downloading (while N is still playing)
         let releaseFetch!: () => void;
         const fetchDone = new Promise<void>((r) => { releaseFetch = r; });
@@ -1318,7 +1322,7 @@ export class SpeechService {
             if (item instanceof Error) throw item;
             if (!item) { reveal(); return; }
             try {
-              await this.playNeuralResponse(item.res, { ...options, onStart: reveal, onEnd: undefined }, signal, timeline);
+              await this.playNeuralResponse(item.res, { ...sentenceOpts, onStart: reveal, onEnd: undefined }, signal, timeline);
             } finally {
               if (item.isStream) releaseFetch();
             }
@@ -1326,7 +1330,7 @@ export class SpeechService {
             if (signal.aborted || err?.name === 'AbortError') return;
             if (canFallbackWebSpeech) {
               await this.waitUntilAudioTime(timeline.next, signal);
-              await new Promise<void>((resolve) => this.speakWebSpeech(clean, { ...options, onStart: reveal, onEnd: resolve }));
+              await new Promise<void>((resolve) => this.speakWebSpeech(clean, { ...sentenceOpts, onStart: reveal, onEnd: resolve }));
               return;
             }
             if (!errorShown) {

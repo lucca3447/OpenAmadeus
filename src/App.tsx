@@ -430,10 +430,22 @@ export const App: React.FC = () => {
       },
   });
 
+  const getConvSpeakFallback = (): Partial<SpeakOptions> => {
+    const defaultNeural = convLang === 'en' ? 'en-US-JennyNeural' : (convLang === 'ja' ? 'ja-JP-NanamiNeural' : 'pt-BR-FranciscaNeural');
+    return {
+      lang: getBcp47Lang(convLang),
+      neuralVoice: voiceSettings.neuralVoice?.startsWith('ja-JP')
+        ? defaultNeural
+        : (voiceSettings.neuralVoice || defaultNeural),
+    };
+  };
+
   const speak = (text: string, emotion?: string, ttsResponse?: string, force = false) => {
     if (!voiceSettings.enabled || (!force && !voiceSettings.autoSpeak)) return;
     const sentAt = performance.now();
-    const opts = buildSpeakOptions(emotion);
+    const baseOpts = buildSpeakOptions(emotion);
+    const hasJaTts = Boolean(canonicalJp && ttsResponse);
+    const opts: SpeakOptions = (canonicalJp && !hasJaTts) ? { ...baseOpts, ...getConvSpeakFallback() } : baseOpts;
     const origStart = opts.onStart;
     opts.onStart = () => {
       const ms = Math.round(performance.now() - sentAt);
@@ -441,7 +453,7 @@ export const App: React.FC = () => {
       console.info(`[OpenAmadeus] ttfa_ms=${ms}`);
       origStart?.();
     };
-    const spokenText = (canonicalJp && ttsResponse) ? ttsResponse : text;
+    const spokenText = hasJaTts ? ttsResponse! : text;
     SpeechService.speak(spokenText, opts);
   };
 
@@ -562,13 +574,14 @@ export const App: React.FC = () => {
                 setHistory(partialHistory);
                 MemoryService.saveActiveSession(sessionId, partialHistory);
               };
-              // canonical JP mode: speak the Japanese line, subtitle stays in the UI language
+              // canonical JP mode: speak the Japanese line, or fallback safely to convLang if <!--ja:...--> was omitted
               if (canonicalJp) {
                 if (ttsText) {
                   if (speaker) speaker.enqueue(ttsText, reveal, visual?.emotion);
                   else reveal();
                 } else {
-                  reveal();
+                  if (speaker) speaker.enqueue(sentence, reveal, visual?.emotion, getConvSpeakFallback());
+                  else reveal();
                 }
               } else {
                 if (speaker) speaker.enqueue(sentence, reveal, visual?.emotion);
