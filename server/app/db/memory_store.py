@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import json
@@ -102,45 +103,42 @@ class MemoryStore:
         if not dataset_path.exists():
             return
 
-        with open(dataset_path, "r", encoding="utf-8") as f:
-            total_lines = sum(1 for line in f if line.strip())
+        raw_bytes = dataset_path.read_bytes()
+        dataset_hash = hashlib.sha256(raw_bytes).hexdigest()[:12]
+        lines = [line.strip() for line in raw_bytes.decode("utf-8").splitlines() if line.strip()]
+        total_lines = len(lines)
 
         count = self.exemplars_collection.count()
         if count >= total_lines and count > 0:
             sample = self.exemplars_collection.get(ids=["ex_1"], include=["metadatas"]) or {}
             sample_metas = sample.get("metadatas") or []
             first_meta = sample_metas[0] if sample_metas else {}
-            first_asst = (first_meta.get("assistant") or "").lstrip()
-            # Re-seed records whose directive is not leading or lacks mid-speech pose transition (v0.2.2)
-            if first_asst.startswith("<!--emotion") and first_asst.count("<!--emotion") >= 2 and first_meta.get("lang"):
+            if first_meta.get("dataset_hash") == dataset_hash and first_meta.get("lang"):
                 return
 
         ids = []
         documents = []
         metadatas = []
 
-        with open(dataset_path, "r", encoding="utf-8") as f:
-            for idx, line in enumerate(f):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    msgs = data.get("messages", [])
-                    user_text = next((m["content"] for m in msgs if m["role"] == "user"), "")
-                    asst_text = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
-                    lang = (data.get("lang") or "pt").strip().lower()
-                    if user_text and asst_text:
-                        ex_id = f"ex_{idx}"
-                        ids.append(ex_id)
-                        documents.append(user_text)
-                        metadatas.append({
-                            "user": user_text,
-                            "assistant": asst_text,
-                            "lang": lang,
-                        })
-                except Exception as e:
-                    print(f"[Amadeus Core] Error parsing exemplar line {idx}: {e}")
+        for idx, line in enumerate(lines):
+            try:
+                data = json.loads(line)
+                msgs = data.get("messages", [])
+                user_text = next((m["content"] for m in msgs if m["role"] == "user"), "")
+                asst_text = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
+                lang = (data.get("lang") or "pt").strip().lower()
+                if user_text and asst_text:
+                    ex_id = f"ex_{idx}"
+                    ids.append(ex_id)
+                    documents.append(user_text)
+                    metadatas.append({
+                        "user": user_text,
+                        "assistant": asst_text,
+                        "lang": lang,
+                        "dataset_hash": dataset_hash,
+                    })
+            except Exception as e:
+                print(f"[Amadeus Core] Error parsing exemplar line {idx}: {e}")
 
         if ids:
             self.exemplars_collection.upsert(
@@ -245,12 +243,15 @@ class MemoryStore:
             if mem.get("id") and mem.get("triggerKeywords"):
                 self._canonical_keywords[mem["id"]] = mem["triggerKeywords"]
 
+        changed = False
         with self._conn() as conn:
             cursor = conn.cursor()
             for mem in memories:
                 mem_id = mem["id"]
-                cursor.execute("SELECT id FROM memories WHERE id = ?", (mem_id,))
-                if not cursor.fetchone():
+                emo_weight = mem.get("emotionalWeight", "Factual")
+                cursor.execute("SELECT title, content, emotional_weight FROM memories WHERE id = ?", (mem_id,))
+                row = cursor.fetchone()
+                if not row:
                     cursor.execute(
                         "INSERT INTO memories (id, category, title, content, emotional_weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (
@@ -258,16 +259,23 @@ class MemoryStore:
                             mem.get("category", "biography"),
                             mem["title"],
                             mem["content"],
-                            mem.get("emotionalWeight", "Factual"),
+                            emo_weight,
                             mem.get("source", "canonical"),
                             time.time()
                         )
                     )
+                    changed = True
+                elif (row[0], row[1], row[2]) != (mem["title"], mem["content"], emo_weight):
+                    cursor.execute(
+                        "UPDATE memories SET title = ?, content = ?, emotional_weight = ? WHERE id = ?",
+                        (mem["title"], mem["content"], emo_weight, mem_id)
+                    )
+                    changed = True
             conn.commit()
             cursor.execute("SELECT COUNT(*) FROM memories")
             sqlite_count = cursor.fetchone()[0]
 
-        if self.collection.count() != sqlite_count:
+        if changed or self.collection.count() != sqlite_count:
             self.rebuild_index(memories)
 
     def _query_memory_group(self, query: str, where_filter: Dict[str, Any], group_limit: int, max_distance: float) -> List[Dict[str, Any]]:
