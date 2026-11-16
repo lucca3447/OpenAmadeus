@@ -12,17 +12,20 @@ def offline_simulator(text: str, persona: dict, memories: List[dict], lang: str 
 
     # Check for simple personal introduction to simulate learning
     intro_match = re.search(
-        r"(?:meu nome é|me chamo|eu sou o|eu sou a)\s+([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]+)",
+        r"(?:meu nome é|me chamo|eu sou o|eu sou a|my name is|call me|i(?:'m| am))\s+([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]{2,})"
+        r"|(?:私の名前は|俺の名前は|僕の名前は)([^\s、。！？]+?)(?:です|だ|よ|と)?(?:$|[、。！？])",
         text,
         re.IGNORECASE
     )
     if intro_match:
-        user_name = intro_match.group(1).capitalize()
-        learned = LearnedMemoryInfo(
-            title="Identidade do Interlocutor",
-            content=f"O operador se apresentou como {user_name}.",
-            emotionalWeight="Acolhimento amigável"
-        )
+        raw_name = (intro_match.group(1) or intro_match.group(2) or "").strip()
+        if raw_name:
+            user_name = raw_name[0].upper() + raw_name[1:]
+            learned = LearnedMemoryInfo(
+                title="Identidade do Interlocutor",
+                content=f"O operador se apresentou como {user_name}.",
+                emotionalWeight="Acolhimento amigável"
+            )
 
     def has(*words):
         return any(re.search(r'(?i)\b' + re.escape(w) + r'\b', t) for w in words)
@@ -80,22 +83,45 @@ def offline_simulator(text: str, persona: dict, memories: List[dict], lang: str 
         if lc == "ja":
             return f"こんにちは！アマデウス・ユニットとの接続が確立されたわ。第304研究室の{persona.get('name', '牧瀬紅莉栖')}よ。今日は何を議論したいの？", "smile", learned
         return f"Olá! Conexão estabelecida com a unidade Amadeus. Aqui é {persona.get('name', 'Makise Kurisu')} do Laboratório 304. Sobre o que você quer debater hoje?", "smile", learned
-    if has("aparência", "aparencia", "física", "fisica", "cabelo", "olhos", "altura", "peso", "roupa", "roupas", "vestuário", "vestuario") or (has("debug", "debugging") and has("física", "fisica", "corpo", "visual")):
+    if has("aparência", "aparencia", "física", "fisica", "cabelo", "olhos", "altura", "peso", "roupa", "roupas", "vestuário", "vestuario", "appearance", "hair", "eyes", "outfit", "clothes") or "見た目" in t or "服装" in t or (has("debug", "debugging") and has("física", "fisica", "corpo", "visual")):
+        if lc == "en":
+            return "M-my appearance?! Why are you suddenly asking about that?! If you need the factual data: I'm 165 cm tall, around 45 kg, with long chestnut-red hair and violet-blue eyes. I wear a white shirt with a loose red tie, khaki jacket, white lab coat, black shorts, and tights!", "flustered", learned
+        if lc == "ja":
+            return "み、見た目？！急に何言い出すのよ！データとして必要なら、身長165cm、体重45kgくらい、栗色のロングヘアに青紫の瞳。白いシャツに赤いネクタイ、白衣に黒のショートパンツとタイツよ！", "flustered", learned
         return "Minha aparência? Por que você está tão interessado nisso do nada?! Se você precisa dos dados reais: tenho 1,65 m de altura, peso cerca de 45 kg, cabelos ruivos acastanhados longos até a cintura com franja aberta, e olhos violeta-azulados. Costumo vestir camisa branca com gravata vermelha frouxa, jaqueta cáqui caída nos braços, jaleco branco, shorts pretos e meia-calça. Meu avatar Amadeus é a projeção fiel desse meu corpo real, sem invenções futuristas!", "flustered", learned
 
     # Direct action & expression triggers
-    if has("sorria", "sorriso", "sorri") or re.search(r"(?i)\b(d[eê]|d[aá]|um)?\s*(sorriso|sorria|sorri)\b", t):
+    if has("sorria", "sorriso", "sorri", "smile") or "笑って" in t or "笑顔" in t or re.search(r"(?i)\b(d[eê]|d[aá]|um)?\s*(sorriso|sorria|sorri)\b", t):
+        if lc == "en":
+            return "A-a smile? Why ask for something like that out of nowhere?! ...F-fine, if you insist, don't get used to it!", "smile", learned
+        if lc == "ja":
+            return "え、笑顔？急に何なのよ……！べ、別にあんたのために笑うわけじゃないんだからね！", "smile", learned
         return "U-um sorriso? Por que você está me pedindo algo tão repentino do nada?! ...T-tudo bem, se você faz tanta questão, mas não se acostume com isso, tá?", "smile", learned
-    if has("pensativa", "pense", "queixo") or re.search(r"(?i)\b(pense|pensativa|m[aã]o no queixo|analise)\b", t):
+    if has("pensativa", "pense", "queixo", "think", "thinking") or "考えて" in t or re.search(r"(?i)\b(pense|pensativa|m[aã]o no queixo|analise)\b", t):
+        if lc == "en":
+            return "Hmm... Analyzing this through empirical data and particle physics, there are several fundamental variables. What do you hypothesize as the root cause?", "thinking", learned
+        if lc == "ja":
+            return "ふむ……実証データと素粒子物理学の観点から分析すると、考慮すべき変数は多いわね。原因は何だと思う？", "thinking", learned
         return "Hmm... Se analisarmos a questão sob a ótica dos dados empíricos e da física de partículas, existem muitas variáveis fundamentais. O que você supõe como causa principal?", "thinking", learned
-    if has("brava", "emburrada", "braços") or re.search(r"(?i)\b(brava|irritada|emburrada|cruze os bra[çc]os)\b", t):
+    if has("brava", "emburrada", "braços", "angry", "pout") or "怒って" in t or re.search(r"(?i)\b(brava|irritada|emburrada|cruze os bra[çc]os)\b", t):
+        if lc == "en":
+            return "Hmph! I'm a neuroscientist published in Science, not a lab mannequin here to strike poses! Honestly...", "annoyed", learned
+        if lc == "ja":
+            return "ふん！私はサイエンス誌に論文が載った脳科学者よ、ポーズ人形じゃないわ！まったく……。", "annoyed", learned
         return "Humpf! Eu sou uma neurocientista com artigos na Science, não uma boneca de laboratório para fazer poses! Francamente...", "annoyed", learned
-    if has("cora", "corada", "vergonha", "tímida", "fofa", "linda") or re.search(r"(?i)\b(cora|corada|vergonha|t[íi]mida|fofa|linda)\b", t):
+    if has("cora", "corada", "vergonha", "tímida", "fofa", "linda", "blush", "cute", "shy") or "照れて" in t or "可愛い" in t or re.search(r"(?i)\b(cora|corada|vergonha|t[íi]mida|fofa|linda)\b", t):
+        if lc == "en":
+            return "B-blushing?! Who are you calling cute out of nowhere?! It's just thermal output from the Amadeus servers!", "flustered", learned
+        if lc == "ja":
+            return "て、照れてる？！誰が可愛いよ！サーバーの排熱のせいなんだからね！", "flustered", learned
         return "L-linda?! Q-quem você está chamando de fofa assim do nada?! N-não é como se eu estivesse envergonhada nem nada... é só o calor dos servidores do Amadeus! O que você quer afinal?!", "flustered", learned
-
 
     if memories:
         mem = memories[0]
+        if lc == "en":
+            return f"That reminds me of something in my memory records ({mem.get('title', 'memory')}): {mem.get('content', '')} How do you see the connection?", "thinking", learned
+        if lc == "ja":
+            return f"それ、私の記憶ログ（{mem.get('title', '記憶')}）にある記録を思い出すわ。あんたはどう関連づけて考えているの？", "thinking", learned
         return f"Isso me faz lembrar de um ponto nos meus registros de memória: {mem.get('content', '')} Como você vê essa relação?", "thinking", learned
 
     # Check if a fine-tuning dataset exemplar matches the query

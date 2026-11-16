@@ -721,39 +721,92 @@ export class AIService {
 
   private static buildAutonomousEventPrompt(
     systemEvent: AutonomousEventType,
-    history: ChatMessage[]
+    history: ChatMessage[],
+    lang?: string,
+    canonicalVoice?: boolean
   ): string {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
     const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
     const lastAsst = [...history].reverse().find((m) => m.sender === 'amadeus')?.content || '';
     const { lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
 
+    if (lc === 'en') {
+      const jaNote = canonicalVoice ? ' Include <!--ja:セリフ--> before EACH spoken sentence.' : '';
+      if (systemEvent === 'call_greeting') {
+        const topicHint = lastSessionTopic ? ` In the last call you discussed: "${lastSessionTopic}".` : '';
+        return (
+          `[SYSTEM EVENT: CALL CONNECTED] The operator just connected the video call with you on the Amadeus terminal.${topicHint} ` +
+          `Start the conversation directly in 1st person in English (1 to 2 natural sentences), accounting for local time, the hiatus since last contact, and naturally referencing the previous topic if any. Do NOT mention system events.${jaNote}`
+        );
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return (
+          `[SYSTEM EVENT: MID-CONVERSATION SILENCE — STAGE 1] The operator has been silent for ~2 minutes mid-dialogue. ` +
+          `Their last message was: "${lastUser}" and your last reply was: "${lastAsst}". ` +
+          `Prompt them naturally in English (1 to 2 sentences), picking up that thread or asking if they froze thinking over your reply. Do NOT mention timers or system events.${jaNote}`
+        );
+      }
+      return (
+        `[SYSTEM EVENT: PROLONGED SILENCE — STAGE 2] The operator still hasn't replied after ~5 minutes. ` +
+        `The conversation stopped at: "${lastUser}". ` +
+        `React with authentic Kurisu impatience with crossed arms in English (1 to 2 sentences), complaining about being left talking to herself on the terminal and saying you'll go back to reading papers until they reply. Place <!--emotion:annoyed,pose:crossed_arms,camera:medium--> at the very start.${jaNote}`
+      );
+    }
+
+    if (lc === 'ja') {
+      if (systemEvent === 'call_greeting') {
+        const topicHint = lastSessionTopic ? ` 前回の通話では「${lastSessionTopic}」について話しました。` : '';
+        return (
+          `[システムイベント: 通話接続] オペレーターがAmadeus端末でビデオ通話を接続したばかりです。${topicHint} ` +
+          `自然な日本語の一人称で1〜2文、時間帯や前回の間隔・話題を踏まえて自然に話しかけてください。システムイベントであることは言及しないでください。`
+        );
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return (
+          `[システムイベント: 会話中の沈黙 — ステージ1] オペレーターが会話の途中で約2分間無言です。` +
+          `直前の相手の発言は「${lastUser}」、あなたの最後の返答は「${lastAsst}」でした。` +
+          `自然な日本語で1〜2文、話題の続きを促すか、考え込んでいるのか軽く問いかけてください。タイマーやシステムイベントには触れないでください。`
+        );
+      }
+      return (
+        `[システムイベント: 長時間の沈黙 — ステージ2] 声をかけてからも約5分間返答がありません。` +
+        `止まっていた話題は「${lastUser}」です。` +
+        `腕を組んで苛立つ紅莉栖らしい反応を日本語で1〜2文出力し、返事するまで論文を読みに戻ると伝えてください。先頭に <!--emotion:annoyed,pose:crossed_arms,camera:medium--> を付けてください。`
+      );
+    }
+
+    const jaNote = canonicalVoice ? ' Inclua <!--ja:セリフ--> antes de CADA frase falada.' : '';
     if (systemEvent === 'call_greeting') {
       const topicHint = lastSessionTopic ? ` Na última ligação vocês falaram sobre: "${lastSessionTopic}".` : '';
       return (
         `[EVENTO DO SISTEMA: ATENDIMENTO DE CHAMADA] O operador acabou de conectar a videochamada com você no terminal Amadeus.${topicHint} ` +
-        `Inicie a conversa falando diretamente com ele em 1ª pessoa (1 a 2 frases naturais), levando em conta o horário local, o hiato desde o último contato e, se houver assunto da última ligação, puxando gancho de forma espontânea. NÃO mencione eventos de sistema.`
+        `Inicie a conversa falando diretamente com ele em 1ª pessoa (1 a 2 frases naturais), levando em conta o horário local, o hiato desde o último contato e, se houver assunto da última ligação, puxando gancho de forma espontânea. NÃO mencione eventos de sistema.${jaNote}`
       );
     }
     if (systemEvent === 'idle_stage_1') {
       return (
         `[EVENTO DO SISTEMA: SILÊNCIO NO MEIO DA CONVERSA — ESTÁGIO 1] O operador ficou em silêncio há cerca de 2 minutos no meio do diálogo. ` +
         `A última coisa que ele disse foi: "${lastUser}" e a sua última resposta foi: "${lastAsst}". ` +
-        `Chame a atenção dele de forma humana e natural (1 a 2 frases), puxando o fio exatamente desse assunto que parou na metade ou perguntando se ele travou pensando na sua resposta. NÃO mencione cronômetros ou eventos de sistema.`
+        `Chame a atenção dele de forma humana e natural (1 a 2 frases), puxando o fio exatamente desse assunto que parou na metade ou perguntando se ele travou pensando na sua resposta. NÃO mencione cronômetros ou eventos de sistema.${jaNote}`
       );
     }
     return (
       `[EVENTO DO SISTEMA: SILÊNCIO PROLONGADO — ESTÁGIO 2] O operador continua sem responder há quase 5 minutos mesmo depois de você ter chamado a atenção dele. ` +
       `O papo tinha parado em: "${lastUser}". ` +
-      `Reaja com impaciência autêntica de Kurisu de braços cruzados (1 a 2 frases), reclamando de ter sido deixada falando sozinha no terminal sobre esse assunto e avisando que vai voltar a ler seus artigos até ele dignar responder. Inclua <!--emotion:annoyed,pose:crossed_arms,camera:medium--> ao final.`
+      `Reaja com impaciência autêntica de Kurisu de braços cruzados (1 a 2 frases), reclamando de ter sido deixada falando sozinha no terminal sobre esse assunto e avisando que vai voltar a ler seus artigos até ele dignar responder. Inclua <!--emotion:annoyed,pose:crossed_arms,camera:medium--> no início.${jaNote}`
     );
   }
 
   static queryOfflineAutonomousEvent(
     systemEvent: AutonomousEventType,
     history: ChatMessage[] = [],
-    lang?: string
-  ): { response: string; emotion: Emotion; pose: CharacterPose; camera: CameraFraming } {
+    lang?: string,
+    canonicalVoice?: boolean
+  ): { response: string; ttsResponse?: string; emotion: Emotion; pose: CharacterPose; camera: CameraFraming } {
     const lc = (lang || 'pt').toLowerCase().slice(0, 2);
+    const ttsResponse = canonicalVoice && lc !== 'ja'
+      ? this.queryOfflineAutonomousEvent(systemEvent, history, 'ja', false).response
+      : undefined;
     const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
     const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
     const snippet = lastUser.length > 48 ? `${lastUser.slice(0, 48)}...` : lastUser;
@@ -763,6 +816,7 @@ export class AIService {
       if (systemEvent === 'call_greeting') {
         return {
           response: 'Connection established with Lab 304 at Viktor Chondria. This is Makise Kurisu. What are we working on today?',
+          ttsResponse,
           emotion: 'happy',
           pose: 'default',
           camera: 'closeup',
@@ -773,6 +827,7 @@ export class AIService {
           response: snippet
             ? `Hey, you went quiet all of a sudden... Are you still processing what we discussed about "${snippet}"?`
             : 'Hey, are you still there? You suddenly went silent in the middle of our conversation.',
+          ttsResponse,
           emotion: 'thinking',
           pose: 'crossed_arms',
           camera: 'medium',
@@ -780,6 +835,7 @@ export class AIService {
       }
       return {
         response: "Listen, if you went to grab coffee and left me talking to myself on the terminal, at least say so! I'll cross my arms and read my neuroscience papers until you return.",
+        ttsResponse,
         emotion: 'annoyed',
         pose: 'crossed_arms',
         camera: 'medium',
@@ -818,6 +874,7 @@ export class AIService {
         const days = Math.max(1, Math.floor(gapSeconds / 86400));
         return {
           response: `Olha só quem resolveu aparecer depois de ${days} dia(s) sem dar sinal de vida! Achei que você tinha sido capturado pela 'Organização'... não que eu estivesse esperando sua ligação, claro! O que manda hoje?`,
+          ttsResponse,
           emotion: 'annoyed',
           pose: 'crossed_arms',
           camera: 'medium',
@@ -826,6 +883,7 @@ export class AIService {
       if (h < 6) {
         return {
           response: 'Conectando a essa hora da madrugada? Espero que você tenha pelo menos uma xícara de café preto aí do lado. Qual é a insônia científica de hoje?',
+          ttsResponse,
           emotion: 'wink',
           pose: 'crossed_arms',
           camera: 'medium',
@@ -834,6 +892,7 @@ export class AIService {
       if (lastSessionTopic) {
         return {
           response: `Conexão estabelecida com o Laboratório 304! Estava mesmo lembrando da nossa última conversa (${lastSessionTopic.slice(0, 65)}). Como avançaram as coisas por aí?`,
+          ttsResponse,
           emotion: 'happy',
           pose: 'default',
           camera: 'closeup',
@@ -841,6 +900,7 @@ export class AIService {
       }
       return {
         response: 'Conexão estabelecida com o Laboratório 304 em Viktor Chondria. Aqui é Makise Kurisu. No que vamos trabalhar hoje?',
+        ttsResponse,
         emotion: 'happy',
         pose: 'default',
         camera: 'closeup',
@@ -852,6 +912,7 @@ export class AIService {
         response: snippet
           ? `Ei, você ficou mudo de repente... Ainda está processando o que estávamos falando sobre "${snippet}" ou travou aí na frente do monitor?`
           : 'Ei, ainda está aí? Você ficou em silêncio do nada no meio da nossa conversa.',
+        ttsResponse,
         emotion: 'thinking',
         pose: 'crossed_arms',
         camera: 'medium',
@@ -860,6 +921,7 @@ export class AIService {
 
     return {
       response: 'Olha só, se você foi pegar café e me deixou falando sozinha no terminal, avise! Vou cruzar os braços e revisar meus dados de neurociência até você resolver voltar.',
+      ttsResponse,
       emotion: 'annoyed',
       pose: 'crossed_arms',
       camera: 'medium',
@@ -895,7 +957,7 @@ export class AIService {
     const systemEvent = llmOptions?.systemEvent;
     const lang = llmOptions?.lang || 'pt';
     const canonicalVoice = Boolean(llmOptions?.canonicalVoice);
-    const effectiveMessage = systemEvent ? this.buildAutonomousEventPrompt(systemEvent, history) : userMessage;
+    const effectiveMessage = systemEvent ? this.buildAutonomousEventPrompt(systemEvent, history, lang, canonicalVoice) : userMessage;
 
     // 0. Explicit offline mode
     if (selectedModel === OFFLINE_MODEL_ID) {
@@ -904,8 +966,8 @@ export class AIService {
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
       const offline = systemEvent
-        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang)
-        : this.queryOfflineSimulator(userMessage, recalledMemories, lang);
+        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang, canonicalVoice)
+        : this.queryOfflineSimulator(userMessage, recalledMemories, lang, canonicalVoice);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
@@ -958,8 +1020,8 @@ export class AIService {
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
       const offline = systemEvent
-        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang)
-        : this.queryOfflineSimulator(userMessage, recalledMemories, lang);
+        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang, canonicalVoice)
+        : this.queryOfflineSimulator(userMessage, recalledMemories, lang, canonicalVoice);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
@@ -1046,7 +1108,8 @@ export class AIService {
     }
   }
 
-  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0, history: ChatMessage[] = []): string {
+  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0, history: ChatMessage[] = [], lang?: string): string {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
     const kurisuMemories = recalledMemories.filter((m) => m.source !== 'learned');
     const recentLearned = (persona?.memories || []).filter((m) => m.source === 'learned').slice(-12);
     const seen = new Set(recentLearned.map((m) => m.id));
@@ -1055,31 +1118,59 @@ export class AIService {
     const now = new Date();
     const h = now.getHours();
     const timeStr = `${String(h).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const period = h < 6
-      ? 'Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper'
-      : h < 12 ? 'Manhã' : h < 18 ? 'Tarde' : 'Noite';
     const turnCount = Math.floor(historyCount / 2) + 1;
-    const rapport = (userMemories.length >= 2 || turnCount >= 6)
-      ? 'Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas'
-      : (userMemories.length === 1 || turnCount >= 3)
-        ? 'Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada'
-        : 'Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora';
-
     const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
-    let hiatusStr = 'Fluxo contínuo';
-    if (gapSeconds !== null) {
-      if (gapSeconds >= 86400) {
-        const days = Math.max(1, Math.floor(gapSeconds / 86400));
-        hiatusStr = `Hiato de ${days} dia(s) sem contato — se oportuno, comente sobre o sumiço do operador`;
-      } else if (gapSeconds >= 3600) {
-        const hrs = Math.max(1, Math.floor(gapSeconds / 3600));
-        hiatusStr = `Pausa de ${hrs}h desde a última mensagem`;
+
+    let telemetryLine = '';
+    if (lc === 'en') {
+      const period = h < 6 ? 'Late night — subtly tease about sleep deprivation or black coffee/Dr Pepper' : h < 12 ? 'Morning' : h < 18 ? 'Afternoon' : 'Night';
+      const rapport = (userMemories.length >= 2 || turnCount >= 6)
+        ? 'LabMem Trust — attentive and caring, masking affection with scientific excuses'
+        : (userMemories.length === 1 || turnCount >= 3)
+          ? 'Active Debate — sharp, sarcastic, intellectually engaged'
+          : 'Initial Contact — Viktor Chondria academic posture, skeptical and observant';
+      let hiatus = 'Continuous flow';
+      if (gapSeconds !== null) {
+        if (gapSeconds >= 86400) hiatus = `${Math.max(1, Math.floor(gapSeconds / 86400))}-day hiatus`;
+        else if (gapSeconds >= 3600) hiatus = `${Math.max(1, Math.floor(gapSeconds / 3600))}h pause since last message`;
       }
+      telemetryLine = `[AMADEUS CALL TELEMETRY]: Local time: ${timeStr} (${period}) | Turn #${turnCount} | Hiatus: ${hiatus} | Rapport: ${rapport}`;
+    } else if (lc === 'ja') {
+      const period = h < 6 ? '深夜 — 睡眠不足やブラックコーヒー/ドクペについて軽く触れてもよい' : h < 12 ? '朝' : h < 18 ? '昼' : '夜';
+      const rapport = (userMemories.length >= 2 || turnCount >= 6)
+        ? '信頼（ラボメン）— 気遣いを科学的言い訳で隠す'
+        : (userMemories.length === 1 || turnCount >= 3)
+          ? '活発な議論 — 鋭く皮肉屋で知的に関与'
+          : '初期接触 — ヴィクトル・コンドリアの研究員として冷静・懐疑的';
+      let hiatus = '連続会話中';
+      if (gapSeconds !== null) {
+        if (gapSeconds >= 86400) hiatus = `${Math.max(1, Math.floor(gapSeconds / 86400))}日ぶりの連絡`;
+        else if (gapSeconds >= 3600) hiatus = `${Math.max(1, Math.floor(gapSeconds / 3600))}時間ぶりの再開`;
+      }
+      telemetryLine = `[AMADEUS通話テレメトリ]: 時刻: ${timeStr} (${period}) | ターン#${turnCount} | 間隔: ${hiatus} | 関係性: ${rapport}`;
+    } else {
+      const period = h < 6
+        ? 'Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper'
+        : h < 12 ? 'Manhã' : h < 18 ? 'Tarde' : 'Noite';
+      const rapport = (userMemories.length >= 2 || turnCount >= 6)
+        ? 'Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas'
+        : (userMemories.length === 1 || turnCount >= 3)
+          ? 'Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada'
+          : 'Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora';
+      let hiatusStr = 'Fluxo contínuo';
+      if (gapSeconds !== null) {
+        if (gapSeconds >= 86400) {
+          const days = Math.max(1, Math.floor(gapSeconds / 86400));
+          hiatusStr = `Hiato de ${days} dia(s) sem contato — se oportuno, comente sobre o sumiço do operador`;
+        } else if (gapSeconds >= 3600) {
+          const hrs = Math.max(1, Math.floor(gapSeconds / 3600));
+          hiatusStr = `Pausa de ${hrs}h desde a última mensagem`;
+        }
+      }
+      telemetryLine = `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Hiato: ${hiatusStr} | Rapport: ${rapport}`;
     }
 
-    const blocks: string[] = [
-      `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Hiato: ${hiatusStr} | Rapport: ${rapport}`,
-    ];
+    const blocks: string[] = [telemetryLine];
     if (lastSessionTopic && turnCount <= 2) {
       blocks.push(`[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]: ${lastSessionTopic}`);
     }
@@ -1096,6 +1187,12 @@ export class AIService {
         `[FATOS CONHECIDOS SOBRE O INTERLOCUTOR (SEU OPERADOR)]:\n` +
           userMemories.map((m) => `- ${m.title}: ${m.content}`).join('\n')
       );
+    }
+
+    if (lc === 'en') {
+      blocks.push('[LANGUAGE ANCHOR]: Reference memories or telemetry above may be stored in Portuguese or Japanese for internal recall only. Your visible reply MUST be 100% in English.');
+    } else if (lc === 'ja') {
+      blocks.push('[言語アンカー]: 上記の記憶やテレメトリは内部参照用であり、ポルトガル語や英語で記録されている場合があります。ユーザーへの返答は必ず100%自然な日本語のみで出力してください。');
     }
 
     return `\n\n${blocks.join('\n\n')}`;
@@ -1144,7 +1241,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length, history, lang);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}`;
 
     const messages = [
@@ -1287,7 +1384,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length, history, lang);
     const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}`;
 
     const messages = [
@@ -1459,7 +1556,7 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length, history, lang);
 
     const body = {
       contents: this.buildContents(history, userMessage),
@@ -1869,21 +1966,42 @@ export class AIService {
   private static queryOfflineSimulator(
     userMessage: string,
     recalledMemories: MemoryItem[],
-    lang?: string
+    lang?: string,
+    canonicalVoice?: boolean
+  ): { response: string; ttsResponse?: string; emotion: Emotion; pose?: CharacterPose; learnedMemory?: LearnedMemoryInfo } {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
+    const res = this.queryOfflineSimulatorReply(userMessage, recalledMemories, lc);
+    if (canonicalVoice && lc !== 'ja') {
+      return {
+        ...res,
+        ttsResponse: this.queryOfflineSimulatorReply(userMessage, recalledMemories, 'ja').response,
+      };
+    }
+    return res;
+  }
+
+  private static queryOfflineSimulatorReply(
+    userMessage: string,
+    recalledMemories: MemoryItem[],
+    lc: string
   ): { response: string; emotion: Emotion; pose?: CharacterPose; learnedMemory?: LearnedMemoryInfo } {
     const text = userMessage.toLowerCase().trim();
-    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
 
     // Check for user introduction to simulate learning in offline mode
     let learnedMemory: LearnedMemoryInfo | undefined = undefined;
-    const introMatch = userMessage.match(/(?:meu nome é|me chamo|eu sou o|eu sou a)\s+([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]+)/i);
+    const introMatch = userMessage.match(
+      /(?:meu nome é|me chamo|eu sou o|eu sou a|my name is|call me|i(?:'m| am))\s+([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]{2,})|(?:私の名前は|俺の名前は|僕の名前は)([^\s、。！？]+?)(?:です|だ|よ|と)?(?:$|[、。！？])/i
+    );
     if (introMatch) {
-      const name = introMatch[1].charAt(0).toUpperCase() + introMatch[1].slice(1);
-      learnedMemory = {
-        title: 'Nome do Operador',
-        content: `O interlocutor se chama ${name}.`,
-        emotionalWeight: 'Acolhimento amigável',
-      };
+      const rawName = (introMatch[1] || introMatch[2] || '').trim();
+      if (rawName) {
+        const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+        learnedMemory = {
+          title: 'Nome do Operador',
+          content: `O interlocutor se chama ${name}.`,
+          emotionalWeight: 'Acolhimento amigável',
+        };
+      }
     }
 
     const has = (...words: string[]) =>
@@ -1975,13 +2093,13 @@ export class AIService {
 
     if (has('maho', 'hiyajo', 'leskinen') || /真帆|レスキネン/i.test(text)) {
       if (lc === 'en') {
-        return { response: "Maho-senpai is the brilliant mind behind the Amadeus architecture. Despite her unnecessary complex about her height, her work on synaptic mapping is impeccable. And Professor Leskinen... well, his boisterous American enthusiasm always keeps the lab lively.", emotion: 'smile' as Emotion, learnedMemory };
+        return { response: "Maho is the brilliant mind behind the Amadeus architecture. Despite her unnecessary complex about her height, her work on synaptic mapping is impeccable. And Professor Leskinen... well, his boisterous American enthusiasm always keeps the lab lively.", emotion: 'smile' as Emotion, learnedMemory };
       }
       if (lc === 'ja') {
-        return { response: "真帆先輩はアマデウスのアーキテクチャを支える素晴らしい研究者よ。身長のことで無用なコンプレックスを持ってるけど、シナプスマッピングの腕は本物よ。レスキネン教授は……まあ、あのアメリカンな陽気さには時々困らされるけどね。", emotion: 'smile' as Emotion, learnedMemory };
+        return { response: "真帆はアマデウスのアーキテクチャを支える素晴らしい研究者よ。身長のことで無用なコンプレックスを持ってるけど、シナプスマッピングの腕は本物よ。レスキネン教授は……まあ、あのアメリカンな陽気さには時々困らされるけどね。", emotion: 'smile' as Emotion, learnedMemory };
       }
       return {
-        response: 'A Maho-senpai é a mente brilhante por trás da arquitetura do Amadeus. Embora ela tenha aquele complexo com a estatura dela, o trabalho dela em algoritmos de sinapse é impecável. E o Professor Leskinen... bem, ele sempre traz aquele bom humor americano contagiante para o laboratório.',
+        response: 'A Maho é a mente brilhante por trás da arquitetura do Amadeus. Embora ela tenha aquele complexo com a estatura dela, o trabalho dela em algoritmos de sinapse é impecável. E o Professor Leskinen... bem, ele sempre traz aquele bom humor americano contagiante para o laboratório.',
         emotion: 'smile',
         learnedMemory,
       };
@@ -2116,6 +2234,20 @@ export class AIService {
 
     if (recalledMemories.length > 0) {
       const mem = recalledMemories[0];
+      if (lc === 'en') {
+        return {
+          response: `That reminds me of something in my memory records (${mem.title}): ${mem.content} How do you see the connection?`,
+          emotion: 'thinking',
+          learnedMemory,
+        };
+      }
+      if (lc === 'ja') {
+        return {
+          response: `それ、私の記憶ログ（${mem.title}）にある記録を思い出すわ。あんたはどう関連づけて考えているの？`,
+          emotion: 'thinking',
+          learnedMemory,
+        };
+      }
       return {
         response: `Isso me faz lembrar de um ponto nos meus registros de memória: ${mem.content} Como você vê essa relação?`,
         emotion: 'thinking',
