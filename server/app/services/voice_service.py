@@ -56,23 +56,26 @@ def clean_text_for_tts(text: str, lang: str = "pt") -> str:
     - De-stutters single-letter prefixes ('Q-quem' -> 'Quem', 'L-linda' -> 'Linda', 'N-não' -> 'Não')
     """
     clean_text = clean_speech_text(text)
-    is_pt = (lang or "pt").lower().startswith("pt")
-    # 1. Replace combined punctuation (?!, !?, etc.) with a single question mark
-    clean_text = re.sub(r"\?+!+[!?]*|!+\?+[!?]*", "?", clean_text)
+    lc = (lang or "pt").strip().lower()[:2]
+    is_pt = lc == "pt"
+    is_ja = lc == "ja"
+    # 1. Replace combined punctuation (?!, !?, ？!, ！?) with a single question mark
+    clean_text = re.sub(r"[?？]+[!！]+[!?？！]*|[!！]+[?？]+[!?？！]*", "？" if is_ja else "?", clean_text)
     if is_pt:
         # 2. Replace exclamation marks with '.' to prevent glottal-stop syllable truncation in PT-BR
         clean_text = re.sub(r"!+", ".", clean_text)
         clean_text = re.sub(r"([.,])\s*\.", r"\1", clean_text)
 
-        # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum)
-        # that trigger Japanese VN vocal sighs/moans ("gemidos")
+    if lc in ("pt", "en"):
+        # 3. Strip non-lexical anime hesitation vocables (U-um, U... um, Uhm, Hmm, Hum, Er)
+        # that trigger vocal sighs/moans
         clean_text = re.sub(
-            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+|e+r+)\b\s*[,;:.]*\s*",
             "",
             clean_text,
         )
 
-    # 4. General single-letter stutters: Q-quem -> Quem, Q... quem -> Quem, L-linda -> Linda, N-não -> Não
+    # 4. General single-letter stutters: Q-quem -> Quem, D-don't -> Don't
     def _un_stutter(m: re.Match) -> str:
         prefix = m.group(1)
         word = m.group(2)
@@ -81,6 +84,11 @@ def clean_text_for_tts(text: str, lang: str = "pt") -> str:
         return m.group(0)
 
     clean_text = re.sub(r"\b([A-Za-zÀ-ÿ])(?:\s*\.{2,}\s*|-)([a-zà-ÿ]+)\b", _un_stutter, clean_text)
+
+    if is_ja:
+        # Preserve Japanese phrasing for qwen_worker.sanitize_for_qwen (converts ellipses to 。 / 、)
+        clean_text = re.sub(r"\s+", " ", clean_text).strip()
+        return clean_text
 
     # 5. Replace trailing ellipses with '.' and mid-sentence ellipses with ', '
     # to eliminate 2-3s silent gaps and breath hallucinations
@@ -99,6 +107,18 @@ def clean_text_for_tts(text: str, lang: str = "pt") -> str:
         clean_text = clean_text[0].upper() + clean_text[1:]
 
     return clean_text
+
+
+def resolve_qwen_language(lang: Optional[str] = "pt", text: str = "") -> str:
+    """Maps ISO/BCP-47 language tag (or CJK text detection) to Qwen3-TTS language name."""
+    if text and re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", text):
+        return "Japanese"
+    norm = (lang or "pt").strip().lower()
+    if norm.startswith("ja"):
+        return "Japanese"
+    if norm.startswith("en"):
+        return "English"
+    return "Portuguese"
 
 
 async def generate_edge_tts_stream(
@@ -142,6 +162,7 @@ async def synthesize_speech(
     rvc_model: Optional[str] = "KurisuRVCv147",
     rvc_pitch: int = 0,
     rvc_index_rate: float = 0.75,
+    rvc_protect: float = 0.33,
     engine: str = "qwen3",
     qwen_mode: Optional[str] = "remote",
     qwen_remote_url: Optional[str] = None,
@@ -150,6 +171,7 @@ async def synthesize_speech(
     stream: bool = False,
     allow_fallback: bool = True,
     allowed_fallbacks: Optional[List[str]] = None,
+    lang: Optional[str] = "pt",
 ) -> Tuple[str, AsyncGenerator[bytes, None]]:
     """
     Modular speech orchestrator with user-controlled strict mode vs. sequential fallback:
@@ -168,10 +190,12 @@ async def synthesize_speech(
     # =========================================================================
     # STEP 1: Qwen3-TTS (Primary)
     # =========================================================================
+    qwen_lang = resolve_qwen_language(lang, clean_text)
+    eff_lang_code = "ja" if qwen_lang == "Japanese" else ("en" if qwen_lang == "English" else "pt")
     if active_engine == "qwen3":
-        qwen_text = clean_text_for_tts(text)
+        qwen_text = clean_text_for_tts(text, lang=eff_lang_code)
         primary_err = None
-        print(f"[OpenAmadeus Voice] Qwen3 Synthesis (mode: {qwen_mode}, stream: {stream}, strict: {not allow_fallback}) | Emotion: '{emotion or 'neutral'}'")
+        print(f"[OpenAmadeus Voice] Qwen3 Synthesis (lang: {qwen_lang}, mode: {qwen_mode}, stream: {stream}, strict: {not allow_fallback}) | Emotion: '{emotion or 'neutral'}'")
 
         # 1.1 Complete WAV delivery
         if not stream:
@@ -180,7 +204,7 @@ async def synthesize_speech(
                     text=qwen_text,
                     emotion=emotion,
                     custom_instruct=instruct,
-                    language="Portuguese",
+                    language=qwen_lang,
                     qwen_mode=qwen_mode or "remote",
                     qwen_remote_url=qwen_remote_url,
                 )
@@ -208,7 +232,7 @@ async def synthesize_speech(
                             text=qwen_text,
                             emotion=emotion,
                             custom_instruct=instruct,
-                            language="Portuguese",
+                            language=qwen_lang,
                             qwen_mode="local",
                         )
                         if local_wav:
@@ -225,7 +249,7 @@ async def synthesize_speech(
                     text=qwen_text,
                     emotion=emotion,
                     custom_instruct=instruct,
-                    language="Portuguese",
+                    language=qwen_lang,
                     qwen_mode=qwen_mode or "remote",
                     qwen_remote_url=qwen_remote_url,
                 )
@@ -249,7 +273,7 @@ async def synthesize_speech(
                             text=qwen_text,
                             emotion=emotion,
                             custom_instruct=instruct,
-                            language="Portuguese",
+                            language=qwen_lang,
                             qwen_mode="local",
                         )
                         return content_type, local_stream_gen
@@ -290,6 +314,7 @@ async def synthesize_speech(
                         audio_bytes=kokoro_wav,
                         pitch_shift=rvc_pitch,
                         index_rate=rvc_index_rate,
+                        protect=rvc_protect,
                         model_name=rvc_model or "KurisuRVCv147",
                     )
                     if converted_wav:
@@ -323,7 +348,9 @@ async def synthesize_speech(
     # =========================================================================
     # STEP 3: Edge-TTS (Cloud Neural)
     # =========================================================================
-    print(f"[OpenAmadeus Voice] Edge-TTS Synthesis (RVC: {use_rvc}) | Text: \"{clean_text}\"")
+    if (not voice or voice == "pt-BR-FranciscaNeural") and eff_lang_code != "pt":
+        voice = "ja-JP-NanamiNeural" if eff_lang_code == "ja" else "en-US-JennyNeural"
+    print(f"[OpenAmadeus Voice] Edge-TTS Synthesis (RVC: {use_rvc}, voice: {voice}) | Text: \"{clean_text}\"")
     try:
         if not use_rvc:
             return "audio/mpeg", generate_edge_tts_stream(clean_text, voice=voice, rate=rate, pitch=pitch)
@@ -340,6 +367,7 @@ async def synthesize_speech(
             audio_bytes=edge_audio_bytes,
             pitch_shift=rvc_pitch,
             index_rate=rvc_index_rate,
+            protect=rvc_protect,
             model_name=rvc_model or "KurisuRVCv147",
         )
         if converted_wav:

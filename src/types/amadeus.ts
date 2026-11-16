@@ -31,6 +31,7 @@ export type CameraFraming = 'closeup' | 'medium' | 'full';
 export type CameraMode = 'auto' | CameraFraming;
 
 export type MouthState = 'closed' | 'half' | 'open';
+export type AppLanguage = 'pt' | 'en' | 'ja';
 export type MicMode = 'ptt' | 'hands_free';
 export type SttKeyMode = 'unified' | 'separate';
 export type TtsFallbackEngine = 'qwen_local' | 'kokoro' | 'edge_rvc' | 'web_speech';
@@ -75,6 +76,8 @@ export interface PersonaProfile {
   affiliation: string;
   avatarPrefix: string;
   systemPrompt: string;
+  languageProfiles?: Record<string, string>;
+  canonicalVoicePrompt?: string;
   memories: MemoryItem[];
 }
 
@@ -87,6 +90,7 @@ export interface ChatMessage {
   pose?: CharacterPose;
   camera?: CameraFraming;
   recalledMemories?: string[];
+  ttsResponse?: string;
 }
 
 export interface CallSession {
@@ -106,6 +110,8 @@ export interface VoiceSettings {
   volume: number;
   autoSpeak: boolean;
   lang: string;
+  uiLang?: AppLanguage;
+  canonicalJpVoice?: boolean;
   engine?: 'qwen3' | 'kokoro' | 'edge_rvc';
   qwenMode?: 'remote' | 'local' | 'auto';
   qwenRemoteUrl?: string;
@@ -116,6 +122,7 @@ export interface VoiceSettings {
   rvcModel?: string;
   rvcPitch?: number;
   rvcIndexRate?: number;
+  rvcProtect?: number;
   micMode?: MicMode;
   sttKeyMode?: SttKeyMode;
   separateGroqSttKey?: string;

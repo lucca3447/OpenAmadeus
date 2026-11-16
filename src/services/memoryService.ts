@@ -6,7 +6,7 @@ const STORAGE_CUSTOM_PERSONAS = 'amadeus_custom_personas';
 const STORAGE_ACTIVE_SESSION = 'amadeus_active_session';
 const STORAGE_SESSIONS_LOG = 'amadeus_sessions_log';
 
-// Common Portuguese stop words to ignore when scoring relevance
+// Common Portuguese and English stop words to ignore when scoring relevance
 const STOP_WORDS = new Set([
   'a', 'ao', 'aos', 'aquela', 'aquelas', 'aquele', 'aqueles', 'aquilo', 'as', 'até',
   'com', 'como', 'da', 'das', 'de', 'dela', 'delas', 'dele', 'deles', 'depois',
@@ -19,18 +19,31 @@ const STOP_WORDS = new Set([
   'ser', 'será', 'serão', 'seu', 'seus', 'só', 'somos', 'sou', 'sua', 'suas', 'também',
   'te', 'tem', 'temos', 'têm', 'tenho', 'ter', 'teu', 'teus', 'tinha', 'tinham', 'toda',
   'todas', 'todo', 'todos', 'tu', 'tua', 'tuas', 'um', 'uma', 'umas', 'uns', 'você',
-  'vocês', 'vos'
+  'vocês', 'vos',
+  // English stop words
+  'about', 'all', 'also', 'and', 'are', 'but', 'can', 'did', 'does', 'for', 'from',
+  'had', 'has', 'have', 'her', 'here', 'him', 'his', 'how', 'into', 'its', 'just',
+  'like', 'more', 'not', 'now', 'our', 'out', 'she', 'some', 'that', 'the', 'their',
+  'them', 'then', 'there', 'these', 'they', 'this', 'those', 'very', 'was', 'were',
+  'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'would', 'you', 'your'
 ]);
 
+const CJK_CHAR_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+function isMeaningfulToken(t: string): boolean {
+  if (STOP_WORDS.has(t)) return false;
+  return CJK_CHAR_RE.test(t) ? t.length >= 2 : t.length > 2;
+}
+
 /**
- * Normalizes string by stripping diacritics, punctuation and normalizing whitespace
+ * Normalizes string by stripping diacritics, punctuation and normalizing whitespace (preserving CJK)
  */
 function normalizeText(text: string): string {
   return text
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '') // remove accents
     .toLowerCase()
-    .replace(/[^\w\s]/gi, ' ') // remove punctuation
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ') // remove punctuation while keeping Unicode letters/CJK/numbers
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -76,7 +89,7 @@ export class MemoryService {
    */
   static matchMemories(userMessage: string, persona: PersonaProfile): MemoryItem[] {
     const rawTokens = normalizeText(userMessage).split(/\s+/).filter(Boolean);
-    const meaningfulTokens = rawTokens.filter((t) => t.length > 2 && !STOP_WORDS.has(t));
+    const meaningfulTokens = rawTokens.filter(isMeaningfulToken);
     const normalizedMessage = normalizeText(userMessage);
 
     const scored: { memory: MemoryItem; score: number }[] = [];
@@ -93,7 +106,7 @@ export class MemoryService {
       });
 
       // 2. Meaningful token match in title
-      const titleTokens = normalizeText(mem.title).split(/\s+/).filter((t) => t.length > 2 && !STOP_WORDS.has(t));
+      const titleTokens = normalizeText(mem.title).split(/\s+/).filter(isMeaningfulToken);
       meaningfulTokens.forEach((ut) => {
         if (titleTokens.includes(ut)) {
           score += 2.5;
@@ -201,7 +214,7 @@ export class MemoryService {
     const title = parts[0];
     const content = parts.length === 2 ? parts[1] : parts.slice(1, -1).join(' | ').trim();
     const emotionalWeight = (parts.length >= 3 ? parts[parts.length - 1] : '') || 'Factual';
-    const placeholderRe = /^(t[íi]tulo curto|fato memorizado|sentimento)$/i;
+    const placeholderRe = /^(t[íi]tulo curto|fato memorizado|sentimento|short title|fact in full sentence|sentiment|タイトル|事実|感情)$/i;
     const noiseRe = /\b(testou a capacidade|testando.*rea[çc][õo]es|teste de debugging|neurocientista kurisu|amadeus kurisu)\b/i;
     if (!title || !content || placeholderRe.test(title) || placeholderRe.test(content) || noiseRe.test(`${title} ${content}`)) {
       return null;

@@ -1,17 +1,21 @@
-import React, { useEffect, useRef } from 'react';
+﻿import React, { useEffect, useRef } from 'react';
 import { SpeechService } from '../services/speechService';
+import { getUiText } from '../i18n';
 
 interface AudioOscilloscopeProps {
   isActive: boolean;
   isListening?: boolean;
   className?: string;
+  lang?: string;
 }
 
 export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
   isActive,
   isListening = false,
   className = '',
+  lang,
 }) => {
+  const t = getUiText(lang).oscilloscope;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -190,14 +194,14 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
           }`}
         />
         <span className="engraved-serif text-[9px] text-amber-200/80 font-bold tracking-widest">
-          OSCILOSCÓPIO:
+          OSC:
         </span>
         <span
           className={`font-bold ${
             isActive ? 'text-orange-400' : isListening ? 'text-sky-400' : 'text-zinc-500'
           }`}
         >
-          {isActive ? 'SINAL ATIVO' : isListening ? 'ESCUTA VAD' : 'REPOUSO'}
+          {isActive ? t.speaking : isListening ? t.listening : t.idle}
         </span>
       </div>
       <canvas ref={canvasRef} className="w-full h-full block" />

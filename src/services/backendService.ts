@@ -16,6 +16,7 @@ export interface BackendHealth {
 
 export interface BackendChatResponse {
   response: string;
+  ttsResponse?: string;
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
@@ -40,7 +41,8 @@ export interface ChatStreamHandlers {
   onSentence?: (
     text: string,
     index: number,
-    visual?: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming }
+    visual?: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming },
+    ttsText?: string
   ) => void;
 }
 
@@ -98,7 +100,9 @@ export class BackendService {
     selectedModel: string | undefined,
     allowModelFallback: boolean,
     allowOfflineSimulatorFallback: boolean,
-    systemEvent?: AutonomousEventType
+    systemEvent?: AutonomousEventType,
+    lang?: string,
+    canonicalVoice?: boolean
   ): string {
     const formattedHistory = history.slice(-20).map((msg) => ({
       role: msg.sender === 'user' ? 'user' : 'model',
@@ -112,6 +116,8 @@ export class BackendService {
       message,
       sessionId,
       personaId: 'kurisu',
+      lang: (lang || 'pt').slice(0, 2).toLowerCase(),
+      canonicalVoice: Boolean(canonicalVoice),
       systemEvent: systemEvent || null,
       apiKey: apiKey || null,
       history: formattedHistory,
@@ -129,12 +135,14 @@ export class BackendService {
     selectedModel?: string,
     allowModelFallback: boolean = true,
     allowOfflineSimulatorFallback: boolean = true,
-    systemEvent?: AutonomousEventType
+    systemEvent?: AutonomousEventType,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<BackendChatResponse> {
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: this.chatBody(message, sessionId, apiKey, history, selectedModel, allowModelFallback, allowOfflineSimulatorFallback, systemEvent),
+      body: this.chatBody(message, sessionId, apiKey, history, selectedModel, allowModelFallback, allowOfflineSimulatorFallback, systemEvent, lang, canonicalVoice),
     });
 
     if (!res.ok) {
@@ -164,7 +172,9 @@ export class BackendService {
     allowModelFallback: boolean,
     allowOfflineSimulatorFallback: boolean,
     systemEvent: AutonomousEventType | undefined,
-    handlers: ChatStreamHandlers
+    handlers: ChatStreamHandlers,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<BackendChatResponse> {
     this.cancelChatStream();
     const ctrl = new AbortController();
@@ -179,7 +189,7 @@ export class BackendService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
-        body: this.chatBody(message, sessionId, apiKey, history, selectedModel, allowModelFallback, allowOfflineSimulatorFallback, systemEvent),
+        body: this.chatBody(message, sessionId, apiKey, history, selectedModel, allowModelFallback, allowOfflineSimulatorFallback, systemEvent, lang, canonicalVoice),
       });
       if (!res.ok || !res.body) {
         const errorText = await res.text().catch(() => 'Erro no servidor Python');
@@ -209,7 +219,7 @@ export class BackendService {
               ? { emotion: ev.emotion as Emotion, pose: (ev.pose ?? undefined) as CharacterPose | undefined, camera: (ev.camera ?? undefined) as CameraFraming | undefined }
               : lastMeta ?? undefined;
             if (visual) lastMeta = visual;
-            handlers.onSentence?.(ev.text, ev.index, visual);
+            handlers.onSentence?.(ev.text, ev.index, visual, typeof ev.ttsText === 'string' ? ev.ttsText : undefined);
           } else if (ev.event === 'done') {
             finalResponse = ev.response as BackendChatResponse;
           } else if (ev.event === 'error') {

@@ -29,7 +29,7 @@ TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 # System Meta
 APP_TITLE = "Amadeus System Core API"
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.3.0"
 APP_DESCRIPTION = "Cognitive memory with SQLite & ChromaDB, persona simulation, and neural speech synthesis for Amadeus."
 
 # LLM Config

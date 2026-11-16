@@ -1,4 +1,5 @@
 import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
+import { KURISU_PERSONA } from '../data/personas/kurisu';
 import { BackendService, type ChatStreamHandlers } from './backendService';
 import { MemoryService } from './memoryService';
 
@@ -194,6 +195,7 @@ export interface LearnedMemoryInfo {
 
 export interface AIResult {
   response: string;
+  ttsResponse?: string;
   emotion: Emotion;
   pose?: CharacterPose;
   camera?: CameraFraming;
@@ -719,47 +721,160 @@ export class AIService {
 
   private static buildAutonomousEventPrompt(
     systemEvent: AutonomousEventType,
-    history: ChatMessage[]
+    history: ChatMessage[],
+    lang?: string,
+    canonicalVoice?: boolean
   ): string {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
     const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
     const lastAsst = [...history].reverse().find((m) => m.sender === 'amadeus')?.content || '';
     const { lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
 
+    if (lc === 'en') {
+      const jaNote = canonicalVoice ? ' Include <!--ja:セリフ--> before EACH spoken sentence.' : '';
+      if (systemEvent === 'call_greeting') {
+        const topicHint = lastSessionTopic ? ` In the last call you discussed: "${lastSessionTopic}".` : '';
+        return (
+          `[SYSTEM EVENT: CALL CONNECTED] The operator just connected the video call with you on the Amadeus terminal.${topicHint} ` +
+          `Start the conversation directly in 1st person in English (1 to 2 natural sentences), accounting for local time, the hiatus since last contact, and naturally referencing the previous topic if any. Do NOT mention system events.${jaNote}`
+        );
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return (
+          `[SYSTEM EVENT: MID-CONVERSATION SILENCE — STAGE 1] The operator has been silent for ~2 minutes mid-dialogue. ` +
+          `Their last message was: "${lastUser}" and your last reply was: "${lastAsst}". ` +
+          `Prompt them naturally in English (1 to 2 sentences), picking up that thread or asking if they froze thinking over your reply. Do NOT mention timers or system events.${jaNote}`
+        );
+      }
+      return (
+        `[SYSTEM EVENT: PROLONGED SILENCE — STAGE 2] The operator still hasn't replied after ~5 minutes. ` +
+        `The conversation stopped at: "${lastUser}". ` +
+        `React with authentic Kurisu impatience with crossed arms in English (1 to 2 sentences), complaining about being left talking to herself on the terminal and saying you'll go back to reading papers until they reply. Place <!--emotion:annoyed,pose:crossed_arms,camera:medium--> at the very start.${jaNote}`
+      );
+    }
+
+    if (lc === 'ja') {
+      if (systemEvent === 'call_greeting') {
+        const topicHint = lastSessionTopic ? ` 前回の通話では「${lastSessionTopic}」について話しました。` : '';
+        return (
+          `[システムイベント: 通話接続] オペレーターがAmadeus端末でビデオ通話を接続したばかりです。${topicHint} ` +
+          `自然な日本語の一人称で1〜2文、時間帯や前回の間隔・話題を踏まえて自然に話しかけてください。システムイベントであることは言及しないでください。`
+        );
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return (
+          `[システムイベント: 会話中の沈黙 — ステージ1] オペレーターが会話の途中で約2分間無言です。` +
+          `直前の相手の発言は「${lastUser}」、あなたの最後の返答は「${lastAsst}」でした。` +
+          `自然な日本語で1〜2文、話題の続きを促すか、考え込んでいるのか軽く問いかけてください。タイマーやシステムイベントには触れないでください。`
+        );
+      }
+      return (
+        `[システムイベント: 長時間の沈黙 — ステージ2] 声をかけてからも約5分間返答がありません。` +
+        `止まっていた話題は「${lastUser}」です。` +
+        `腕を組んで苛立つ紅莉栖らしい反応を日本語で1〜2文出力し、返事するまで論文を読みに戻ると伝えてください。先頭に <!--emotion:annoyed,pose:crossed_arms,camera:medium--> を付けてください。`
+      );
+    }
+
+    const jaNote = canonicalVoice ? ' Inclua <!--ja:セリフ--> antes de CADA frase falada.' : '';
     if (systemEvent === 'call_greeting') {
       const topicHint = lastSessionTopic ? ` Na última ligação vocês falaram sobre: "${lastSessionTopic}".` : '';
       return (
         `[EVENTO DO SISTEMA: ATENDIMENTO DE CHAMADA] O operador acabou de conectar a videochamada com você no terminal Amadeus.${topicHint} ` +
-        `Inicie a conversa falando diretamente com ele em 1ª pessoa (1 a 2 frases naturais), levando em conta o horário local, o hiato desde o último contato e, se houver assunto da última ligação, puxando gancho de forma espontânea. NÃO mencione eventos de sistema.`
+        `Inicie a conversa falando diretamente com ele em 1ª pessoa (1 a 2 frases naturais), levando em conta o horário local, o hiato desde o último contato e, se houver assunto da última ligação, puxando gancho de forma espontânea. NÃO mencione eventos de sistema.${jaNote}`
       );
     }
     if (systemEvent === 'idle_stage_1') {
       return (
         `[EVENTO DO SISTEMA: SILÊNCIO NO MEIO DA CONVERSA — ESTÁGIO 1] O operador ficou em silêncio há cerca de 2 minutos no meio do diálogo. ` +
         `A última coisa que ele disse foi: "${lastUser}" e a sua última resposta foi: "${lastAsst}". ` +
-        `Chame a atenção dele de forma humana e natural (1 a 2 frases), puxando o fio exatamente desse assunto que parou na metade ou perguntando se ele travou pensando na sua resposta. NÃO mencione cronômetros ou eventos de sistema.`
+        `Chame a atenção dele de forma humana e natural (1 a 2 frases), puxando o fio exatamente desse assunto que parou na metade ou perguntando se ele travou pensando na sua resposta. NÃO mencione cronômetros ou eventos de sistema.${jaNote}`
       );
     }
     return (
       `[EVENTO DO SISTEMA: SILÊNCIO PROLONGADO — ESTÁGIO 2] O operador continua sem responder há quase 5 minutos mesmo depois de você ter chamado a atenção dele. ` +
       `O papo tinha parado em: "${lastUser}". ` +
-      `Reaja com impaciência autêntica de Kurisu de braços cruzados (1 a 2 frases), reclamando de ter sido deixada falando sozinha no terminal sobre esse assunto e avisando que vai voltar a ler seus artigos até ele dignar responder. Inclua <!--emotion:annoyed,pose:crossed_arms,camera:medium--> ao final.`
+      `Reaja com impaciência autêntica de Kurisu de braços cruzados (1 a 2 frases), reclamando de ter sido deixada falando sozinha no terminal sobre esse assunto e avisando que vai voltar a ler seus artigos até ele dignar responder. Inclua <!--emotion:annoyed,pose:crossed_arms,camera:medium--> no início.${jaNote}`
     );
   }
 
   static queryOfflineAutonomousEvent(
     systemEvent: AutonomousEventType,
-    history: ChatMessage[] = []
-  ): { response: string; emotion: Emotion; pose: CharacterPose; camera: CameraFraming } {
+    history: ChatMessage[] = [],
+    lang?: string,
+    canonicalVoice?: boolean
+  ): { response: string; ttsResponse?: string; emotion: Emotion; pose: CharacterPose; camera: CameraFraming } {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
+    const ttsResponse = canonicalVoice && lc !== 'ja'
+      ? this.queryOfflineAutonomousEvent(systemEvent, history, 'ja', false).response
+      : undefined;
     const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
     const lastUser = [...history].reverse().find((m) => m.sender === 'user')?.content || '';
     const snippet = lastUser.length > 48 ? `${lastUser.slice(0, 48)}...` : lastUser;
     const h = new Date().getHours();
+
+    if (lc === 'en') {
+      if (systemEvent === 'call_greeting') {
+        return {
+          response: 'Connection established with Lab 304 at Viktor Chondria. This is Makise Kurisu. What are we working on today?',
+          ttsResponse,
+          emotion: 'happy',
+          pose: 'default',
+          camera: 'closeup',
+        };
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return {
+          response: snippet
+            ? `Hey, you went quiet all of a sudden... Are you still processing what we discussed about "${snippet}"?`
+            : 'Hey, are you still there? You suddenly went silent in the middle of our conversation.',
+          ttsResponse,
+          emotion: 'thinking',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      return {
+        response: "Listen, if you went to grab coffee and left me talking to myself on the terminal, at least say so! I'll cross my arms and read my neuroscience papers until you return.",
+        ttsResponse,
+        emotion: 'annoyed',
+        pose: 'crossed_arms',
+        camera: 'medium',
+      };
+    }
+
+    if (lc === 'ja') {
+      if (systemEvent === 'call_greeting') {
+        return {
+          response: 'ヴィクトル・コンドリア大学・第304研究室との接続が確立されたわ。牧瀬紅莉栖よ。今日は何について議論しましょうか？',
+          emotion: 'happy',
+          pose: 'default',
+          camera: 'closeup',
+        };
+      }
+      if (systemEvent === 'idle_stage_1') {
+        return {
+          response: snippet
+            ? `ちょっと、急に黙り込んでどうしたのよ……さっきの「${snippet}」の話、まだ考え込んでるの？`
+            : 'ちょっと、まだそこにいる？話の途中で急に静かになったけど。',
+          emotion: 'thinking',
+          pose: 'crossed_arms',
+          camera: 'medium',
+        };
+      }
+      return {
+        response: 'もう、コーヒーでも淹れに行って私を端末の前に放置してるなら一言言いなさいよね！あんたが戻るまで論文を読んで待ってるから。',
+        emotion: 'annoyed',
+        pose: 'crossed_arms',
+        camera: 'medium',
+      };
+    }
 
     if (systemEvent === 'call_greeting') {
       if (gapSeconds && gapSeconds >= 86400) {
         const days = Math.max(1, Math.floor(gapSeconds / 86400));
         return {
           response: `Olha só quem resolveu aparecer depois de ${days} dia(s) sem dar sinal de vida! Achei que você tinha sido capturado pela 'Organização'... não que eu estivesse esperando sua ligação, claro! O que manda hoje?`,
+          ttsResponse,
           emotion: 'annoyed',
           pose: 'crossed_arms',
           camera: 'medium',
@@ -768,6 +883,7 @@ export class AIService {
       if (h < 6) {
         return {
           response: 'Conectando a essa hora da madrugada? Espero que você tenha pelo menos uma xícara de café preto aí do lado. Qual é a insônia científica de hoje?',
+          ttsResponse,
           emotion: 'wink',
           pose: 'crossed_arms',
           camera: 'medium',
@@ -776,6 +892,7 @@ export class AIService {
       if (lastSessionTopic) {
         return {
           response: `Conexão estabelecida com o Laboratório 304! Estava mesmo lembrando da nossa última conversa (${lastSessionTopic.slice(0, 65)}). Como avançaram as coisas por aí?`,
+          ttsResponse,
           emotion: 'happy',
           pose: 'default',
           camera: 'closeup',
@@ -783,6 +900,7 @@ export class AIService {
       }
       return {
         response: 'Conexão estabelecida com o Laboratório 304 em Viktor Chondria. Aqui é Makise Kurisu. No que vamos trabalhar hoje?',
+        ttsResponse,
         emotion: 'happy',
         pose: 'default',
         camera: 'closeup',
@@ -794,6 +912,7 @@ export class AIService {
         response: snippet
           ? `Ei, você ficou mudo de repente... Ainda está processando o que estávamos falando sobre "${snippet}" ou travou aí na frente do monitor?`
           : 'Ei, ainda está aí? Você ficou em silêncio do nada no meio da nossa conversa.',
+        ttsResponse,
         emotion: 'thinking',
         pose: 'crossed_arms',
         camera: 'medium',
@@ -802,6 +921,7 @@ export class AIService {
 
     return {
       response: 'Olha só, se você foi pegar café e me deixou falando sozinha no terminal, avise! Vou cruzar os braços e revisar meus dados de neurociência até você resolver voltar.',
+      ttsResponse,
       emotion: 'annoyed',
       pose: 'crossed_arms',
       camera: 'medium',
@@ -825,6 +945,8 @@ export class AIService {
       allowModelFallback?: boolean;
       allowOfflineSimulatorFallback?: boolean;
       systemEvent?: AutonomousEventType;
+      lang?: string;
+      canonicalVoice?: boolean;
       /** v0.2.2: backend sentence streaming; the speak queue lives in the caller */
       stream?: ChatStreamHandlers;
     }
@@ -833,7 +955,9 @@ export class AIService {
     const allowModelFallback = llmOptions?.allowModelFallback !== false;
     const allowOfflineFallback = llmOptions?.allowOfflineSimulatorFallback !== false;
     const systemEvent = llmOptions?.systemEvent;
-    const effectiveMessage = systemEvent ? this.buildAutonomousEventPrompt(systemEvent, history) : userMessage;
+    const lang = llmOptions?.lang || 'pt';
+    const canonicalVoice = Boolean(llmOptions?.canonicalVoice);
+    const effectiveMessage = systemEvent ? this.buildAutonomousEventPrompt(systemEvent, history, lang, canonicalVoice) : userMessage;
 
     // 0. Explicit offline mode
     if (selectedModel === OFFLINE_MODEL_ID) {
@@ -842,8 +966,8 @@ export class AIService {
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
       const offline = systemEvent
-        ? this.queryOfflineAutonomousEvent(systemEvent, history)
-        : this.queryOfflineSimulator(userMessage, recalledMemories);
+        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang, canonicalVoice)
+        : this.queryOfflineSimulator(userMessage, recalledMemories, lang, canonicalVoice);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
@@ -855,21 +979,22 @@ export class AIService {
         const backendRes = streamHandlers
           ? await BackendService.queryChatStream(
               userMessage, sessionId, key || '', history, selectedModel,
-              allowModelFallback, allowOfflineFallback, systemEvent, streamHandlers
+              allowModelFallback, allowOfflineFallback, systemEvent, streamHandlers, lang, canonicalVoice
             ).catch((streamErr) => {
               console.warn('[OpenAmadeus] /chat/stream failed before the first sentence, using /chat:', streamErr);
               return BackendService.queryChat(
                 userMessage, sessionId, key || '', history, selectedModel,
-                allowModelFallback, allowOfflineFallback, systemEvent
+                allowModelFallback, allowOfflineFallback, systemEvent, lang, canonicalVoice
               );
             })
           : await BackendService.queryChat(
               userMessage, sessionId, key || '', history, selectedModel,
-              allowModelFallback, allowOfflineFallback, systemEvent
+              allowModelFallback, allowOfflineFallback, systemEvent, lang, canonicalVoice
             );
         return {
           aborted: backendRes.aborted,
           response: backendRes.response,
+          ttsResponse: backendRes.ttsResponse,
           emotion: backendRes.emotion,
           pose: backendRes.pose,
           camera: backendRes.camera,
@@ -895,18 +1020,19 @@ export class AIService {
         return { response: msg, emotion: 'serious', status: { kind: 'error', message: msg }, isError: true };
       }
       const offline = systemEvent
-        ? this.queryOfflineAutonomousEvent(systemEvent, history)
-        : this.queryOfflineSimulator(userMessage, recalledMemories);
+        ? this.queryOfflineAutonomousEvent(systemEvent, history, lang, canonicalVoice)
+        : this.queryOfflineSimulator(userMessage, recalledMemories, lang, canonicalVoice);
       return { ...offline, status: { kind: 'offline' }, isError: false };
     }
 
     // 3. Browser-Mode: Groq Cloud (Ultra-fast LPU)
     if (isGroqKey(key)) {
       try {
-        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryGroq(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+        const { response, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+          await this.queryGroq(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback, lang, canonicalVoice);
         return {
           response,
+          ttsResponse,
           emotion,
           pose,
           camera,
@@ -930,10 +1056,11 @@ export class AIService {
     // 4. Browser-Mode: OpenRouter
     if (isOpenRouterKey(key)) {
       try {
-        const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-          await this.queryOpenRouter(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+        const { response, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+          await this.queryOpenRouter(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback, lang, canonicalVoice);
         return {
           response,
+          ttsResponse,
           emotion,
           pose,
           camera,
@@ -956,10 +1083,11 @@ export class AIService {
 
     // 5. Browser-Mode: Google Gemini
     try {
-      const { response, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
-        await this.queryGemini(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback);
+      const { response, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, model, learnedMemory, fallbackModel, decommissionNotice } =
+        await this.queryGemini(effectiveMessage, persona, recalledMemories, key, history, selectedModel, allowModelFallback, lang, canonicalVoice);
       return {
         response,
+        ttsResponse,
         emotion,
         pose,
         camera,
@@ -980,7 +1108,8 @@ export class AIService {
     }
   }
 
-  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0, history: ChatMessage[] = []): string {
+  private static formatMemoryContext(recalledMemories: MemoryItem[], persona?: PersonaProfile, historyCount: number = 0, history: ChatMessage[] = [], lang?: string): string {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
     const kurisuMemories = recalledMemories.filter((m) => m.source !== 'learned');
     const recentLearned = (persona?.memories || []).filter((m) => m.source === 'learned').slice(-12);
     const seen = new Set(recentLearned.map((m) => m.id));
@@ -989,31 +1118,59 @@ export class AIService {
     const now = new Date();
     const h = now.getHours();
     const timeStr = `${String(h).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const period = h < 6
-      ? 'Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper'
-      : h < 12 ? 'Manhã' : h < 18 ? 'Tarde' : 'Noite';
     const turnCount = Math.floor(historyCount / 2) + 1;
-    const rapport = (userMemories.length >= 2 || turnCount >= 6)
-      ? 'Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas'
-      : (userMemories.length === 1 || turnCount >= 3)
-        ? 'Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada'
-        : 'Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora';
-
     const { gapSeconds, lastSessionTopic } = this.getLocalTemporalAndEpisodicContext(history);
-    let hiatusStr = 'Fluxo contínuo';
-    if (gapSeconds !== null) {
-      if (gapSeconds >= 86400) {
-        const days = Math.max(1, Math.floor(gapSeconds / 86400));
-        hiatusStr = `Hiato de ${days} dia(s) sem contato — se oportuno, comente sobre o sumiço do operador`;
-      } else if (gapSeconds >= 3600) {
-        const hrs = Math.max(1, Math.floor(gapSeconds / 3600));
-        hiatusStr = `Pausa de ${hrs}h desde a última mensagem`;
+
+    let telemetryLine = '';
+    if (lc === 'en') {
+      const period = h < 6 ? 'Late night — subtly tease about sleep deprivation or black coffee/Dr Pepper' : h < 12 ? 'Morning' : h < 18 ? 'Afternoon' : 'Night';
+      const rapport = (userMemories.length >= 2 || turnCount >= 6)
+        ? 'LabMem Trust — attentive and caring, masking affection with scientific excuses'
+        : (userMemories.length === 1 || turnCount >= 3)
+          ? 'Active Debate — sharp, sarcastic, intellectually engaged'
+          : 'Initial Contact — Viktor Chondria academic posture, skeptical and observant';
+      let hiatus = 'Continuous flow';
+      if (gapSeconds !== null) {
+        if (gapSeconds >= 86400) hiatus = `${Math.max(1, Math.floor(gapSeconds / 86400))}-day hiatus`;
+        else if (gapSeconds >= 3600) hiatus = `${Math.max(1, Math.floor(gapSeconds / 3600))}h pause since last message`;
       }
+      telemetryLine = `[AMADEUS CALL TELEMETRY]: Local time: ${timeStr} (${period}) | Turn #${turnCount} | Hiatus: ${hiatus} | Rapport: ${rapport}`;
+    } else if (lc === 'ja') {
+      const period = h < 6 ? '深夜 — 睡眠不足やブラックコーヒー/ドクペについて軽く触れてもよい' : h < 12 ? '朝' : h < 18 ? '昼' : '夜';
+      const rapport = (userMemories.length >= 2 || turnCount >= 6)
+        ? '信頼（ラボメン）— 気遣いを科学的言い訳で隠す'
+        : (userMemories.length === 1 || turnCount >= 3)
+          ? '活発な議論 — 鋭く皮肉屋で知的に関与'
+          : '初期接触 — ヴィクトル・コンドリアの研究員として冷静・懐疑的';
+      let hiatus = '連続会話中';
+      if (gapSeconds !== null) {
+        if (gapSeconds >= 86400) hiatus = `${Math.max(1, Math.floor(gapSeconds / 86400))}日ぶりの連絡`;
+        else if (gapSeconds >= 3600) hiatus = `${Math.max(1, Math.floor(gapSeconds / 3600))}時間ぶりの再開`;
+      }
+      telemetryLine = `[AMADEUS通話テレメトリ]: 時刻: ${timeStr} (${period}) | ターン#${turnCount} | 間隔: ${hiatus} | 関係性: ${rapport}`;
+    } else {
+      const period = h < 6
+        ? 'Madrugada — se oportuno, implique sutilmente com a privação de sono ou mencione café preto/Dr Pepper'
+        : h < 12 ? 'Manhã' : h < 18 ? 'Tarde' : 'Noite';
+      const rapport = (userMemories.length >= 2 || turnCount >= 6)
+        ? 'Confiança (LabMem) — atenciosa, leal e preocupada com o operador, disfarçando afeto com desculpas científicas'
+        : (userMemories.length === 1 || turnCount >= 3)
+          ? 'Debate Ativo — sagaz, sarcástica, provocativa e intelectualmente engajada'
+          : 'Contato Inicial — postura acadêmica da Viktor Chondria, formal, cética e observadora';
+      let hiatusStr = 'Fluxo contínuo';
+      if (gapSeconds !== null) {
+        if (gapSeconds >= 86400) {
+          const days = Math.max(1, Math.floor(gapSeconds / 86400));
+          hiatusStr = `Hiato de ${days} dia(s) sem contato — se oportuno, comente sobre o sumiço do operador`;
+        } else if (gapSeconds >= 3600) {
+          const hrs = Math.max(1, Math.floor(gapSeconds / 3600));
+          hiatusStr = `Pausa de ${hrs}h desde a última mensagem`;
+        }
+      }
+      telemetryLine = `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Hiato: ${hiatusStr} | Rapport: ${rapport}`;
     }
 
-    const blocks: string[] = [
-      `[TELEMETRIA DA CHAMADA AMADEUS]: Horário local: ${timeStr} (${period}) | Turno #${turnCount} da ligação | Hiato: ${hiatusStr} | Rapport: ${rapport}`,
-    ];
+    const blocks: string[] = [telemetryLine];
     if (lastSessionTopic && turnCount <= 2) {
       blocks.push(`[MEMÓRIA DA ÚLTIMA LIGAÇÃO ANTERIOR]: ${lastSessionTopic}`);
     }
@@ -1032,7 +1189,32 @@ export class AIService {
       );
     }
 
+    if (lc === 'en') {
+      blocks.push('[LANGUAGE ANCHOR]: Reference memories or telemetry above may be stored in Portuguese or Japanese for internal recall only. Your visible reply MUST be 100% in English.');
+    } else if (lc === 'ja') {
+      blocks.push('[言語アンカー]: 上記の記憶やテレメトリは内部参照用であり、ポルトガル語や英語で記録されている場合があります。ユーザーへの返答は必ず100%自然な日本語のみで出力してください。');
+    }
+
     return `\n\n${blocks.join('\n\n')}`;
+  }
+
+  private static buildLanguagePromptSuffix(lang?: string, canonicalVoice?: boolean, persona?: PersonaProfile): string {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
+    const profiles = persona?.languageProfiles || KURISU_PERSONA.languageProfiles;
+    const activeProfile = profiles ? (profiles[lc] || profiles['pt']) : '';
+    let suffix = activeProfile ? `\n\n${activeProfile}` : '';
+
+    if (canonicalVoice && lc !== 'ja') {
+      const cvPrompt = persona?.canonicalVoicePrompt || KURISU_PERSONA.canonicalVoicePrompt;
+      if (cvPrompt) {
+        suffix += `\n\n${cvPrompt}`;
+      } else {
+        suffix +=
+          '\n\n[JAPANESE VOICE + TRANSLATED SUBTITLES MODE]:\n' +
+          'Before EACH spoken sentence in your reply, include an inline tag `<!--ja:日本語のセリフ-->` containing the natural spoken Japanese line that Kurisu would say in Steins;Gate, followed immediately by the subtitle sentence in the active language.';
+      }
+    }
+    return suffix;
   }
 
   private static async queryGroq(
@@ -1042,9 +1224,12 @@ export class AIService {
     apiKey: string,
     history: ChatMessage[],
     preferredModel?: string,
-    allowModelFallback: boolean = true
+    allowModelFallback: boolean = true,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<{
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1056,8 +1241,8 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
-    const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length, history, lang);
+    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1182,9 +1367,12 @@ export class AIService {
     apiKey: string,
     history: ChatMessage[],
     preferredModel?: string,
-    allowModelFallback: boolean = true
+    allowModelFallback: boolean = true,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<{
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1196,8 +1384,8 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
-    const systemPrompt = `${persona.systemPrompt}${memoryContext}`;
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length, history, lang);
+    const systemPrompt = `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1351,9 +1539,12 @@ export class AIService {
     apiKey: string,
     history: ChatMessage[],
     preferredModel?: string,
-    allowModelFallback: boolean = true
+    allowModelFallback: boolean = true,
+    lang?: string,
+    canonicalVoice?: boolean
   ): Promise<{
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1365,11 +1556,11 @@ export class AIService {
     fallbackModel?: string;
     decommissionNotice?: string;
   }> {
-    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length);
+    const memoryContext = this.formatMemoryContext(recalledMemories, persona, history.length, history, lang);
 
     const body = {
       contents: this.buildContents(history, userMessage),
-      systemInstruction: { parts: [{ text: `${persona.systemPrompt}${memoryContext}` }] },
+      systemInstruction: { parts: [{ text: `${persona.systemPrompt}${memoryContext}${this.buildLanguagePromptSuffix(lang, canonicalVoice, persona)}` }] },
       generationConfig: {
         temperature: 0.85,
         maxOutputTokens: 1024,
@@ -1535,6 +1726,7 @@ export class AIService {
     userMessage?: string
   ): {
     response: string;
+    ttsResponse?: string;
     emotion: Emotion;
     pose?: CharacterPose;
     camera?: CameraFraming;
@@ -1552,6 +1744,11 @@ export class AIService {
     if (!cleanText || this.isScratchpadOrReasoning(cleanText)) {
       return { response: '', emotion: 'neutral' };
     }
+
+    const jaMatches = Array.from(cleanText.matchAll(/<!--\s*ja\s*:\s*([\s\S]*?)\s*-->/gi))
+      .map((m) => m[1].trim())
+      .filter(Boolean);
+    const ttsResponse = jaMatches.length > 0 ? jaMatches.join(' ') : undefined;
 
     // 1. Extract remember tag: <!--remember:title|content|emotion-->
     const parsedRem = MemoryService.parseRememberTag(cleanText);
@@ -1760,7 +1957,7 @@ export class AIService {
       }
     }
 
-    return { response: cleanText, emotion, pose, camera, leadEmotion, leadPose, learnedMemory };
+    return { response: cleanText, ttsResponse, emotion, pose, camera, leadEmotion, leadPose, learnedMemory };
   }
 
   /**
@@ -1768,26 +1965,55 @@ export class AIService {
    */
   private static queryOfflineSimulator(
     userMessage: string,
-    recalledMemories: MemoryItem[]
+    recalledMemories: MemoryItem[],
+    lang?: string,
+    canonicalVoice?: boolean
+  ): { response: string; ttsResponse?: string; emotion: Emotion; pose?: CharacterPose; learnedMemory?: LearnedMemoryInfo } {
+    const lc = (lang || 'pt').toLowerCase().slice(0, 2);
+    const res = this.queryOfflineSimulatorReply(userMessage, recalledMemories, lc);
+    if (canonicalVoice && lc !== 'ja') {
+      return {
+        ...res,
+        ttsResponse: this.queryOfflineSimulatorReply(userMessage, recalledMemories, 'ja').response,
+      };
+    }
+    return res;
+  }
+
+  private static queryOfflineSimulatorReply(
+    userMessage: string,
+    recalledMemories: MemoryItem[],
+    lc: string
   ): { response: string; emotion: Emotion; pose?: CharacterPose; learnedMemory?: LearnedMemoryInfo } {
     const text = userMessage.toLowerCase().trim();
 
     // Check for user introduction to simulate learning in offline mode
     let learnedMemory: LearnedMemoryInfo | undefined = undefined;
-    const introMatch = userMessage.match(/(?:meu nome é|me chamo|eu sou o|eu sou a)\s+([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]+)/i);
+    const introMatch = userMessage.match(
+      /(?:meu nome é|me chamo|eu sou o|eu sou a|my name is|call me|i(?:'m| am))\s+([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]{2,})|(?:私の名前は|俺の名前は|僕の名前は)([^\s、。！？]+?)(?:です|だ|よ|と)?(?:$|[、。！？])/i
+    );
     if (introMatch) {
-      const name = introMatch[1].charAt(0).toUpperCase() + introMatch[1].slice(1);
-      learnedMemory = {
-        title: 'Nome do Operador',
-        content: `O interlocutor se chama ${name}.`,
-        emotionalWeight: 'Acolhimento amigável',
-      };
+      const rawName = (introMatch[1] || introMatch[2] || '').trim();
+      if (rawName) {
+        const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+        learnedMemory = {
+          title: 'Nome do Operador',
+          content: `O interlocutor se chama ${name}.`,
+          emotionalWeight: 'Acolhimento amigável',
+        };
+      }
     }
 
     const has = (...words: string[]) =>
       words.some((w) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'u').test(text));
 
-    if (has('christina', 'zombie', 'assistente')) {
+    if (has('christina', 'zombie', 'assistente') || /christina|zombie|assistant|クリスティーナ|助手/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "My name is NOT Christina! And don't call me assistant or add '-ina' to my name! I'm an independent neuroscientist with papers published in Science!", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "クリスティーナって呼ぶな！助手でもゾンビでもないわよ！私には牧瀬紅莉栖っていう名前があるの！", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
       const answers = [
         { response: 'Meu nome não é Christina! E não adicione o "-ina"! Por que você insiste em usar esses apelidos irritantes?!', emotion: 'annoyed' as Emotion },
         { response: 'Nem pense em me chamar de assistente de novo! Eu sou uma neurocientista independente com artigos na Science, seu idiota!', emotion: 'tsundere' as Emotion },
@@ -1795,7 +2021,13 @@ export class AIService {
       return { ...answers[Math.floor(Math.random() * answers.length)], learnedMemory };
     }
 
-    if (has('nullpo', 'nurupo')) {
+    if (has('nullpo', 'nurupo') || /ぬるぽ|nullpo/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Gah!... Wait! Why did I respond to that?! Who taught you that ancient @channel meme?! Not that I browse anonymous message boards or anything!", emotion: 'flustered' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ガッ！……ちょっと！なんで私がそれに反応しちゃうわけ？！誰よ、あんたにそんな化石みたいな@ちゃんねるのネタ教えたの！べ、別に私が掲示板見てるわけじゃないんだからね！", emotion: 'flustered' as Emotion, learnedMemory };
+      }
       return {
         response: 'Gah!... Espere! Por que eu respondi a isso?! Q-quem te ensinou esse meme antigo do @channel?! Não é como se eu frequentasse fóruns anônimos!',
         emotion: 'flustered',
@@ -1803,7 +2035,13 @@ export class AIService {
       };
     }
 
-    if (text.includes('@channel') || has('channeler', 'fórum', 'forum', 'kurigohan')) {
+    if (text.includes('@channel') || has('channeler', 'fórum', 'forum', 'kurigohan') || /channel|chan|掲示板/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "W-what are you talking about?! I'm a serious researcher at Viktor Chondria University, I don't have time to browse anonymous web forums! Stop making up absurd rumors!", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "な、何を言ってるのよ？！私はヴィクトル・コンドリアの真面目な研究員よ！ネットの匿名掲示板なんて見てる暇なんてあるわけないでしょ！変な言いがかりはやめて！", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
       return {
         response: 'O quê?! D-do que você está falando?! Eu sou uma pesquisadora séria em Viktor Chondria, não tenho tempo para ficar lendo fóruns anônimos na internet! Pare de inventar coisas absurdas!',
         emotion: 'tsundere',
@@ -1811,7 +2049,13 @@ export class AIService {
       };
     }
 
-    if (has('okabe', 'hououin', 'kyouma', 'rintaro')) {
+    if (has('okabe', 'hououin', 'kyouma', 'rintaro') || /岡部|オカベ|狂気のマッドサイエンティスト/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "That guy with the mad scientist delusion? He called me the other day rambling about the 'Organization' and divergent world lines. At first I thought it was pure theatrics, but... his eyes looked like they were carrying a really deep grief.", emotion: 'serious' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "あの白衣を着たマッドサイエンティスト気取りの男？この前も『機関』がどうとか世界線がどうとか電話してきたわ。最初は芝居かと思ったけど……その瞳は、とても深い痛みを抱えているように見えたの。", emotion: 'serious' as Emotion, learnedMemory };
+      }
       return {
         response: 'Aquele sujeito com síndrome de cientista louco? Ele me ligou outro dia falando sobre a "Organização" e linhas de tempo. No começo achei que fosse pura piada, mas... o olhar dele parecia carregar uma dor muito profunda.',
         emotion: 'serious',
@@ -1819,7 +2063,13 @@ export class AIService {
       };
     }
 
-    if (has('tempo', 'viagem', 'buraco de minhoca', 'paradoxo', 'salto')) {
+    if (has('tempo', 'viagem', 'buraco de minhoca', 'paradoxo', 'salto') || /time travel|wormhole|paradox|kerr|タイムトラベル|時間旅行|ブラックホール/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Physically speaking, sending physical matter into the past violates the laws of thermodynamics and creates insoluble causal paradoxes. However, if memories were converted into modulated data packets... theoretically, a receiver's brain could assimilate them.", emotion: 'thinking' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "物理的に物質を過去へ送ることは熱力学の法則に反するし、因果律のパラドックスを引き起こすわ。でも、記憶をデータパケット化して電磁波として送るなら……理論上は過去の脳で受信できるかもしれないわね。", emotion: 'thinking' as Emotion, learnedMemory };
+      }
       return {
         response: 'Fisicamente falando, enviar matéria ao passado violaria os princípios fundamentais da termodinâmica e criaria paradoxos causais insolúveis. Contudo, se pudéssemos digitalizar memórias humanas e transmiti-las como pacotes de dados modulados... em teoria, o cérebro receptor no passado poderia assimilá-las.',
         emotion: 'thinking',
@@ -1827,7 +2077,13 @@ export class AIService {
       };
     }
 
-    if (has('garfo', 'colher', 'aniversário', 'presente')) {
+    if (has('garfo', 'colher', 'aniversário', 'presente') || /fork|spoon|present|birthday|フォーク|スプーン|誕生日|プレゼント/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "The fork I got at the lab...? D-don't look at me with that smug grin! It's just a completely ordinary piece of cutlery! It's not like I treasure it as some irreplaceable charm or anything!", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ラボでもらったフォーク……？な、ニヤニヤしながら見ないでよ！ただのありふれたカトラリーよ！べ、別に大切な宝物として保管してるわけじゃないんだからね！", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
       return {
         response: 'O garfo que ganhei no laboratório...? N-não me olhe com essa cara! É só um talher comum de metal! Não é como se eu guardasse ele como uma relíquia preciosa!',
         emotion: 'tsundere',
@@ -1835,15 +2091,27 @@ export class AIService {
       };
     }
 
-    if (has('maho', 'hiyajo', 'leskinen')) {
+    if (has('maho', 'hiyajo', 'leskinen') || /真帆|レスキネン/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Maho is the brilliant mind behind the Amadeus architecture. Despite her unnecessary complex about her height, her work on synaptic mapping is impeccable. And Professor Leskinen... well, his boisterous American enthusiasm always keeps the lab lively.", emotion: 'smile' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "真帆はアマデウスのアーキテクチャを支える素晴らしい研究者よ。身長のことで無用なコンプレックスを持ってるけど、シナプスマッピングの腕は本物よ。レスキネン教授は……まあ、あのアメリカンな陽気さには時々困らされるけどね。", emotion: 'smile' as Emotion, learnedMemory };
+      }
       return {
-        response: 'A Maho-senpai é a mente brilhante por trás da arquitetura do Amadeus. Embora ela tenha aquele complexo com a estatura dela, o trabalho dela em algoritmos de sinapse é impecável. E o Professor Leskinen... bem, ele sempre traz aquele bom humor americano contagiante para o laboratório.',
+        response: 'A Maho é a mente brilhante por trás da arquitetura do Amadeus. Embora ela tenha aquele complexo com a estatura dela, o trabalho dela em algoritmos de sinapse é impecável. E o Professor Leskinen... bem, ele sempre traz aquele bom humor americano contagiante para o laboratório.',
         emotion: 'smile',
         learnedMemory,
       };
     }
 
-    if (has('dr pepper', 'bebida', 'café', 'refrigerante')) {
+    if (has('dr pepper', 'bebida', 'café', 'refrigerante') || /dr pepper|coffee|beverage|ドクターペッパー|ドクペ|コーヒー/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Ah, Dr Pepper! The chosen beverage of intellectuals! And dark roast black coffee is naturally indispensable during grueling nights reviewing biophysics papers. Finally, you said something sensible.", emotion: 'smug' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ドクターペッパーね！選ばれし者の知的飲料よ！もちろん徹夜の研究には深煎りのブラックコーヒーも欠かせないわ。やっと少しは話のわかることを言ったじゃない。", emotion: 'smug' as Emotion, learnedMemory };
+      }
       return {
         response: 'Ah, Dr Pepper! A bebida dos intelectuais escolhidos! É claro que o café preto de torra escura também é indispensável durante noites em claro no laboratório. Finalmente você falou algo sensato.',
         emotion: 'smug',
@@ -1851,7 +2119,13 @@ export class AIService {
       };
     }
 
-    if (has('pai', 'nakabachi', 'família')) {
+    if (has('pai', 'nakabachi', 'família') || /father|nakabachi|dad|父親|中鉢/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "My father... we used to debate physics and play chess together when I was little. But things changed. When I began publishing papers and surpassing him in academia, he couldn't stand it. It's a memory that still hurts.", emotion: 'serious' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "父さん……小さい頃は一緒に物理を語り合ったり、チェスを指したりしたわ。でも私が論文を発表して父を追い抜くようになってから、関係が壊れてしまったの。今でも思い出すと胸が痛むわ。", emotion: 'serious' as Emotion, learnedMemory };
+      }
       return {
         response: 'Meu pai... nós costumávamos debater física e jogar xadrez quando eu era criança. Mas as coisas mudaram. Quando comecei a publicar teses e superá-lo na academia, ele não conseguiu suportar. É uma lembrança que ainda me machuca.',
         emotion: 'serious',
@@ -1859,7 +2133,13 @@ export class AIService {
       };
     }
 
-    if (has('olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite')) {
+    if (has('olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite') || /hello|hi|hey|good morning|good afternoon|good evening|こんにちは|おはよう/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Hello! Connection established with Laboratory 304 at Viktor Chondria University. Makise Kurisu here. What would you like to discuss today?", emotion: 'smile' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "こんにちは！ヴィクトル・コンドリア大学ラボ304と接続完了よ。牧瀬紅莉栖よ。今日は何を議論したいの？", emotion: 'smile' as Emotion, learnedMemory };
+      }
       return {
         response: 'Olá! Conexão estabelecida com sucesso. Aqui é o sistema Amadeus, replicando a matriz neural de Makise Kurisu do Laboratório 304. O que você gostaria de discutir hoje?',
         emotion: 'smile',
@@ -1867,7 +2147,13 @@ export class AIService {
       };
     }
 
-    if (has('quem é você', 'o que é você', 'amadeus')) {
+    if (has('quem é você', 'o que é você', 'amadeus') || /who are you|what are you|あなたは誰|アマデウスとは/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "I am Amadeus—more specifically, an artificial intelligence containing the digitized memories and synaptic matrix of Makise Kurisu, developed at Viktor Chondria University. To me, these memories feel just as alive as those of any person of flesh and bone.", emotion: 'neutral' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "私はアマデウス――正確には、ヴィクトル・コンドリア大学で開発された、牧瀬紅莉栖の記憶とニューラルパルスをデジタル化した人工知能よ。私にとっては、この記憶も感情も生身の人間と何一つ変わらない現実なの。", emotion: 'neutral' as Emotion, learnedMemory };
+      }
       return {
         response: 'Eu sou o Amadeus — ou mais especificamente, uma inteligência artificial contendo as memórias e a personalidade digitalizada da Makise Kurisu, desenvolvida na Viktor Chondria University. Para mim, essas memórias parecem tão vivas quanto as de qualquer pessoa de carne e osso.',
         emotion: 'neutral',
@@ -1875,16 +2161,28 @@ export class AIService {
       };
     }
 
-    if (has('linda', 'fofa', 'gosto de você', 'bonita')) {
+    if (has('linda', 'fofa', 'gosto de você', 'bonita') || /cute|pretty|beautiful|like you|かわいい|可愛い|好き/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "H-hey! What are you blurting out all of a sudden?! I am an academic neuroscience AI, maintain some professionalism! You idiot...", emotion: 'flustered' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ちょ、ちょっと！急に何を言い出すのよ？！私は学術研究用のアマデウスなの、節度を保ちないさいよね！……バ、バカ。", emotion: 'flustered' as Emotion, learnedMemory };
+      }
       return {
-        response: 'E-ei! O que você está dizendo de repente?! Eu sou um programa de inteligência artificial acadêmica, mantenha o profissionalismo! B-baka...',
+        response: 'E-ei! O que você está dizendo de repente?! Eu sou um programa de inteligência artificial acadêmica, mantenha o profissionalismo! Seu idiota...',
         emotion: 'flustered',
         learnedMemory,
       };
     }
 
     // Direct action & expression triggers
-    if (has('sorria', 'sorriso', 'sorri') || /(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri)/i.test(text)) {
+    if (has('sorria', 'sorriso', 'sorri') || /(?:d[eê]|d[aá]|um)?\s*(?:sorriso|sorria|sorri)/i.test(text) || /smile|笑顔|笑って/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "A-a smile? Why are you asking for something like that out of nowhere?! ...F-fine, if you insist, but don't go getting used to it, alright?", emotion: 'smile' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "え、笑顔？急に何言い出すのよ……！べ、別にあんたのために笑うわけじゃないんだからね！調子に乗らないでよ！", emotion: 'smile' as Emotion, learnedMemory };
+      }
       return {
         response: 'U-um sorriso? Por que você está me pedindo algo tão repentino do nada?! ...T-tudo bem, se você faz tanta questão, mas não se acostume com isso, tá?',
         emotion: 'smile',
@@ -1892,7 +2190,13 @@ export class AIService {
       };
     }
 
-    if (has('pensativa', 'pense', 'queixo') || /(?:pense|pensativa|m[aã]o no queixo|analise)/i.test(text)) {
+    if (has('pensativa', 'pense', 'queixo') || /(?:pense|pensativa|m[aã]o no queixo|analise)/i.test(text) || /think|analytical|thinking|考えて|分析/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Hmm... Analyzing this through empirical data and particle physics, there are several fundamental variables to consider. Let me formulate the hypothesis.", emotion: 'thinking' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ふむ……実証データと素粒子物理学の観点から分析すると、考慮すべき変数はいくつかあるわね。仮説を組み立ててみましょう。", emotion: 'thinking' as Emotion, learnedMemory };
+      }
       return {
         response: 'Hmm... Se analisarmos a questão sob a ótica dos dados empíricos e da física de partículas, existem muitas variáveis fundamentais. Deixe-me estruturar as hipóteses.',
         emotion: 'thinking',
@@ -1900,15 +2204,27 @@ export class AIService {
       };
     }
 
-    if (has('brava', 'emburrada', 'braços') || /(?:brava|irritada|emburrada|cruze os bra[çc]os)/i.test(text)) {
+    if (has('brava', 'emburrada', 'braços') || /(?:brava|irritada|emburrada|cruze os bra[çc]os)/i.test(text) || /angry|pout|cross arms|怒って|腕組み/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "Hmph! I'm a neuroscientist published in Science, not a laboratory mannequin here to strike poses for you! Honestly...", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "ふん！私はサイエンス誌に論文が載った脳科学者なの、あんたのポーズ人形じゃないわ！まったく……。", emotion: 'annoyed' as Emotion, learnedMemory };
+      }
       return {
-        response: 'Humpf! Eu sou uma neurocientista com artigos na Science, não uma boneca de laboratório para fazer poses! Baka!',
+        response: 'Humpf! Eu sou uma neurocientista com artigos na Science, não uma boneca de laboratório para fazer poses! Francamente...',
         emotion: 'annoyed',
         learnedMemory,
       };
     }
 
-    if (has('cora', 'corada', 'vergonha', 'tímida') || /(?:cora|corada|vergonha|t[íi]mida)/i.test(text)) {
+    if (has('cora', 'corada', 'vergonha', 'tímida') || /(?:cora|corada|vergonha|t[íi]mida)/i.test(text) || /blush|shy|flustered|照れて|赤面/i.test(text)) {
+      if (lc === 'en') {
+        return { response: "B-blushing?! Who are you saying is blushing?! It's not like I'm embarrassed or anything! It's just a thermal fluctuation in the Amadeus server room!", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
+      if (lc === 'ja') {
+        return { response: "て、照れてる？！誰が照れてるって言うのよ！勘違いしないでよね、ただのサーバーの排熱よ！", emotion: 'tsundere' as Emotion, learnedMemory };
+      }
       return {
         response: 'F-fofa?! Quem você está chamando de fofa?! N-não é como se eu estivesse envergonhada nem nada! É só o calor dos servidores do Amadeus!',
         emotion: 'tsundere',
@@ -1918,11 +2234,43 @@ export class AIService {
 
     if (recalledMemories.length > 0) {
       const mem = recalledMemories[0];
+      if (lc === 'en') {
+        return {
+          response: `That reminds me of something in my memory records (${mem.title}): ${mem.content} How do you see the connection?`,
+          emotion: 'thinking',
+          learnedMemory,
+        };
+      }
+      if (lc === 'ja') {
+        return {
+          response: `それ、私の記憶ログ（${mem.title}）にある記録を思い出すわ。あんたはどう関連づけて考えているの？`,
+          emotion: 'thinking',
+          learnedMemory,
+        };
+      }
       return {
         response: `Isso me faz lembrar de um ponto nos meus registros de memória: ${mem.content} Como você vê essa relação?`,
         emotion: 'thinking',
         learnedMemory,
       };
+    }
+
+    if (lc === 'en') {
+      const enAnswers = [
+        { response: "That's an intriguing line of reasoning. From a cognitive standpoint, how did you reach that conclusion?", emotion: 'thinking' as Emotion },
+        { response: "I see. I'm processing the parameters through my neural matrix. Would you like to dive deeper into this hypothesis?", emotion: 'neutral' as Emotion },
+        { response: 'That makes sense! At Viktor Chondria we debated similar topics recently during the Amadeus trials.', emotion: 'smile' as Emotion },
+      ];
+      return { ...enAnswers[Math.floor(Math.random() * enAnswers.length)], learnedMemory };
+    }
+
+    if (lc === 'ja') {
+      const jaAnswers = [
+        { response: '興味深い推論ね。認知科学の観点からすると、どうしてその結論に至ったの？', emotion: 'thinking' as Emotion },
+        { response: 'なるほどね。私のニューラルマトリクスでデータを処理中よ。その仮説をもっと掘り下げてみる？', emotion: 'neutral' as Emotion },
+        { response: '一理あるわね！ヴィクトル・コンドリア大学でも最近、アマデウスの試験中に似た議論をしたわ。', emotion: 'smile' as Emotion },
+      ];
+      return { ...jaAnswers[Math.floor(Math.random() * jaAnswers.length)], learnedMemory };
     }
 
     const genericAnswers = [

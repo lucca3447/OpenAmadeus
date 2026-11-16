@@ -116,6 +116,7 @@ async def convert_voice(
     request: Request,
     pitch_shift: int = 0,
     index_rate: float = 0.75,
+    protect: float = 0.33,
     model_name: Optional[str] = None,
 ):
     try:
@@ -132,6 +133,7 @@ async def convert_voice(
             audio_bytes=content,
             pitch_shift=pitch_shift,
             index_rate=index_rate,
+            protect=protect,
         )
         return Response(content=out_wav, media_type="audio/wav")
     except Exception as e:

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MemoryItem, PersonaProfile } from '../types/amadeus';
 import { MemoryService } from '../services/memoryService';
 import { BackendService } from '../services/backendService';
+import { getUiText } from '../i18n';
 import {
   Brain,
   Plus,
@@ -24,6 +25,7 @@ interface MemoryInspectorModalProps {
   persona: PersonaProfile;
   recalledMemoryIds?: string[];
   onMemoryAdded?: () => void;
+  lang?: string;
 }
 
 export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
@@ -32,7 +34,9 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
   persona,
   recalledMemoryIds = [],
   onMemoryAdded,
+  lang,
 }) => {
+  const t = getUiText(lang).memoryModal;
   const [filterSource, setFilterSource] = useState<'all' | 'canonical' | 'learned' | 'custom'>('all');
   const [showAddForm, setShowAddForm] = useState(false);
   const [backendAvailable, setBackendAvailable] = useState<boolean>(false);
@@ -52,10 +56,10 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
       BackendService.checkHealth().then((health) => {
         if (health) {
           setBackendAvailable(true);
-          setBackendDetails(`ChromaDB (${health.chromaCount} vetores) + SQLite (${health.totalSessions} sessões)`);
+          setBackendDetails(`ChromaDB (${health.chromaCount}) + SQLite (${health.totalSessions})`);
         } else {
           setBackendAvailable(false);
-          setBackendDetails('Armazenamento Local (LocalStorage)');
+          setBackendDetails('LocalStorage');
         }
       });
     }
@@ -121,9 +125,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
 
   const handleClearLearned = async () => {
     if (
-      confirm(
-        'Deseja limpar todas as memórias aprendidas durante as sessões? O núcleo de memória base será mantido.'
-      )
+      confirm(t.clearConfirm)
     ) {
       if (backendAvailable) {
         await BackendService.clearLearnedMemories();
@@ -174,21 +176,21 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
             });
             if (created) count++;
           }
-          alert(`${count} blocos sinápticos importados com sucesso para o Córtex!`);
+          alert(`${count} ${t.importSuccessSuffix}`);
           onMemoryAdded?.();
         } catch {
           alert(
-            'Erro ao importar arquivo. Certifique-se de que é um JSON válido de memórias do OpenAmadeus.'
+            t.importError
           );
         }
       } else {
         const res = MemoryService.importMemoriesJSON(persona.id, content);
         if (res.success) {
-          alert(`${res.count} blocos sinápticos importados com sucesso para o Córtex!`);
+          alert(`${res.count} ${t.importSuccessSuffix}`);
           onMemoryAdded?.();
         } else {
           alert(
-            'Erro ao importar arquivo. Certifique-se de que é um JSON válido de memórias do OpenAmadeus.'
+            t.importError
           );
         }
       }
@@ -211,10 +213,10 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
   const customCount = persona.memories.filter((m) => m.source === 'custom').length;
 
   const filterCapsules = [
-    { id: 'all' as const, label: 'TODAS', count: persona.memories.length, icon: Layers },
-    { id: 'canonical' as const, label: 'NÚCLEO BASE', count: canonicalCount, icon: ShieldCheck },
-    { id: 'learned' as const, label: 'APRENDIDAS', count: learnedCount, icon: UserCheck },
-    { id: 'custom' as const, label: 'INJETADAS', count: customCount, icon: Sparkles },
+    { id: 'all' as const, label: t.filters.all, count: persona.memories.length, icon: Layers },
+    { id: 'canonical' as const, label: t.filters.canonical, count: canonicalCount, icon: ShieldCheck },
+    { id: 'learned' as const, label: t.filters.learned, count: learnedCount, icon: UserCheck },
+    { id: 'custom' as const, label: t.filters.custom, count: customCount, icon: Sparkles },
   ];
 
   return (
@@ -237,7 +239,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
             {/* Filter Capsules */}
             <div
               role="tablist"
-              aria-label="Filtros de Memória Sináptica"
+              aria-label={t.filterAria}
               className="flex md:flex-col gap-2.5 overflow-x-auto md:overflow-visible pb-1 md:pb-0"
             >
               {filterCapsules.map((cap) => {
@@ -298,7 +300,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
               >
                 <Plus className="w-3.5 h-3.5 text-orange-400" />
                 <span className="engraved-serif text-[11px] font-bold tracking-wider">
-                  {showAddForm ? 'FECHAR EDITOR' : 'INJETAR MEMÓRIA'}
+                  {showAddForm ? t.closeEditor : t.injectMemory}
                 </span>
               </button>
 
@@ -306,20 +308,20 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  title="Importar memórias de um arquivo JSON"
+                  title={t.importTitle}
                   className="px-2.5 py-1.5 bg-black/75 border border-amber-900/50 hover:border-orange-400 text-zinc-300 hover:text-amber-200 text-[10px] font-mono flex items-center justify-center gap-1 transition-colors"
                 >
                   <Upload className="w-3 h-3 text-orange-400" />
-                  <span>IMPORTAR</span>
+                  <span>{t.importBtn}</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleExportJSON}
-                  title="Exportar córtex completo em JSON"
+                  title={t.exportTitle}
                   className="px-2.5 py-1.5 bg-black/75 border border-amber-900/50 hover:border-orange-400 text-zinc-300 hover:text-amber-200 text-[10px] font-mono flex items-center justify-center gap-1 transition-colors"
                 >
                   <Download className="w-3 h-3 text-orange-400" />
-                  <span>EXPORTAR</span>
+                  <span>{t.exportBtn}</span>
                 </button>
               </div>
 
@@ -330,7 +332,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                   className="px-3 py-1.5 bg-rose-950/35 border border-rose-500/40 hover:border-rose-400 text-rose-300 hover:text-white text-[10px] font-mono flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <Trash2 className="w-3 h-3 text-rose-400" />
-                  <span>LIMPAR APRENDIDAS ({learnedCount})</span>
+                  <span>{t.clearLearnedBtn} ({learnedCount})</span>
                 </button>
               )}
             </div>
@@ -340,10 +342,10 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
           <div className="hidden md:block relative z-10 pt-6">
             <div className="bg-black/95 border border-orange-500/60 px-3 py-2 shadow-[0_0_20px_rgba(249,115,22,0.2)]">
               <div className="engraved-serif text-sm font-bold tracking-widest text-amber-100">
-                CÓRTEX RAG
+                {t.cortexRagTitle}
               </div>
               <div className="text-[9px] font-mono text-orange-400/80 tracking-widest uppercase">
-                {backendAvailable ? 'CHROMADB + SQLITE ONLINE' : 'LOCAL STORAGE FALLBACK'}
+                {backendAvailable ? t.onlineSub : t.offlineSub}
               </div>
             </div>
             <div className="bus-line-horizontal w-full mt-1" />
@@ -363,10 +365,10 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                   id="amadeus-cortex-title"
                   className="engraved-heading text-lg md:text-xl font-bold uppercase"
                 >
-                  Inspetor Sináptico // {persona.name}
+                  {t.headerTitle} // {persona.name}
                 </h2>
                 <div className="text-[11px] font-mono text-orange-400/80 flex items-center gap-2">
-                  <span>{persona.memories.length} VETORES CONSOLIDADOS</span>
+                  <span>{persona.memories.length} {t.vectorsConsolidated}</span>
                   <span className="opacity-40">•</span>
                   <span className={backendAvailable ? 'text-emerald-400' : 'text-amber-300'}>
                     {backendDetails}
@@ -382,12 +384,12 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                 className="md:hidden copper-capsule px-3 py-1.5 text-[10px] text-amber-200 flex items-center gap-1"
               >
                 <Plus className="w-3 h-3 text-orange-400" />
-                <span>INJETAR</span>
+                <span>{t.injectShort}</span>
               </button>
               <button
                 type="button"
                 onClick={onClose}
-                title="Fechar Inspetor Sináptico"
+                title={t.closeTitle}
                 className="w-8 h-8 rounded-full border border-amber-900/60 bg-black/60 flex items-center justify-center text-zinc-400 hover:text-amber-200 hover:border-orange-400 transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -406,25 +408,25 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                 <div className="flex items-center justify-between border-b border-amber-900/40 pb-2">
                   <div className="engraved-serif text-xs font-bold text-amber-200 flex items-center gap-2 tracking-widest">
                     <Sparkles className="w-4 h-4 text-orange-400" />
-                    <span>INJETAR NOVO BLOCO SINÁPTICO NO CÓRTEX</span>
+                    <span>{t.formHeader}</span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowAddForm(false)}
                     className="text-[10px] text-zinc-400 hover:text-white"
                   >
-                    [CANCELAR]
+                    {t.cancelBtn}
                   </button>
                 </div>
 
                 <div>
                   <label className="engraved-label text-sm block mb-1">
-                    Identificador / Título do Registro:
+                    {t.titleLabel}
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="Ex: Arquitetura de Redes Neurais Recorrentes"
+                    placeholder={t.titlePlaceholder}
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
                     className="w-full h-9 px-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
@@ -433,27 +435,27 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="engraved-label text-sm block mb-1">Domínio Cognitivo:</label>
+                    <label className="engraved-label text-sm block mb-1">{t.categoryLabel}</label>
                     <select
                       value={newCategory}
                       onChange={(e) => setNewCategory(e.target.value as MemoryItem['category'])}
                       className="w-full h-9 px-2.5 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
                     >
-                      <option value="research">Pesquisa / Teoria Científica</option>
-                      <option value="anecdote">Episódio / Experiência Pessoal</option>
-                      <option value="relationship">Relação Interpessoal</option>
-                      <option value="biography">Registro Biográfico</option>
-                      <option value="user">Dado sobre o Operador</option>
-                      <option value="secret">Registro Reservado</option>
+                      <option value="research">{t.categories.research}</option>
+                      <option value="anecdote">{t.categories.anecdote}</option>
+                      <option value="relationship">{t.categories.relationship}</option>
+                      <option value="biography">{t.categories.biography}</option>
+                      <option value="user">{t.categories.user}</option>
+                      <option value="secret">{t.categories.secret}</option>
                     </select>
                   </div>
                   <div>
                     <label className="engraved-label text-sm block mb-1">
-                      Valência / Peso Emocional:
+                      {t.emotionLabel}
                     </label>
                     <input
                       type="text"
-                      placeholder="Ex: Analítico e curioso"
+                      placeholder={t.emotionPlaceholder}
                       value={newEmotion}
                       onChange={(e) => setNewEmotion(e.target.value)}
                       className="w-full h-9 px-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
@@ -463,11 +465,11 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
 
                 <div>
                   <label className="engraved-label text-sm block mb-1">
-                    Gatilhos Léxicos (separados por vírgula):
+                    {t.keywordsLabel}
                   </label>
                   <input
                     type="text"
-                    placeholder="Ex: neurociência, córtex, sinapse, memória"
+                    placeholder={t.keywordsPlaceholder}
                     value={newKeywords}
                     onChange={(e) => setNewKeywords(e.target.value)}
                     className="w-full h-9 px-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none"
@@ -476,12 +478,12 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
 
                 <div>
                   <label className="engraved-label text-sm block mb-1">
-                    Conteúdo Vetorial Detalhado:
+                    {t.contentLabel}
                   </label>
                   <textarea
                     required
                     rows={3}
-                    placeholder="Descreva o conhecimento, evento ou contexto a ser indexado no ChromaDB..."
+                    placeholder={t.contentPlaceholder}
                     value={newContent}
                     onChange={(e) => setNewContent(e.target.value)}
                     className="w-full p-3 bg-black/85 border border-amber-900/60 focus:border-orange-400 text-xs text-amber-100 outline-none resize-none font-sans"
@@ -495,7 +497,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                   >
                     <Database className="w-3.5 h-3.5 text-orange-400" />
                     <span className="engraved-serif text-xs font-bold tracking-widest">
-                      CONSOLIDAR NO CÓRTEX
+                      {t.submitBtn}
                     </span>
                   </button>
                 </div>
@@ -506,7 +508,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
             <div className="space-y-3">
               {filteredMemories.length === 0 ? (
                 <div className="p-10 text-center text-xs text-zinc-500 border border-dashed border-amber-900/40 bg-black/40">
-                  Nenhum vetor sináptico encontrado para este filtro.
+                  {t.emptyFilter}
                 </div>
               ) : (
                 filteredMemories.map((mem) => {
@@ -536,24 +538,24 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                           {isLearned ? (
                             <span className="text-[10px] px-2 py-0.5 bg-purple-950/80 text-purple-300 font-bold border border-purple-500/50 flex items-center gap-1">
                               <UserCheck className="w-3 h-3" />
-                              <span>APRENDIDA EM DIÁLOGO</span>
+                              <span>{t.badgeLearned}</span>
                             </span>
                           ) : isCustom ? (
                             <span className="text-[10px] px-2 py-0.5 bg-amber-950/80 text-amber-300 font-bold border border-amber-500/50 flex items-center gap-1">
                               <Sparkles className="w-3 h-3" />
-                              <span>INJETADA PELO OPERADOR</span>
+                              <span>{t.badgeCustom}</span>
                             </span>
                           ) : (
                             <span className="text-[10px] px-2 py-0.5 bg-zinc-900 text-zinc-400 border border-zinc-700 flex items-center gap-1 uppercase">
                               <ShieldCheck className="w-3 h-3 text-orange-400" />
-                              <span>NÚCLEO BASE</span>
+                              <span>{t.badgeCanonical}</span>
                             </span>
                           )}
 
                           {isRecalled && (
                             <span className="text-[10px] px-2 py-0.5 bg-orange-500/20 text-orange-300 border border-orange-400/60 flex items-center gap-1 animate-pulse">
                               <Activity className="w-3 h-3" />
-                              <span>SINAPSE ATIVA</span>
+                              <span>{t.badgeActive}</span>
                             </span>
                           )}
                         </div>
@@ -561,7 +563,7 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                         {(isLearned || isCustom) && (
                           <button
                             onClick={() => handleDeleteMemory(mem.id)}
-                            title="Remover este bloco sináptico"
+                            title={t.deleteTitle}
                             className="text-zinc-500 hover:text-rose-400 transition-colors p-1"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -587,14 +589,14 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
                             ))
                           ) : (
                             <span className="text-[10px] text-zinc-500">
-                              Indexação semântica vetorial (RAG)
+                              {t.ragIndexed}
                             </span>
                           )}
                         </div>
 
                         {mem.emotionalWeight && (
                           <div className="text-[10px] text-zinc-400">
-                            Valência: <span className="text-amber-200">{mem.emotionalWeight}</span>
+                            {t.valencePrefix} <span className="text-amber-200">{mem.emotionalWeight}</span>
                           </div>
                         )}
                       </div>
@@ -609,14 +611,14 @@ export const MemoryInspectorModal: React.FC<MemoryInspectorModalProps> = ({
           <div className="px-6 py-3.5 border-t border-amber-900/40 bg-black/75 flex items-center justify-between">
             <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400">
               <Database className="w-3.5 h-3.5 text-orange-400" />
-              <span>Recuperação Semântica Ativa a Cada Turno de Diálogo</span>
+              <span>{t.footerNote}</span>
             </div>
             <button
               type="button"
               onClick={onClose}
               className="copper-capsule px-5 py-1.5 text-amber-100 hover:text-white"
             >
-              <span className="engraved-serif text-xs font-bold tracking-widest">FECHAR</span>
+              <span className="engraved-serif text-xs font-bold tracking-widest">{t.closeBtn}</span>
             </button>
           </div>
         </div>

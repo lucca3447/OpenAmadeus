@@ -113,7 +113,7 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
             title = parts[0]
             content = parts[1] if len(parts) == 2 else " | ".join(parts[1:-1]).strip()
             emo_w = (parts[-1] if len(parts) >= 3 else "") or "Factual"
-            placeholder_re = r"(?i)^(t[íi]tulo curto|fato memorizado|sentimento)$"
+            placeholder_re = r"(?i)^(t[íi]tulo curto|fato memorizado|sentimento|short title|fact in full sentence|sentiment|タイトル|事実|感情)$"
             noise_re = r"(?i)\b(testou a capacidade|testando.*rea[çc][õo]es|teste de debugging|neurocientista kurisu|amadeus kurisu)\b"
             if (
                 title
@@ -242,12 +242,22 @@ def parse_tags(raw: Optional[str], user_message: Optional[str] = None) -> Tuple[
 
 def sanitize_repetitive_openers(text: str) -> str:
     """
-    Strips repetitive verbal tic prefixes like 'Não me entenda mal, mas' or 'N-não me entenda mal, mas',
-    capitalizing the following sentence for natural, mature speech.
+    Strips repetitive verbal tic prefixes in PT, EN, and JA (e.g. 'Não me entenda mal, mas',
+    'Don't get me wrong, but', '勘違いしないで'), capitalizing the following sentence.
     """
     if not text:
         return ""
-    t = re.sub(r"(?i)^(?:[Nn][ãa]o me entenda mal|[Nn]-n[ãa]o me entenda mal)[:;,!.—–-]*\s*(?:mas\s*)?", "", text).strip()
+    t = re.sub(
+        r"(?i)^(?:[Nn][ãa]o me entenda mal|[Nn]-n[ãa]o me entenda mal)[:;,!.—–-]*\s*(?:mas\s*)?",
+        "",
+        text,
+    ).strip()
+    t = re.sub(
+        r"(?i)^(?:[Dd](?:-[Dd])?on't get me wrong)[:;,!.—–-]*\s*(?:but\s*)?",
+        "",
+        t,
+    ).strip()
+    t = re.sub(r"^(?:勘違いしないで(?:よね|よ)?[、。！!…—\s]*)", "", t).strip()
     if t and t[0].islower():
         t = t[0].upper() + t[1:]
     return t
@@ -403,23 +413,23 @@ def infer_sentence_shift(
         return {"emotion": emotion, "pose": pose, "camera": camera}
 
     # 1. Exasperated sigh or eye-close mid-reply
-    if re.search(r"^(?:francamente\b|ora essa\b|suspiro\b|humpf\b|sinceramente\b)", low):
+    if re.search(r"^(?:francamente\b|ora essa\b|suspiro\b|humpf\b|sinceramente\b|frankly\b|honestly\b|sigh\b|hmph\b|good grief\b|はあ|まあ|まったく|やれやれ)", low):
         return {"emotion": "eyes_closed", "pose": "crossed_arms", "camera": "medium"}
 
     # 2. Sudden exclamation or self-contradictory blush mid-reply
-    if re.search(r"\b(n-n[ãa]o|q-quem|n[ãa]o me entenda mal|oscila[çc][ãa]o t[ée]rmica|vi[ée]s de refor[çc]o)\b", low):
+    if re.search(r"\b(n-n[ãa]o|q-quem|n[ãa]o me entenda mal|oscila[çc][ãa]o t[ée]rmica|vi[ée]s de refor[çc]o|d-don't|don't get me wrong|thermal fluctuation)\b|勘違いしないで|べ、別に", low):
         return {"emotion": "blushing", "pose": "crossed_arms" if pose == "default" else "default", "camera": "closeup"}
 
-    # 3. Closing or mid-speech question (?): uncross arms and lean in (closeup) to engage/challenge the operator
-    if s.endswith("?"):
-        if re.search(r"\b(ou ser[áa] que|n[ãa]o acha|vai me dizer|entendeu|consegue acompanhar|travou|duvida)\b", low):
+    # 3. Closing or mid-speech question (? or ？): uncross arms and lean in (closeup) to engage/challenge the operator
+    if s.endswith(("?", "？")):
+        if re.search(r"\b(ou ser[áa] que|n[ãa]o acha|vai me dizer|entendeu|consegue acompanhar|travou|duvida|don't you think|got it|understand|following me)\b|でしょう|わかる|でしょ", low):
             return {"emotion": "wink", "pose": "default", "camera": "closeup"}
         next_emo = "thinking" if emotion in ("analytical", "disdain", "stern") else emotion
         return {"emotion": next_emo, "pose": "default", "camera": "closeup"}
 
     # 4. Concrete example / open explanation pivot -> uncross arms to pose:default
     if pose == "crossed_arms" and (
-        re.search(r"\b(por exemplo|imagine|na pr[áa]tica|pense bem|ou seja|basicamente|em outras palavras|veja bem)\b", low)
+        re.search(r"\b(por exemplo|imagine|na pr[áa]tica|pense bem|ou seja|basicamente|em outras palavras|veja bem|for example|imagine|in practice|basically|in other words)\b|たとえば|例えば|つまり|要するに", low)
         or index % 2 == 1
     ):
         next_emo = "thinking" if emotion == "analytical" else ("neutral" if emotion == "stern" else emotion)
@@ -427,7 +437,7 @@ def infer_sentence_shift(
 
     # 5. Deep theoretical / analytical pivot from default pose -> cross arms for that point
     if pose == "default" and (
-        re.search(r"\b(entretanto|por[ée]m|contudo|por outro lado|matematicamente|fisicamente|equa[çc][ãa]o|m[ée]trica|tensor|entropia|hip[óo]tese)\b", low)
+        re.search(r"\b(entretanto|por[ée]m|contudo|por outro lado|matematicamente|fisicamente|equa[çc][ãa]o|m[ée]trica|tensor|entropia|hip[óo]tese|however|nevertheless|on the other hand|mathematically|physically|equation|entropy|hypothesis)\b|しかし|ただし|数学的に|物理的に|仮説", low)
         or (index % 2 == 1 and emotion in ("thinking", "analytical", "annoyed", "stern"))
     ):
         next_emo = "analytical" if emotion in ("thinking", "neutral") else emotion

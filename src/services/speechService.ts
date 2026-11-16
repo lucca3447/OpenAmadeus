@@ -1,10 +1,49 @@
 import { BackendService, BACKEND_URL } from './backendService';
 import type { MicVAD } from '@ricky0123/vad-web';
 import { isVoiced } from './vadGate';
+import type { MouthState } from '../types/amadeus';
 
 export type SpeechCallback = (text: string) => void;
 export type SpeechStateCallback = (isListening: boolean) => void;
-export type LipSyncCallback = (isOpen: boolean, amplitude: number) => void;
+export type LipSyncCallback = (isOpen: boolean, amplitude: number, mouthState?: MouthState) => void;
+
+/**
+ * Classifies vowel openness from Web Audio FFT bins using F1/F2 formant band ratios:
+ * - F1 low (250-550 Hz): close/mid vowels (I, U, Ê, Ô) and voiced consonants -> 'half' (01)
+ * - F1 high (600-950 Hz): open jaw vowels (A, É, Ó) -> 'open' (02)
+ * - F2 (950-2500 Hz): vocal tract confirmation to reject low hum or pure high sibilants (>3000 Hz)
+ */
+export function classifyFormantMouth(
+  bins: Uint8Array,
+  sampleRate = 24000
+): { mouth: MouthState; amplitude: number } {
+  const n = bins.length;
+  if (!n) return { mouth: 'closed', amplitude: 0 };
+  const binHz = sampleRate / (n * 2);
+  const bandMean = (loHz: number, hiHz: number): number => {
+    const i0 = Math.max(1, Math.floor(loHz / binHz));
+    const i1 = Math.min(n - 1, Math.ceil(hiHz / binHz));
+    if (i1 < i0) return 0;
+    let sum = 0;
+    for (let i = i0; i <= i1; i++) sum += bins[i];
+    return sum / (i1 - i0 + 1);
+  };
+
+  const f1Close = bandMean(250, 550);
+  const f1Open = bandMean(600, 950);
+  const f2Band = bandMean(950, 2500);
+  const vocalAvg = f1Close * 0.35 + f1Open * 0.4 + f2Band * 0.25;
+  const amplitude = Math.min(1.0, vocalAvg / 82.0);
+
+  if (amplitude < 0.14) {
+    return { mouth: 'closed', amplitude: 0 };
+  }
+  const openNorm = f1Open / 255.0;
+  if (openNorm > 0.26 && f1Open >= f1Close * 0.88) {
+    return { mouth: 'open', amplitude };
+  }
+  return { mouth: 'half', amplitude };
+}
 
 // TypeScript declaration for webkitSpeechRecognition
 declare global {
@@ -22,7 +61,7 @@ export interface PcmTimeline {
 
 export interface SentenceSpeaker {
   /** Prefetches /tts in queue order and plays after the previous sentence; onAudible runs when this sentence starts sounding. */
-  enqueue(text: string, onAudible?: () => void, emotion?: string): void;
+  enqueue(text: string, onAudible?: () => void, emotion?: string, overrideOpts?: Partial<SpeakOptions>): void;
   /** No more sentences: resolves options.onEnd after the last audio finishes. */
   end(): void;
   cancel(): void;
@@ -46,6 +85,7 @@ export interface SpeakOptions {
   rvcModel?: string;
   rvcPitch?: number;
   rvcIndexRate?: number;
+  rvcProtect?: number;
   allowTtsFallback?: boolean;
   allowedTtsFallbacks?: string[];
   onStart?: () => void;
@@ -59,10 +99,10 @@ export interface SpeakOptions {
  * - Transcribes acronyms and Steins;Gate lore terms into fluent phonetic Portuguese
  * - Removes markdown formatting and internal tags
  */
-export function normalizeForSpeech(rawText: string): string {
+export function normalizeForSpeech(rawText: string, lang: string = 'pt-BR'): string {
   let text = rawText || '';
 
-  // 1. Remove emotion, remember and pose tags
+  // 1. Remove emotion, remember, ja and pose tags
   text = text.replace(/<!--[\s\S]*?(?:-->|-+>|>+|$)/gi, '');
 
   // 2. Remove stage directions / asterisk actions (*sorri*, *olha para o lado*)
@@ -81,25 +121,32 @@ export function normalizeForSpeech(rawText: string): string {
   text = text.replace(/[*_~#]/g, '');
   text = text.replace(/\[(.*?)\]\(.*?\)/g, '$1');
 
-  // 3. Stutter preservation: keep natural hyphenated stutters (e.g. "N-não", "Q-quem", "U-um")
-  // without injecting triple dots that trigger early neural TTS speech cutoff.
-
-  // 4. Steins;Gate Lore & Tech Acronym Pronunciations
-  text = text.replace(/\bSERN\b/g, 'Sérn');
-  text = text.replace(/\bLHC\b/g, 'éle agá cê');
-  text = text.replace(/@channel\b/gi, 'at channel');
-  text = text.replace(/\bchanneler\b/gi, 'channeler');
-  text = text.replace(/\bIBN\s*5100\b/gi, 'I B N cinco mil e cem');
-  text = text.replace(/\bDr\b\.?\s*Pepper\b/gi, 'Doutor Pepper');
-  text = text.replace(/\bSteins;Gate\b/gi, 'Steins Gate');
-  text = text.replace(/\bViktor\s*Chondria\b/gi, 'Víktor Chôndria');
-  text = text.replace(/\bNullpo\b/gi, 'Núlpo');
-  text = text.replace(/\bNurupo\b/gi, 'Nurúpo');
-  text = text.replace(/\bKurigohan\b/gi, 'Kúrigohan');
-  text = text.replace(/\bKamehameha\b/gi, 'Kamehamêha');
-  text = text.replace(/\bHououin\s*Kyouma\b/gi, 'Houôin Kyouma');
-  text = text.replace(/\bLabMem\b/gi, 'Lab Mem');
-  text = text.replace(/\bReading\s*Steiner\b/gi, 'Ríding Stáiner');
+  const normLang = (lang || 'pt-BR').toLowerCase();
+  if (normLang.startsWith('ja')) {
+    text = text.replace(/\bSteins;Gate\b/gi, 'シュタインズ・ゲート');
+    text = text.replace(/@channel\b/gi, 'アットちゃんねる');
+  } else if (normLang.startsWith('en')) {
+    text = text.replace(/@channel\b/gi, 'at channel');
+    text = text.replace(/\bSteins;Gate\b/gi, 'Steins Gate');
+    text = text.replace(/\bDr\b\.?\s*Pepper\b/gi, 'Doctor Pepper');
+  } else {
+    // 4. Steins;Gate Lore & Tech Acronym Pronunciations (PT-BR)
+    text = text.replace(/\bSERN\b/g, 'Sérn');
+    text = text.replace(/\bLHC\b/g, 'éle agá cê');
+    text = text.replace(/@channel\b/gi, 'at channel');
+    text = text.replace(/\bchanneler\b/gi, 'channeler');
+    text = text.replace(/\bIBN\s*5100\b/gi, 'I B N cinco mil e cem');
+    text = text.replace(/\bDr\b\.?\s*Pepper\b/gi, 'Doutor Pepper');
+    text = text.replace(/\bSteins;Gate\b/gi, 'Steins Gate');
+    text = text.replace(/\bViktor\s*Chondria\b/gi, 'Víktor Chôndria');
+    text = text.replace(/\bNullpo\b/gi, 'Núlpo');
+    text = text.replace(/\bNurupo\b/gi, 'Nurúpo');
+    text = text.replace(/\bKurigohan\b/gi, 'Kúrigohan');
+    text = text.replace(/\bKamehameha\b/gi, 'Kamehamêha');
+    text = text.replace(/\bHououin\s*Kyouma\b/gi, 'Houôin Kyouma');
+    text = text.replace(/\bLabMem\b/gi, 'Lab Mem');
+    text = text.replace(/\bReading\s*Steiner\b/gi, 'Ríding Stáiner');
+  }
 
   // 5. Clean up multiple punctuation and whitespace
   text = text.replace(/\.{4,}/g, '...');
@@ -109,7 +156,7 @@ export function normalizeForSpeech(rawText: string): string {
 }
 
 const WHISPER_HALLUCINATION_RE =
-  /^(?:obrigad[oa](?:\s+por\s+assistir)?|legendas?\s+pela\s+comunidade.*|inscreva-se(?:\s+no\s+canal)?|amara\.org.*|subtitles\s+by.*|thank\s+you\s+for\s+watching.*|you|\.+|,|\?+|!+|\s*)$/i;
+  /^(?:obrigad[oa](?:\s+por\s+assistir)?|legendas?\s+pela\s+comunidade.*|inscreva-se(?:\s+no\s+canal)?|amara\.org.*|subtitles\s+by.*|thank\s+you\s+for\s+watching.*|you|ご視聴ありがとうございました[。.]*|チャンネル登録.*|字幕.*|おやすみなさい[。.]*|\.+|,|\?+|!+|\s*)$/i;
 
 /**
  * Filters silence hallucinations and fixes phonetic PT-BR STT transcriptions for lore/tech terms
@@ -141,6 +188,7 @@ export class SpeechService {
   private static separateGroqSttKey = '';
   private static allowSttWebSpeechFallback = true;
   private static vadSensitivity = 1.0;
+  private static sttLang = 'pt-BR';
 
   // Microphone Web Audio & MediaRecorder VAD state
   private static micStream: MediaStream | null = null;
@@ -203,8 +251,16 @@ export class SpeechService {
     separateGroqSttKey?: string;
     allowSttWebSpeechFallback?: boolean;
     vadSensitivity?: number;
+    lang?: string;
   }): void {
     const prevMode = this.micMode;
+    if (config.lang) {
+      const l = config.lang.toLowerCase();
+      this.sttLang = l.startsWith('ja') ? 'ja-JP' : l.startsWith('en') ? 'en-US' : 'pt-BR';
+      if (this.recognition) {
+        this.recognition.lang = this.sttLang;
+      }
+    }
     if (config.mode) {
       this.micMode = config.mode;
     }
@@ -284,7 +340,7 @@ export class SpeechService {
     if (SpeechRec) {
       try {
         this.recognition = new SpeechRec();
-        this.recognition.lang = 'pt-BR';
+        this.recognition.lang = this.sttLang;
         this.recognition.interimResults = true;
 
         this.recognition.onstart = () => {
@@ -445,10 +501,11 @@ export class SpeechService {
     this.onInterimCb?.('Transcrevendo fala (Whisper Turbo)...');
     try {
       const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm';
+      const whisperLang = this.sttLang.startsWith('ja') ? 'ja' : this.sttLang.startsWith('en') ? 'en' : 'pt';
       const formData = new FormData();
       formData.append('file', audioBlob, `speech.${ext}`);
       formData.append('model', 'whisper-large-v3-turbo');
-      formData.append('language', 'pt');
+      formData.append('language', whisperLang);
       formData.append('temperature', '0');
 
       const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
@@ -773,7 +830,7 @@ export class SpeechService {
       this.masterGain.gain.value = 1.0;
 
       this.analyser = this.audioCtx.createAnalyser();
-      this.analyser.fftSize = 256;
+      this.analyser.fftSize = 512;
       this.analyser.smoothingTimeConstant = 0.65;
 
       // Audio Graph routing
@@ -811,41 +868,35 @@ export class SpeechService {
     };
   }
 
-  private static notifyLipSync(isOpen: boolean, amplitude: number): void {
+  private static notifyLipSync(isOpen: boolean, amplitude: number, mouthState?: MouthState): void {
+    const resolvedMouth: MouthState = mouthState ?? (!isOpen ? 'closed' : amplitude > 0.45 ? 'open' : 'half');
     this.lipSyncListeners.forEach((cb) => {
       try {
-        cb(isOpen, amplitude);
+        cb(isOpen, amplitude, resolvedMouth);
       } catch {}
     });
   }
 
   /**
-   * Monitors real acoustic audio amplitude via FFT and drives lip-sync mouth frames
+   * Monitors real acoustic audio formants (F1/F2 vowel bands) via FFT and drives 3-stage lip-sync mouth frames
    */
   private static startLipSyncMonitoring(): void {
     if (this.lipSyncAnimFrame) return;
 
-    const dataArray = new Uint8Array(this.analyser?.frequencyBinCount || 128);
+    const dataArray = new Uint8Array(this.analyser?.frequencyBinCount || 256);
 
     const checkFrame = () => {
       if (!this.isSpeakingAudio) {
-        this.notifyLipSync(false, 0);
+        this.notifyLipSync(false, 0, 'closed');
         this.lipSyncAnimFrame = null;
         return;
       }
 
       if (this.analyser) {
         this.analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        // Check vocal frequency bins (approx 300Hz - 3500Hz)
-        const maxBins = Math.min(dataArray.length, 64);
-        for (let i = 2; i < maxBins; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / (maxBins - 2);
-        const normalized = Math.min(1.0, avg / 85.0);
-        const isOpen = normalized > 0.16;
-        this.notifyLipSync(isOpen, normalized);
+        const sr = this.audioCtx?.sampleRate || 24000;
+        const { mouth, amplitude } = classifyFormantMouth(dataArray, sr);
+        this.notifyLipSync(mouth !== 'closed', amplitude, mouth);
       }
 
       this.lipSyncAnimFrame = requestAnimationFrame(checkFrame);
@@ -860,7 +911,7 @@ export class SpeechService {
    * 2. Falls back seamlessly to browser SpeechSynthesisUtterance if backend offline
    */
   static async speak(text: string, options: SpeakOptions = {}): Promise<void> {
-    const cleanText = normalizeForSpeech(text);
+    const cleanText = normalizeForSpeech(text, options.lang);
     if (!cleanText) return;
 
     this.stopSpeaking();
@@ -931,6 +982,7 @@ export class SpeechService {
         signal,
         body: JSON.stringify({
           text: cleanText,
+          lang: options.lang || 'pt-BR',
           engine: options.engine || 'qwen3',
           qwenMode: options.qwenMode || 'remote',
           qwenRemoteUrl: options.qwenMode === 'local' ? undefined : options.qwenRemoteUrl,
@@ -944,6 +996,7 @@ export class SpeechService {
           rvcModel: options.rvcModel || 'KurisuRVCv147',
           rvcPitch: options.rvcPitch ?? 0,
           rvcIndexRate: options.rvcIndexRate ?? 0.75,
+          rvcProtect: options.rvcProtect ?? 0.33,
           allowTtsFallback: options.allowTtsFallback !== false,
           allowedTtsFallbacks: options.allowedTtsFallbacks || ['qwen_local', 'kokoro', 'edge_rvc'],
         }),
@@ -1216,13 +1269,17 @@ export class SpeechService {
     let errorShown = false;
 
     return {
-      enqueue: (text, onAudible, emotion) => {
-        const clean = normalizeForSpeech(text);
+      enqueue: (text, onAudible, emotion, overrideOpts) => {
+        const sentenceOpts: SpeakOptions = {
+          ...options,
+          ...(overrideOpts || {}),
+          ...(emotion ? { emotion } : {}),
+        };
+        const clean = normalizeForSpeech(text, sentenceOpts.lang);
         if (!clean) {
           chain = chain.then(() => onAudible?.());
           return;
         }
-        const sentenceOpts = emotion ? { ...options, emotion } : options;
         // Serialize GPU worker HTTP fetches so sentence N+1 prefetches right after sentence N finishes downloading (while N is still playing)
         let releaseFetch!: () => void;
         const fetchDone = new Promise<void>((r) => { releaseFetch = r; });
@@ -1265,7 +1322,7 @@ export class SpeechService {
             if (item instanceof Error) throw item;
             if (!item) { reveal(); return; }
             try {
-              await this.playNeuralResponse(item.res, { ...options, onStart: reveal, onEnd: undefined }, signal, timeline);
+              await this.playNeuralResponse(item.res, { ...sentenceOpts, onStart: reveal, onEnd: undefined }, signal, timeline);
             } finally {
               if (item.isStream) releaseFetch();
             }
@@ -1273,7 +1330,7 @@ export class SpeechService {
             if (signal.aborted || err?.name === 'AbortError') return;
             if (canFallbackWebSpeech) {
               await this.waitUntilAudioTime(timeline.next, signal);
-              await new Promise<void>((resolve) => this.speakWebSpeech(clean, { ...options, onStart: reveal, onEnd: resolve }));
+              await new Promise<void>((resolve) => this.speakWebSpeech(clean, { ...sentenceOpts, onStart: reveal, onEnd: resolve }));
               return;
             }
             if (!errorShown) {
@@ -1327,13 +1384,15 @@ export class SpeechService {
       options.onStart?.();
     };
 
-    // Word boundary event for syllable-accurate mouth movements
+    // Word boundary event for vowel-aware syllable mouth movements
     utterance.onboundary = (event) => {
       if (event.name === 'word') {
-        this.notifyLipSync(true, 0.7);
+        const slice = cleanText.slice(event.charIndex || 0, (event.charIndex || 0) + 6);
+        const hasOpenVowel = /[aáàâãéêóあかさたなはまやらわがざだばぱ]/i.test(slice);
+        this.notifyLipSync(true, hasOpenVowel ? 0.78 : 0.42, hasOpenVowel ? 'open' : 'half');
         if (this.simulatedLipSyncTimeout) clearTimeout(this.simulatedLipSyncTimeout);
         this.simulatedLipSyncTimeout = window.setTimeout(() => {
-          this.notifyLipSync(false, 0);
+          this.notifyLipSync(false, 0, 'closed');
         }, 125);
       }
     };

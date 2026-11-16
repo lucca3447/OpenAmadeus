@@ -5,6 +5,7 @@ class TTSRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     text: str
+    lang: Optional[str] = "pt"
     engine: Optional[str] = "qwen3"  # "qwen3", "kokoro", "edge_rvc", "edge"
     qwen_mode: Optional[str] = Field("remote", alias="qwenMode")  # "remote", "local", "auto"
     qwen_remote_url: Optional[str] = Field(None, alias="qwenRemoteUrl")
@@ -17,6 +18,7 @@ class TTSRequest(BaseModel):
     rvc_model: Optional[str] = Field("KurisuRVCv147", alias="rvcModel")
     rvc_pitch: Optional[int] = Field(0, alias="rvcPitch")
     rvc_index_rate: Optional[float] = Field(0.75, alias="rvcIndexRate")
+    rvc_protect: Optional[float] = Field(0.33, alias="rvcProtect")
     stream: Optional[bool] = False
     allow_fallback: Optional[bool] = Field(True, alias="allowTtsFallback")
     allowed_fallbacks: Optional[List[str]] = Field(

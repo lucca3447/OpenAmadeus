@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
+import { getUiText } from '../i18n';
 import { CameraFraming, CameraMode, CharacterPose, Emotion, MouthState } from '../types/amadeus';
 import {
   inferCameraFraming,
@@ -20,21 +21,22 @@ interface AmadeusSpriteViewProps {
   memoryPulse?: number;
   scanlines?: boolean;
   className?: string;
+  lang?: string;
 }
 
 const CAMERA_CYCLE: CameraMode[] = ['auto', 'closeup', 'medium', 'full'];
 const CAMERA_LABELS: Record<CameraFraming, string> = {
   closeup: 'CLOSE-UP (JL)',
-  medium: 'MÉDIO (JM)',
-  full: 'INTEIRO (JS)',
+  medium: 'MEDIUM (JM)',
+  full: 'FULL (JS)',
 };
 
 const POSE_CYCLE: Array<'auto' | CharacterPose> = ['auto', 'default', 'crossed_arms', 'backview'];
 const POSE_LABELS: Record<'auto' | CharacterPose, string> = {
   auto: 'POSE: AUTO',
-  default: 'POSE: FRONTAL',
-  crossed_arms: 'POSE: BRAÇOS CRUZADOS',
-  backview: 'POSE: COSTAS',
+  default: 'POSE: FRONT',
+  crossed_arms: 'POSE: CROSSED ARMS',
+  backview: 'POSE: BACKVIEW',
 };
 
 export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
@@ -47,7 +49,9 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
   memoryPulse = 0,
   scanlines = false,
   className = '',
+  lang,
 }) => {
+  const t = getUiText(lang).sprite;
   const [mouthState, setMouthState] = useState<MouthState>('closed');
   const [voiceAmplitude, setVoiceAmplitude] = useState<number>(0);
   const [isBlinking, setIsBlinking] = useState(false);
@@ -186,7 +190,7 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
     let lastAcousticTimestamp = 0;
 
-    const unsubscribe = SpeechService.addLipSyncListener((isOpen, amplitude) => {
+    const unsubscribe = SpeechService.addLipSyncListener((isOpen, amplitude, formantMouth) => {
       if (!isSpeaking) {
         setMouthState('closed');
         setVoiceAmplitude(0);
@@ -197,7 +201,9 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
       }
       setVoiceAmplitude(isOpen ? Math.min(1, amplitude) : 0);
 
-      if (!isOpen) {
+      if (formantMouth) {
+        setMouthState(formantMouth);
+      } else if (!isOpen) {
         setMouthState('closed');
       } else if (amplitude > 0.45) {
         setMouthState('open');
@@ -320,26 +326,26 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
         <button
           type="button"
           onClick={handleCyclePose}
-          title="Alternar posição/postura da Kurisu (Auto / Frontal / Braços Cruzados / Costas)"
+          title={t.togglePoseTitle}
           className="copper-capsule flex items-center gap-1.5 px-3 py-1 text-[10px] font-mono text-amber-200 hover:text-white whitespace-nowrap"
         >
           <User className="w-3 h-3 text-orange-400 shrink-0" />
           <span className="engraved-serif font-bold tracking-wider">
-            {POSE_LABELS[poseOverride]}
+            {(t.poses as Record<string, string>)[poseOverride] || POSE_LABELS[poseOverride]}
           </span>
         </button>
 
         <button
           type="button"
           onClick={handleCycleCamera}
-          title="Alternar distância/enquadramento (Auto / Close-up JL / Meio-Corpo JM / Corpo Inteiro JS)"
+          title={t.toggleCameraTitle}
           className="copper-capsule flex items-center gap-1.5 px-3 py-1 text-[10px] font-mono text-amber-200 hover:text-white whitespace-nowrap"
         >
           <Camera className="w-3 h-3 text-orange-400 shrink-0" />
           <span className="engraved-serif font-bold tracking-wider">
             {cameraMode === 'auto'
-              ? `AUTO · ${CAMERA_LABELS[activeCamera]}`
-              : CAMERA_LABELS[activeCamera]}
+              ? `AUTO · ${(t.cameras as Record<string, string>)[activeCamera] || CAMERA_LABELS[activeCamera]}`
+              : (t.cameras as Record<string, string>)[activeCamera] || CAMERA_LABELS[activeCamera]}
           </span>
         </button>
       </div>
@@ -425,10 +431,10 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
 
             <div className="space-y-1.5 max-w-xs">
               <span className="engraved-serif text-[10px] px-2.5 py-0.5 bg-black/80 border border-amber-900/60 text-orange-400 tracking-widest font-bold">
-                SILHUETA VETORIAL ATIVA
+                {t.fallbackSilhouette}
               </span>
               <p className="text-[11px] text-zinc-400 font-mono leading-relaxed">
-                Sprites locais não detectados. Para vincular os sprites, execute{' '}
+                {' '}
                 <code className="text-amber-300 bg-black/80 px-1 py-0.5 border border-amber-900/50">
                   python scripts/setup_sprites.py
                 </code>
