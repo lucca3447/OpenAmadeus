@@ -165,6 +165,25 @@ class TestQwenTTS(unittest.TestCase):
         )
         self.assertEqual(local_with_stale_remote, "http://127.0.0.1:8005")
 
+        # Valid Colab tunnel URL
+        colab_url = "https://worth-dont-award-yeast.trycloudflare.com/"
+        self.assertEqual(
+            QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=colab_url),
+            "https://worth-dont-award-yeast.trycloudflare.com",
+        )
+
+        # SSRF guard: reject private/link-local IPs and non-worker localhost ports
+        for unsafe_url in (
+            "http://169.254.169.254/latest/meta-data",
+            "http://192.168.1.10:8080",
+            "http://127.0.0.1:22",
+        ):
+            self.assertFalse(QwenTTSManager.is_allowed_worker_url(unsafe_url))
+            self.assertEqual(
+                QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=unsafe_url),
+                "http://127.0.0.1:8005",
+            )
+
     def test_apply_boundary_continuity(self):
         from app.services.qwen_tts.qwen_worker import apply_boundary_continuity
         import numpy as np

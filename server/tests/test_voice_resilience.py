@@ -149,6 +149,26 @@ class TestVoicePipelineResilience(unittest.IsolatedAsyncioTestCase):
             qwen_worker.model = orig_model
             qwen_worker.active_backend = orig_backend
 
+    async def test_voice_service_skips_kokoro_on_english_and_japanese(self):
+        async def fake_edge_stream(*args, **kwargs):
+            yield b"ID3mockmp3"
+
+        with patch("app.services.voice_service.QwenTTSManager.synthesize", new_callable=AsyncMock, return_value=None), \
+             patch("app.services.voice_service.KokoroTTSManager.synthesize", new_callable=AsyncMock) as mock_kokoro, \
+             patch("app.services.voice_service.generate_edge_tts_stream", side_effect=fake_edge_stream), \
+             patch("app.services.voice_service.RVCManager.convert", new_callable=AsyncMock, return_value=b"RIFFrvcwav"):
+            for lang_code, sample_text in (("en-US", "Hello, this is a voice test."), ("ja-JP", "こんにちは、紅莉栖よ。")):
+                ct, gen = await synthesize_speech(
+                    text=sample_text,
+                    lang=lang_code,
+                    stream=False,
+                    allowed_fallbacks=["kokoro", "edge_rvc"],
+                )
+                self.assertEqual(ct, "audio/wav")
+                chunks = [c async for c in gen]
+                self.assertEqual(b"".join(chunks), b"RIFFrvcwav")
+            mock_kokoro.assert_not_called()
+
 
 
 if __name__ == "__main__":

@@ -134,6 +134,21 @@ class TestChatStream(unittest.TestCase):
         self.assertEqual(names.count("sentence"), 1)
         self.assertEqual(names[-1], "done")
 
+    def test_canonical_ja_multi_punct_stays_aligned_per_sentence(self):
+        body = sse(
+            "<!--emotion:wink,pose:default,camera:closeup--> ",
+            "<!--ja:こんにちは！牧瀬紅莉栖よ。--> Olá, eu sou a Makise Kurisu. ",
+            "<!--ja:よろしくね。--> Prazer em conhecê-lo.",
+        )
+        with mock_groq(lambda r: httpx.Response(200, content=body)):
+            ev = read_events(self.client, self.payload(canonicalVoice=True))
+        sent_evs = [e for e in ev if e["event"] == "sentence"]
+        self.assertEqual(len(sent_evs), 2)
+        self.assertEqual(sent_evs[0]["text"], "Olá, eu sou a Makise Kurisu.")
+        self.assertEqual(sent_evs[0]["ttsText"], "こんにちは！牧瀬紅莉栖よ。")
+        self.assertEqual(sent_evs[1]["text"], "Prazer em conhecê-lo.")
+        self.assertEqual(sent_evs[1]["ttsText"], "よろしくね。")
+
 
 if __name__ == "__main__":
     unittest.main()
