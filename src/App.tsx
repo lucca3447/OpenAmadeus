@@ -578,10 +578,13 @@ export const App: React.FC = () => {
                 setHistory(partialHistory);
                 MemoryService.saveActiveSession(sessionId, partialHistory);
               };
-              // canonical JP mode: speak the Japanese line, or fallback safely to convLang if <!--ja:...--> was omitted
+              // canonical JP mode: speak the Japanese line, or fallback safely to convLang only when no <!--ja:...--> appeared at all
               if (canonicalJp) {
                 if (ttsText) {
                   if (speaker) speaker.enqueue(ttsText, reveal, visual?.emotion);
+                  else reveal();
+                } else if (accumulatedTtsText) {
+                  if (speaker) speaker.enqueue('', reveal, visual?.emotion);
                   else reveal();
                 } else {
                   if (speaker) speaker.enqueue(sentence, reveal, visual?.emotion, getConvSpeakFallback());

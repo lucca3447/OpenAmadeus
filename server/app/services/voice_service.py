@@ -1,5 +1,6 @@
 import io
 import re
+from datetime import datetime
 from typing import AsyncGenerator, Tuple, Union, Optional, List
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,10 @@ except ImportError:
 from app.services.rvc.rvc_manager import RVCManager
 from app.services.qwen_tts.qwen_manager import QwenTTSManager
 from app.services.kokoro_tts.kokoro_manager import KokoroTTSManager
+
+
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
 
 def check_edge_tts_available() -> bool:
@@ -195,7 +200,7 @@ async def synthesize_speech(
     if active_engine == "qwen3":
         qwen_text = clean_text_for_tts(text, lang=eff_lang_code)
         primary_err = None
-        print(f"[OpenAmadeus Voice] Qwen3 Synthesis (lang: {qwen_lang}, mode: {qwen_mode}, stream: {stream}, strict: {not allow_fallback}) | Emotion: '{emotion or 'neutral'}'")
+        print(f"[{_ts()}] [OpenAmadeus Voice] Qwen3 Synthesis (lang: {qwen_lang}, mode: {qwen_mode}, stream: {stream}, strict: {not allow_fallback}) | Emotion: '{emotion or 'neutral'}'")
 
         # 1.1 Complete WAV delivery
         if not stream:
@@ -214,7 +219,7 @@ async def synthesize_speech(
                     return "audio/wav", _wav_generator()
             except Exception as e:
                 primary_err = e
-                print(f"[OpenAmadeus Voice] Primary Qwen3 ({qwen_mode}) WAV error: {e}")
+                print(f"[{_ts()}] [OpenAmadeus Voice] Primary Qwen3 ({qwen_mode}) WAV error: {e}")
 
             if not allow_fallback:
                 raise HTTPException(
@@ -226,7 +231,7 @@ async def synthesize_speech(
             if qwen_mode == "remote" and "qwen_local" in permitted:
                 local_url = "http://127.0.0.1:8005"
                 if await QwenTTSManager.is_worker_healthy(local_url):
-                    print("[OpenAmadeus Voice] Remote Qwen offline, attempting Local Qwen WAV...")
+                    print(f"[{_ts()}] [OpenAmadeus Voice] Remote Qwen offline, attempting Local Qwen WAV...")
                     try:
                         local_wav = await QwenTTSManager.synthesize(
                             text=qwen_text,
@@ -240,7 +245,7 @@ async def synthesize_speech(
                                 yield local_wav
                             return "audio/wav", _local_wav_gen()
                     except Exception as local_err:
-                        print(f"[OpenAmadeus Voice] Local Qwen WAV fallback error: {local_err}")
+                        print(f"[{_ts()}] [OpenAmadeus Voice] Local Qwen WAV fallback error: {local_err}")
 
         # 1.2 Streaming mode
         else:
@@ -256,7 +261,7 @@ async def synthesize_speech(
                 return content_type, stream_gen
             except Exception as e:
                 primary_err = e
-                print(f"[OpenAmadeus Voice] Primary Qwen3 ({qwen_mode}) streaming error: {e}")
+                print(f"[{_ts()}] [OpenAmadeus Voice] Primary Qwen3 ({qwen_mode}) streaming error: {e}")
 
             if not allow_fallback:
                 raise HTTPException(
@@ -267,7 +272,7 @@ async def synthesize_speech(
             if qwen_mode == "remote" and "qwen_local" in permitted:
                 local_url = "http://127.0.0.1:8005"
                 if await QwenTTSManager.is_worker_healthy(local_url):
-                    print("[OpenAmadeus Voice] Remote Qwen offline, attempting Local Qwen stream...")
+                    print(f"[{_ts()}] [OpenAmadeus Voice] Remote Qwen offline, attempting Local Qwen stream...")
                     try:
                         content_type, local_stream_gen = await QwenTTSManager.synthesize_stream(
                             text=qwen_text,
@@ -278,15 +283,15 @@ async def synthesize_speech(
                         )
                         return content_type, local_stream_gen
                     except Exception as local_err:
-                        print(f"[OpenAmadeus Voice] Local Qwen fallback error: {local_err}")
+                        print(f"[{_ts()}] [OpenAmadeus Voice] Local Qwen fallback error: {local_err}")
 
         # Next cascade step from Qwen3
         if "kokoro" in permitted and eff_lang_code == "pt":
-            print("[OpenAmadeus Voice] Qwen3 offline; cascading to Kokoro-TTS + RVC.")
+            print(f"[{_ts()}] [OpenAmadeus Voice] Qwen3 offline; cascading to Kokoro-TTS + RVC.")
             active_engine = "kokoro"
             use_rvc = True
         elif "edge_rvc" in permitted:
-            print("[OpenAmadeus Voice] Qwen3 offline; cascading to Edge-TTS + RVC.")
+            print(f"[{_ts()}] [OpenAmadeus Voice] Qwen3 offline; cascading to Edge-TTS + RVC.")
             active_engine = "edge_rvc"
             use_rvc = True
         else:
@@ -300,7 +305,7 @@ async def synthesize_speech(
     # =========================================================================
     if active_engine == "kokoro" and eff_lang_code != "pt":
         if allow_fallback and "edge_rvc" in permitted:
-            print(f"[OpenAmadeus Voice] Kokoro-TTS supports PT-BR only; skipping to Edge-TTS for lang '{eff_lang_code}'.")
+            print(f"[{_ts()}] [OpenAmadeus Voice] Kokoro-TTS supports PT-BR only; skipping to Edge-TTS for lang '{eff_lang_code}'.")
             active_engine = "edge_rvc"
         else:
             raise HTTPException(
@@ -310,7 +315,7 @@ async def synthesize_speech(
 
     if active_engine == "kokoro":
         kokoro_err = None
-        print(f"[OpenAmadeus Voice] Kokoro-TTS Synthesis | Text: \"{clean_text}\"")
+        print(f"[{_ts()}] [OpenAmadeus Voice] Kokoro-TTS Synthesis | Text: \"{clean_text}\"")
         try:
             kokoro_wav = await KokoroTTSManager.synthesize(
                 text=clean_text,
@@ -319,7 +324,7 @@ async def synthesize_speech(
             )
             if kokoro_wav:
                 if use_rvc:
-                    print(f"[OpenAmadeus Voice] Applying RVC model '{rvc_model}' on Kokoro audio...")
+                    print(f"[{_ts()}] [OpenAmadeus Voice] Applying RVC model '{rvc_model}' on Kokoro audio...")
                     converted_wav = await RVCManager.convert(
                         audio_bytes=kokoro_wav,
                         pitch_shift=rvc_pitch,
@@ -336,7 +341,7 @@ async def synthesize_speech(
                             status_code=503,
                             detail=f"[MODO ESTRITO DE VOZ] Conversão de timbre RVC ({rvc_model}) falhou sobre o áudio Kokoro.",
                         )
-                    print("[OpenAmadeus Voice] RVC conversion failed; serving base Kokoro-TTS audio.")
+                    print(f"[{_ts()}] [OpenAmadeus Voice] RVC conversion failed; serving base Kokoro-TTS audio.")
 
                 async def _kokoro_gen():
                     yield kokoro_wav
@@ -345,7 +350,7 @@ async def synthesize_speech(
             raise
         except Exception as e:
             kokoro_err = e
-            print(f"[OpenAmadeus Voice] Kokoro-TTS failed ({e}).")
+            print(f"[{_ts()}] [OpenAmadeus Voice] Kokoro-TTS failed ({e}).")
 
         if not allow_fallback or "edge_rvc" not in permitted:
             raise HTTPException(
@@ -360,7 +365,7 @@ async def synthesize_speech(
     # =========================================================================
     if (not voice or voice == "pt-BR-FranciscaNeural") and eff_lang_code != "pt":
         voice = "ja-JP-NanamiNeural" if eff_lang_code == "ja" else "en-US-JennyNeural"
-    print(f"[OpenAmadeus Voice] Edge-TTS Synthesis (RVC: {use_rvc}, voice: {voice}) | Text: \"{clean_text}\"")
+    print(f"[{_ts()}] [OpenAmadeus Voice] Edge-TTS Synthesis (RVC: {use_rvc}, voice: {voice}) | Text: \"{clean_text}\"")
     try:
         if not use_rvc:
             return "audio/mpeg", generate_edge_tts_stream(clean_text, voice=voice, rate=rate, pitch=pitch)

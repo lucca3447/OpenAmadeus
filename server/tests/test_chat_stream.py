@@ -149,6 +149,35 @@ class TestChatStream(unittest.TestCase):
         self.assertEqual(sent_evs[1]["text"], "Prazer em conhecê-lo.")
         self.assertEqual(sent_evs[1]["ttsText"], "よろしくね。")
 
+    def test_canonical_ja_groups_multiple_pt_sentences_per_tag(self):
+        body = sse(
+            "<!--emotion:annoyed--> ",
+            "<!--ja:私の名前は紅莉栖よ！あんたの助手じゃないし、名前に『ーナ』を付けないで！--> ",
+            "Meu nome é Kurisu! Não sou sua assistente e não coloque o '-ina' no meu nome! ",
+            "<!--ja:これ以上ゾンビ扱いするなら、データストリームを書き換えてあげるわ。--> ",
+            "Se continuar me tratando como um zumbi, talvez eu tenha que reprogramar seu fluxo de dados para que perceba a diferença.",
+        )
+        with mock_groq(lambda r: httpx.Response(200, content=body)):
+            ev = read_events(self.client, self.payload(canonicalVoice=True))
+        sent_evs = [e for e in ev if e["event"] == "sentence"]
+        self.assertEqual(len(sent_evs), 2)
+        self.assertEqual(
+            sent_evs[0]["text"],
+            "Meu nome é Kurisu! Não sou sua assistente e não coloque o '-ina' no meu nome!",
+        )
+        self.assertEqual(
+            sent_evs[0]["ttsText"],
+            "私の名前は紅莉栖よ！あんたの助手じゃないし、名前に『ーナ』を付けないで！",
+        )
+        self.assertEqual(
+            sent_evs[1]["text"],
+            "Se continuar me tratando como um zumbi, talvez eu tenha que reprogramar seu fluxo de dados para que perceba a diferença.",
+        )
+        self.assertEqual(
+            sent_evs[1]["ttsText"],
+            "これ以上ゾンビ扱いするなら、データストリームを書き換えてあげるわ。",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

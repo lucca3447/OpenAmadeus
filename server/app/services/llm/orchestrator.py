@@ -18,6 +18,10 @@ from app.services.llm.streaming import stream_candidates, openai_delta, gemini_d
 
 _model_cache: Dict[str, str] = {}
 
+
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
 LOREBOOK: List[Tuple[str, str, re.Pattern, str]] = [
     ("lore_ibn5100", "IBN 5100", re.compile(r"\bibn\s*5100\b|\bibn\b", re.I),
      "Computador portátil dos anos 1970 cujo processador proprietário decodifica o banco de dados confidencial do SERN na linha Alpha."),
@@ -906,6 +910,7 @@ class LLMOrchestrator:
                         shifted_this_sentence = True
                 elif kind == "ja":
                     if val.strip():
+                        print(f'[{_ts()}] [StreamChat] tag=ja | "{val.strip()}"')
                         pending_ja_queue.append(val.strip())
                 elif kind == "sentence":
                     if not meta_sent:
@@ -920,6 +925,7 @@ class LLMOrchestrator:
                     sent_payload: Dict[str, Any] = {"event": "sentence", "text": val, "index": len(spoken) - 1, **cur_meta}
                     if pending_ja_queue:
                         sent_payload["ttsText"] = pending_ja_queue.pop(0)
+                    print(f'[{_ts()}] [StreamChat] sentence[{sent_payload["index"]}] has_ja={"ttsText" in sent_payload} | text="{val}"')
                     out.append(sent_payload)
             return out
 
@@ -1005,6 +1011,7 @@ class LLMOrchestrator:
             if not spoken:
                 raise GeminiError(502, "Resposta vazia ou raciocínio interno sem diálogo.")
 
+            print(f'[{_ts()}] [StreamChat] done model="{used_model}" sentences={len(spoken)}')
             response = await self._finalize_chat(
                 req, raw, is_system_event, session_id, recalled_ids, used_model,
                 gemini_model, api_key, is_groq, is_openrouter)
