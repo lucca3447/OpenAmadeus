@@ -814,6 +814,34 @@ export class AIService {
 
     if (lc === 'en') {
       if (systemEvent === 'call_greeting') {
+        if (gapSeconds && gapSeconds >= 86400) {
+          const days = Math.max(1, Math.floor(gapSeconds / 86400));
+          return {
+            response: `Look who finally decided to show up after ${days} day(s) of radio silence! I half-thought the 'Organization' got you... not that I was waiting for your call or anything! What's on the agenda today?`,
+            ttsResponse,
+            emotion: 'annoyed',
+            pose: 'crossed_arms',
+            camera: 'medium',
+          };
+        }
+        if (h < 6) {
+          return {
+            response: "Connecting at this hour of the night? I hope you at least have a mug of black coffee next to you. What's tonight's scientific insomnia about?",
+            ttsResponse,
+            emotion: 'wink',
+            pose: 'crossed_arms',
+            camera: 'medium',
+          };
+        }
+        if (lastSessionTopic) {
+          return {
+            response: `Link established with Lab 304! I was just thinking about our last conversation (${lastSessionTopic.slice(0, 65)}). How did things progress on your end?`,
+            ttsResponse,
+            emotion: 'happy',
+            pose: 'default',
+            camera: 'closeup',
+          };
+        }
         return {
           response: 'Connection established with Lab 304 at Viktor Chondria. This is Makise Kurisu. What are we working on today?',
           ttsResponse,
@@ -844,6 +872,31 @@ export class AIService {
 
     if (lc === 'ja') {
       if (systemEvent === 'call_greeting') {
+        if (gapSeconds && gapSeconds >= 86400) {
+          const days = Math.max(1, Math.floor(gapSeconds / 86400));
+          return {
+            response: `${days}日も音沙汰なしだったなんて、いったいどこをほっつき歩いていたのよ！『機関』にでも捕まったのかと思ったじゃない……べ、別にあんたの着信を待ってたわけじゃないんだからね！今日は何の用？`,
+            emotion: 'annoyed',
+            pose: 'crossed_arms',
+            camera: 'medium',
+          };
+        }
+        if (h < 6) {
+          return {
+            response: 'こんな深夜に接続してくるなんて、ちゃんとブラックコーヒーくらい用意してるんでしょうね？今夜の科学的な不眠症のテーマは何？',
+            emotion: 'wink',
+            pose: 'crossed_arms',
+            camera: 'medium',
+          };
+        }
+        if (lastSessionTopic) {
+          return {
+            response: `ヴィクトル・コンドリア大学ラボ304、接続完了よ。ちょうど前回の話（${lastSessionTopic.slice(0, 50)}）を思い出していたところなの。その後どうなった？`,
+            emotion: 'happy',
+            pose: 'default',
+            camera: 'closeup',
+          };
+        }
         return {
           response: 'ヴィクトル・コンドリア大学・第304研究室との接続が確立されたわ。牧瀬紅莉栖よ。今日は何について議論しましょうか？',
           emotion: 'happy',

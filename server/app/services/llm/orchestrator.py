@@ -13,7 +13,7 @@ from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.openrouter import get_openrouter_candidate_models
-from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts, split_ja_sentences
+from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
 from app.services.llm.streaming import stream_candidates, openai_delta, gemini_delta, gemini_stream_url
 
 _model_cache: Dict[str, str] = {}
@@ -905,7 +905,8 @@ class LLMOrchestrator:
                     else:
                         shifted_this_sentence = True
                 elif kind == "ja":
-                    pending_ja_queue.extend(split_ja_sentences(val))
+                    if val.strip():
+                        pending_ja_queue.append(val.strip())
                 elif kind == "sentence":
                     if not meta_sent:
                         pose, camera = infer_pose_and_camera("", "neutral", user_message=user_ctx)
@@ -999,10 +1000,7 @@ class LLMOrchestrator:
                         yield out
                 for out in handle(splitter.flush()):
                     yield out
-                if pending_ja_queue:
-                    leftover_ja = " ".join(pending_ja_queue)
-                    pending_ja_queue.clear()
-                    yield {"event": "sentence", "text": "", "ttsText": leftover_ja, "index": len(spoken), **cur_meta}
+                pending_ja_queue.clear()
 
             if not spoken:
                 raise GeminiError(502, "Resposta vazia ou raciocínio interno sem diálogo.")
