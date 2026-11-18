@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { Emotion } from '../types/amadeus';
 import { Sparkles } from 'lucide-react';
 import { EMOTION_LABELS as EMOTION_I18N, getUiText, normalizeAppLang } from '../i18n';
@@ -50,15 +50,24 @@ export const SubtitleBox: React.FC<SubtitleBoxProps> = ({
 }) => {
   const t = getUiText(lang).subtitle;
   const [displayedText, setDisplayedText] = useState('');
+  const prevTextRef = useRef<string>('');
 
   useEffect(() => {
     if (!text) {
+      prevTextRef.current = '';
       setDisplayedText('');
       return;
     }
 
-    let currentIndex = 0;
-    setDisplayedText('');
+    const prev = prevTextRef.current;
+    const isAppend = prev.length > 0 && text.startsWith(prev);
+    prevTextRef.current = text;
+    let currentIndex = isAppend ? prev.length : 0;
+    if (!isAppend) {
+      setDisplayedText('');
+    } else {
+      setDisplayedText((shown) => (shown.length < prev.length ? prev : shown));
+    }
 
     const interval = setInterval(() => {
       if (currentIndex < text.length) {

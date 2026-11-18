@@ -215,7 +215,7 @@ export const AmadeusSpriteView: React.FC<AmadeusSpriteViewProps> = ({
     let flapStep = 0;
     lipFlapIntervalRef.current = window.setInterval(() => {
       if (!isSpeaking) return;
-      if (Date.now() - lastAcousticTimestamp > 300) {
+      if (!SpeechService.getAnalyser() && Date.now() - lastAcousticTimestamp > 300) {
         flapStep = (flapStep + 1) % 4;
         const states: MouthState[] = ['closed', 'half', 'open', 'half'];
         const amps = [0.05, 0.3, 0.65, 0.25];
