@@ -281,7 +281,7 @@ async def synthesize_speech(
                         print(f"[OpenAmadeus Voice] Local Qwen fallback error: {local_err}")
 
         # Next cascade step from Qwen3
-        if "kokoro" in permitted:
+        if "kokoro" in permitted and eff_lang_code == "pt":
             print("[OpenAmadeus Voice] Qwen3 offline; cascading to Kokoro-TTS + RVC.")
             active_engine = "kokoro"
             use_rvc = True
@@ -298,6 +298,16 @@ async def synthesize_speech(
     # =========================================================================
     # STEP 2: Kokoro-TTS (Lightweight local 82M)
     # =========================================================================
+    if active_engine == "kokoro" and eff_lang_code != "pt":
+        if allow_fallback and "edge_rvc" in permitted:
+            print(f"[OpenAmadeus Voice] Kokoro-TTS supports PT-BR only; skipping to Edge-TTS for lang '{eff_lang_code}'.")
+            active_engine = "edge_rvc"
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Kokoro-TTS local suporta apenas Português (pf_dora) nesta configuração.",
+            )
+
     if active_engine == "kokoro":
         kokoro_err = None
         print(f"[OpenAmadeus Voice] Kokoro-TTS Synthesis | Text: \"{clean_text}\"")

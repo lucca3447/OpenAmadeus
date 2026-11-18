@@ -1,8 +1,10 @@
 import os
 import sys
+import ipaddress
 import subprocess
 import asyncio
 from typing import Optional, Tuple, AsyncGenerator
+from urllib.parse import urlparse
 import httpx
 
 from .emotion_mapper import resolve_acoustic_instruct
@@ -86,6 +88,33 @@ class QwenTTSManager:
         return None
 
     @classmethod
+    def is_allowed_worker_url(cls, url: str) -> bool:
+        """Validates worker URLs to prevent SSRF against internal/private endpoints."""
+        cleaned = (url or "").strip().rstrip("/")
+        if not cleaned:
+            return False
+        env_remote = os.environ.get("QWEN_REMOTE_URL", "").strip().rstrip("/")
+        if env_remote and cleaned == env_remote:
+            return True
+        try:
+            parsed = urlparse(cleaned)
+        except Exception:
+            return False
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        host = parsed.hostname.lower()
+        if host in ("127.0.0.1", "localhost", "::1"):
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            return port == WORKER_PORT
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return parsed.scheme == "https"
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            return False
+        return parsed.scheme == "https"
+
+    @classmethod
     def resolve_target_url(
         cls,
         qwen_mode: Optional[str] = None,
@@ -100,12 +129,14 @@ class QwenTTSManager:
         mode = (qwen_mode or os.environ.get("QWEN_MODE", "remote")).lower()
         if mode == "local":
             if custom_url and custom_url.strip() and not cls.is_remote_url(custom_url):
-                return custom_url.strip().rstrip("/")
+                url = custom_url.strip().rstrip("/")
+                if cls.is_allowed_worker_url(url):
+                    return url
             return f"http://127.0.0.1:{WORKER_PORT}"
 
         if custom_url and custom_url.strip():
             url = custom_url.strip().rstrip("/")
-            if url.startswith("http://") or url.startswith("https://"):
+            if cls.is_allowed_worker_url(url):
                 return url
 
         if mode in ("remote", "auto"):
@@ -126,7 +157,17 @@ class QwenTTSManager:
         Probes the target worker /health endpoint, returning status, device telemetry,
         and latency in milliseconds.
         """
-        url = (target_url or cls.resolve_target_url()).rstrip("/")
+        url = (target_url or cls.resolve_target_url()).strip().rstrip("/")
+        if not cls.is_allowed_worker_url(url):
+            return {
+                "status": "error",
+                "device": None,
+                "vram_allocated_mb": None,
+                "ping_ms": 0.0,
+                "url": url,
+                "mode": "remote" if cls.is_remote_url(url) else "local",
+                "error": "URL de worker não permitida.",
+            }
         import time
         t0 = time.perf_counter()
         try:
