@@ -7,6 +7,7 @@ router = APIRouter()
 
 @router.get("/health")
 def health():
+    total_memories, total_sessions = memory_store.get_counts()
     return {
         "status": "online",
         "system": f"AMADEUS OS v{APP_VERSION}",
@@ -14,7 +15,7 @@ def health():
         "vectorStore": "ChromaDB (./data/memory_db)",
         "chromaCount": memory_store.collection.count(),
         "exemplarsCount": memory_store.exemplars_collection.count(),
-        "totalMemories": len(memory_store.get_all_memories()),
-        "totalSessions": len(memory_store.list_sessions()),
+        "totalMemories": total_memories,
+        "totalSessions": total_sessions,
         "edgeTtsAvailable": check_edge_tts_available()
     }

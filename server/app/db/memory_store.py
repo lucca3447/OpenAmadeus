@@ -499,6 +499,15 @@ class MemoryStore:
             pass
         return True
 
+    def get_counts(self) -> tuple[int, int]:
+        with self._conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM memories")
+            total_memories = int(cursor.fetchone()[0])
+            cursor.execute("SELECT COUNT(*) FROM sessions")
+            total_sessions = int(cursor.fetchone()[0])
+            return total_memories, total_sessions
+
     def get_all_memories(self) -> List[Dict[str, Any]]:
         with self._conn() as conn:
             conn.row_factory = sqlite3.Row

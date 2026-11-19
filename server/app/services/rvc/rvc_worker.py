@@ -1,6 +1,8 @@
+import asyncio
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional
 import torch
@@ -21,6 +23,7 @@ app = FastAPI(title="Amadeus RVC Neural Voice Worker", version="0.2.2")
 
 _pipelines: Dict[str, KurisuRVCPipeline] = {}
 _default_model_name = "KurisuRVCv147"
+_rvc_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rvc_gpu")
 
 
 _SAFE_MODEL_NAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
@@ -132,23 +135,28 @@ async def convert_voice(
     protect: float = 0.33,
     model_name: Optional[str] = None,
 ):
-    try:
-        pipeline = get_pipeline(model_name)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"RVC pipeline initialization error: {str(e)}")
+    content = await request.body()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty audio payload")
 
-    try:
-        content = await request.body()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty audio payload")
-
-        out_wav = pipeline.convert_audio(
+    def _run_conversion() -> bytes:
+        try:
+            pipeline = get_pipeline(model_name)
+        except Exception as init_err:
+            raise HTTPException(status_code=503, detail=f"RVC pipeline initialization error: {str(init_err)}")
+        return pipeline.convert_audio(
             audio_bytes=content,
             pitch_shift=pitch_shift,
             index_rate=index_rate,
             protect=protect,
         )
+
+    try:
+        loop = asyncio.get_running_loop()
+        out_wav = await loop.run_in_executor(_rvc_executor, _run_conversion)
         return Response(content=out_wav, media_type="audio/wav")
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

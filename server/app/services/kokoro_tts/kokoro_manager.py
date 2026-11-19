@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import sys
@@ -49,19 +50,12 @@ class KokoroTTSManager:
                 return None
 
     @classmethod
-    async def synthesize(
+    def _synthesize_sync(
         cls,
         text: str,
         voice: str = "pf_dora",
         speed: float = 1.05,
     ) -> Optional[bytes]:
-        """
-        Synthesizes speech into standard 24kHz WAV bytes.
-        Returns bytes on success, or None on error.
-        """
-        if not text or not text.strip():
-            return None
-
         pipeline = cls.get_pipeline()
         if pipeline is None:
             return None
@@ -69,22 +63,20 @@ class KokoroTTSManager:
         import soundfile as sf
 
         try:
-            # Generate audio chunks
             audio_segments = []
             sample_rate = 24000
 
-            generator = pipeline(text.strip(), voice=voice or "pf_dora", speed=speed)
-            for _, _, audio in generator:
-                if audio is not None and len(audio) > 0:
-                    audio_segments.append(audio)
+            with _pipeline_lock:
+                generator = pipeline(text.strip(), voice=voice or "pf_dora", speed=speed)
+                for _, _, audio in generator:
+                    if audio is not None and len(audio) > 0:
+                        audio_segments.append(audio)
 
             if not audio_segments:
                 print("[Kokoro Manager] Pipeline returned no audio segments.")
                 return None
 
             full_audio = np.concatenate(audio_segments)
-
-            # Export to in-memory WAV buffer
             buffer = io.BytesIO()
             sf.write(buffer, full_audio, sample_rate, format="WAV", subtype="PCM_16")
             buffer.seek(0)
@@ -93,3 +85,18 @@ class KokoroTTSManager:
         except Exception as e:
             print(f"[Kokoro Manager] Synthesis error: {e}")
             return None
+
+    @classmethod
+    async def synthesize(
+        cls,
+        text: str,
+        voice: str = "pf_dora",
+        speed: float = 1.05,
+    ) -> Optional[bytes]:
+        """
+        Synthesizes speech into standard 24kHz WAV bytes off the asyncio event loop.
+        Returns bytes on success, or None on error.
+        """
+        if not text or not text.strip():
+            return None
+        return await asyncio.to_thread(cls._synthesize_sync, text, voice, speed)

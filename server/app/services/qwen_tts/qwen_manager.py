@@ -14,11 +14,14 @@ SERVER_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "..", ".."))
 
 # Candidate virtual environments with qwen-tts and torch+cu124 installed
 CANDIDATE_PYTHONS = [
+    os.environ.get("QWEN_PYTHON", ""),
     os.path.join(SERVER_DIR, "qwen_env", "Scripts", "python.exe"),
     os.path.join(SERVER_DIR, "qwen_env", "bin", "python"),
-    r"C:\codigos\qwentsskurisu\qwen_env\Scripts\python.exe",
     os.path.join(SERVER_DIR, "venv", "Scripts", "python.exe"),
     os.path.join(SERVER_DIR, "venv", "bin", "python"),
+    os.path.join(SERVER_DIR, "rvc_env", "Scripts", "python.exe"),
+    os.path.join(SERVER_DIR, "rvc_env", "bin", "python"),
+    sys.executable,
 ]
 
 import socket
@@ -83,7 +86,7 @@ class QwenTTSManager:
     @classmethod
     def get_python_executable(cls) -> Optional[str]:
         for candidate in CANDIDATE_PYTHONS:
-            if os.path.exists(candidate):
+            if candidate and os.path.exists(candidate):
                 return candidate
         return None
 
@@ -240,7 +243,6 @@ class QwenTTSManager:
 
             log_file = os.path.join(SERVER_DIR, "data", "qwen_worker.log")
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
-            log_handle = open(log_file, "a", encoding="utf-8")
 
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
@@ -248,18 +250,39 @@ class QwenTTSManager:
             env["HF_HUB_OFFLINE"] = "1"
             env["TRANSFORMERS_OFFLINE"] = "1"
 
-            _worker_process = subprocess.Popen(
-                [py_exe, WORKER_SCRIPT],
-                cwd=CURRENT_DIR,
-                creationflags=creationflags,
-                stdout=log_handle,
-                stderr=log_handle,
-                env=env,
-            )
+            with open(log_file, "a", encoding="utf-8") as log_handle:
+                _worker_process = subprocess.Popen(
+                    [py_exe, WORKER_SCRIPT],
+                    cwd=CURRENT_DIR,
+                    creationflags=creationflags,
+                    stdout=log_handle,
+                    stderr=log_handle,
+                    env=env,
+                )
             return True
         except Exception as e:
             print(f"[Qwen3 Manager] Error spawning worker: {e}")
             return False
+
+    @classmethod
+    async def shutdown(cls) -> None:
+        global _worker_process, _client
+        if _client is not None and not _client.is_closed:
+            try:
+                await _client.aclose()
+            except Exception:
+                pass
+        _client = None
+        if _worker_process is not None and _worker_process.poll() is None:
+            try:
+                _worker_process.terminate()
+                _worker_process.wait(timeout=3.0)
+            except Exception:
+                try:
+                    _worker_process.kill()
+                except Exception:
+                    pass
+        _worker_process = None
 
     @classmethod
     async def get_worker_status(cls, target_url: Optional[str] = None) -> Optional[str]:

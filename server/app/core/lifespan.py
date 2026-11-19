@@ -50,4 +50,11 @@ async def lifespan(app: FastAPI):
     yield
 
     # --- Shutdown ---
+    try:
+        from app.services.qwen_tts.qwen_manager import QwenTTSManager
+        from app.services.rvc.rvc_manager import RVCManager
+        await QwenTTSManager.shutdown()
+        RVCManager.shutdown()
+    except Exception as e:
+        print(f"[Amadeus Core] Worker shutdown note: {e}")
     print("[Amadeus Core] Shutting down cleanly.")
