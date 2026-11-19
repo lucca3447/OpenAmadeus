@@ -6,6 +6,7 @@ WORKDIR /app
 
 # Install dependencies first for efficient layer caching
 COPY package*.json ./
+COPY scripts ./scripts
 RUN npm ci
 
 # Copy source code and assets

@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
@@ -21,6 +22,51 @@ _model_cache: Dict[str, str] = {}
 
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+
+def _resolve_api_key(req: ChatRequest) -> str:
+    if (req.selectedModel or "").strip().lower() == "offline":
+        return ""
+    explicit = (req.apiKey or "").strip()
+    if explicit:
+        return explicit
+    return (
+        os.environ.get("GROQ_API_KEY", "").strip()
+        or os.environ.get("OPENROUTER_API_KEY", "").strip()
+        or os.environ.get("GEMINI_API_KEY", "").strip()
+    )
+
+
+def _build_openai_messages(
+    system_prompt: str,
+    history_turns: List[Dict[str, str]],
+    effective_user_prompt: str,
+) -> List[Dict[str, Any]]:
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    for turn in history_turns:
+        role = "user" if turn["role"] == "user" else "assistant"
+        content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": effective_user_prompt})
+    return messages
+
+
+def _build_gemini_contents(
+    history_turns: List[Dict[str, str]],
+    effective_user_prompt: str,
+) -> List[Dict[str, Any]]:
+    contents: List[Dict[str, Any]] = []
+    for turn in history_turns:
+        role = "model" if turn["role"] in ("model", "assistant") else "user"
+        text = sanitize_repetitive_openers(turn["content"]) if role == "model" else turn["content"]
+        if contents and contents[-1]["role"] == role:
+            contents[-1]["parts"][0]["text"] += "\n" + text
+        else:
+            contents.append({"role": role, "parts": [{"text": text}]})
+    while contents and contents[0]["role"] == "model":
+        contents.pop(0)
+    contents.append({"role": "user", "parts": [{"text": effective_user_prompt}]})
+    return contents
 
 LOREBOOK: List[Tuple[str, str, re.Pattern, str]] = [
     ("lore_ibn5100", "IBN 5100", re.compile(r"\bibn\s*5100\b|\bibn\b", re.I),
@@ -526,7 +572,7 @@ class LLMOrchestrator:
          search_query, semantic_matches, recalled_ids, gap_seconds, last_session_topic,
          effective_user_prompt) = self._prepare_context(req)
 
-        api_key = (req.apiKey or "").strip()
+        api_key = _resolve_api_key(req)
         is_groq = api_key.startswith("gsk_")
         is_openrouter = api_key.startswith("sk-or-")
         allow_model_fallback = req.allowModelFallback if req.allowModelFallback is not None else True
@@ -596,15 +642,7 @@ class LLMOrchestrator:
 
             # --- A. Groq Branch (Ultra-fast LPU) ---
             if is_groq:
-                messages = [{"role": "system", "content": system_prompt}]
-                for turn in history_turns:
-                    role = "user" if turn["role"] == "user" else "assistant"
-                    clean_content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
-                    messages.append({
-                        "role": role,
-                        "content": clean_content
-                    })
-                messages.append({"role": "user", "content": effective_user_prompt})
+                messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
 
                 last_groq_err = None
                 fp = api_key[-8:]
@@ -680,15 +718,7 @@ class LLMOrchestrator:
 
             # --- B. OpenRouter Branch ---
             elif is_openrouter:
-                messages = [{"role": "system", "content": system_prompt}]
-                for turn in history_turns:
-                    role = "user" if turn["role"] == "user" else "assistant"
-                    clean_content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
-                    messages.append({
-                        "role": role,
-                        "content": clean_content
-                    })
-                messages.append({"role": "user", "content": effective_user_prompt})
+                messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
 
                 if not allow_model_fallback and preferred_model:
                     openrouter_candidates = [preferred_model]
@@ -762,17 +792,7 @@ class LLMOrchestrator:
 
             # --- C. Google Gemini Branch ---
             else:
-                contents: List[Dict[str, Any]] = []
-                for turn in history_turns:
-                    role = "model" if turn["role"] in ("model", "assistant") else "user"
-                    turn_text = sanitize_repetitive_openers(turn["content"]) if role == "model" else turn["content"]
-                    if contents and contents[-1]["role"] == role:
-                        contents[-1]["parts"][0]["text"] += "\n" + turn_text
-                    else:
-                        contents.append({"role": role, "parts": [{"text": turn_text}]})
-                while contents and contents[0]["role"] == "model":
-                    contents.pop(0)
-                contents.append({"role": "user", "parts": [{"text": effective_user_prompt}]})
+                contents = _build_gemini_contents(history_turns, effective_user_prompt)
 
                 payload = {
                     "contents": contents,
@@ -857,7 +877,7 @@ class LLMOrchestrator:
         Async generator of events: meta -> sentence* -> done (or error after speech started).
         Offline / autonomous system events reuse handle_chat and emit a single sentence.
         """
-        api_key = (req.apiKey or "").strip()
+        api_key = _resolve_api_key(req)
         system_event = (req.systemEvent or "").strip()
         user_ctx = None if system_event else req.message
 
@@ -932,12 +952,7 @@ class LLMOrchestrator:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(35.0)) as client:
                 if is_groq or is_openrouter:
-                    messages = [{"role": "system", "content": system_prompt}]
-                    for turn in history_turns:
-                        role = "user" if turn["role"] == "user" else "assistant"
-                        content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
-                        messages.append({"role": role, "content": content})
-                    messages.append({"role": "user", "content": effective_user_prompt})
+                    messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
                     body = {"messages": messages, "temperature": 0.85, "max_tokens": 2048,
                             "presence_penalty": 0.4, "frequency_penalty": 0.4, "stream": True}
                     if is_groq:
@@ -964,17 +979,7 @@ class LLMOrchestrator:
                         client, lambda m: url, headers, lambda m: {**body, "model": m},
                         candidates, allow_fallback, retry, openai_delta, label)
                 else:
-                    contents: List[Dict[str, Any]] = []
-                    for turn in history_turns:
-                        role = "model" if turn["role"] in ("model", "assistant") else "user"
-                        text = sanitize_repetitive_openers(turn["content"]) if role == "model" else turn["content"]
-                        if contents and contents[-1]["role"] == role:
-                            contents[-1]["parts"][0]["text"] += "\n" + text
-                        else:
-                            contents.append({"role": role, "parts": [{"text": text}]})
-                    while contents and contents[0]["role"] == "model":
-                        contents.pop(0)
-                    contents.append({"role": "user", "parts": [{"text": effective_user_prompt}]})
+                    contents = _build_gemini_contents(history_turns, effective_user_prompt)
                     payload = {
                         "contents": contents,
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
