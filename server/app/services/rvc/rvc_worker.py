@@ -1,5 +1,7 @@
 import os
+import re
 import sys
+from pathlib import Path
 from typing import Dict, List, Optional
 import torch
 from fastapi import FastAPI, Request, HTTPException
@@ -21,32 +23,43 @@ _pipelines: Dict[str, KurisuRVCPipeline] = {}
 _default_model_name = "KurisuRVCv147"
 
 
+_SAFE_MODEL_NAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
+
+
 def find_model_files(model_name: str) -> tuple[Optional[str], Optional[str]]:
     """Locates matching .pth and optional .index for a requested model name."""
-    clean_name = os.path.splitext(model_name)[0]
-    
+    raw_name = (model_name or "").strip()
+    if not raw_name or ".." in raw_name or "/" in raw_name or "\\" in raw_name or not _SAFE_MODEL_NAME.fullmatch(raw_name):
+        return None, None
+    clean_name = os.path.splitext(raw_name)[0]
+    weights_root = Path(WEIGHTS_DIR).resolve()
+
     # 1. Search in weights/<model_dir> or weights/kurisu_rvc/
     candidate_dirs = [
-        os.path.join(WEIGHTS_DIR, clean_name),
-        os.path.join(WEIGHTS_DIR, "kurisu_rvc"),
-        WEIGHTS_DIR,
+        weights_root / clean_name,
+        weights_root / "kurisu_rvc",
+        weights_root,
     ]
-    
+
     found_pth = None
     found_index = None
-    
+
     for c_dir in candidate_dirs:
-        if not os.path.isdir(c_dir):
+        resolved_dir = c_dir.resolve()
+        if not resolved_dir.is_relative_to(weights_root) or not resolved_dir.is_dir():
             continue
-        for fname in os.listdir(c_dir):
+        for fname in os.listdir(resolved_dir):
             f_base, f_ext = os.path.splitext(fname)
+            cand_path = (resolved_dir / fname).resolve()
+            if not cand_path.is_relative_to(weights_root):
+                continue
             if f_ext.lower() == ".pth" and (f_base == clean_name or clean_name in f_base):
-                found_pth = os.path.join(c_dir, fname)
+                found_pth = str(cand_path)
             elif f_ext.lower() == ".index" and (f_base == clean_name or clean_name in f_base):
-                found_index = os.path.join(c_dir, fname)
+                found_index = str(cand_path)
         if found_pth:
             break
-            
+
     return found_pth, found_index
 
 
