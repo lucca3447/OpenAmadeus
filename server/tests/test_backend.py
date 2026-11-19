@@ -1,6 +1,8 @@
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Add server directory to sys.path
 SERVER_DIR = Path(__file__).resolve().parent.parent
@@ -13,11 +15,18 @@ from app.db.memory_store import memory_store
 class TestAmadeusBackend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._env_patch = patch.dict(
+            os.environ,
+            {"GROQ_API_KEY": "", "GEMINI_API_KEY": "", "OPENROUTER_API_KEY": ""},
+            clear=False,
+        )
+        cls._env_patch.start()
         cls.client = TestClient(app)
         cls._initial_sessions = set(r["id"] for r in memory_store.list_sessions())
 
     @classmethod
     def tearDownClass(cls):
+        cls._env_patch.stop()
         current_sessions = set(r["id"] for r in memory_store.list_sessions())
         created = current_sessions - cls._initial_sessions
         if created:
@@ -392,6 +401,30 @@ class TestAmadeusBackend(unittest.TestCase):
             self.assertEqual(msgs[0]["sender"], "amadeus")
         finally:
             memory_store.delete_session(sess_id)
+
+    def test_18_security_path_traversal_and_env_key_resolution(self):
+        from fastapi import HTTPException
+        from app.services.persona_service import load_persona
+        from app.services.llm.orchestrator import _resolve_api_key
+        from app.schemas.chat import ChatRequest
+
+        with self.assertRaises(HTTPException) as ctx:
+            load_persona("../../package")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        res = self.client.get("/api/personas/..%2F..%2Fpackage")
+        self.assertIn(res.status_code, (400, 404))
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "gsk_env_key_test"}, clear=False):
+            self.assertEqual(_resolve_api_key(ChatRequest(message="hi")), "gsk_env_key_test")
+            self.assertEqual(
+                _resolve_api_key(ChatRequest(message="hi", selectedModel="offline")),
+                "",
+            )
+            self.assertEqual(
+                _resolve_api_key(ChatRequest(message="hi", apiKey="gsk_req_key")),
+                "gsk_req_key",
+            )
 
 if __name__ == "__main__":
     unittest.main()

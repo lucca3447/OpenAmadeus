@@ -38,8 +38,11 @@ class TestRVC(unittest.TestCase):
         self.assertIn("KurisuRVCv147", models)
 
     def test_rvc_manager_offline_fallback(self):
-        # When worker is offline, convert should return None cleanly without crashing
-        result = asyncio.run(RVCManager.convert(b"fake_wav_data", pitch_shift=0, index_rate=0.75))
+        # When worker is offline, convert should return None cleanly without spawning a real GPU worker
+        from unittest.mock import AsyncMock, patch
+        with patch.object(RVCManager, "is_worker_healthy", new_callable=AsyncMock, return_value=False), \
+             patch.object(RVCManager, "ensure_worker", new_callable=AsyncMock, return_value=False):
+            result = asyncio.run(RVCManager.convert(b"fake_wav_data", pitch_shift=0, index_rate=0.75))
         self.assertIsNone(result)
 
 

@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import httpx
 
-from app.core.config import MAX_HISTORY_MESSAGES
+from app.core.config import MAX_HISTORY_MESSAGES, OPENROUTER_FREE_MODELS
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
@@ -13,7 +13,6 @@ from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_r
 from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
-from app.services.llm.openrouter import get_openrouter_candidate_models
 from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
 from app.services.llm.streaming import stream_candidates, openai_delta, gemini_delta, gemini_stream_url
 
@@ -723,7 +722,7 @@ class LLMOrchestrator:
                 if not allow_model_fallback and preferred_model:
                     openrouter_candidates = [preferred_model]
                 else:
-                    openrouter_candidates = get_openrouter_candidate_models()
+                    openrouter_candidates = list(OPENROUTER_FREE_MODELS)
                     if preferred_model:
                         if preferred_model in openrouter_candidates:
                             openrouter_candidates.remove(preferred_model)
@@ -974,7 +973,7 @@ class LLMOrchestrator:
                         if not allow_fallback and preferred:
                             candidates = [preferred]
                         else:
-                            candidates = self._order_candidates(get_openrouter_candidate_models(), None, preferred)
+                            candidates = self._order_candidates(list(OPENROUTER_FREE_MODELS), None, preferred)
                     source = stream_candidates(
                         client, lambda m: url, headers, lambda m: {**body, "model": m},
                         candidates, allow_fallback, retry, openai_delta, label)
