@@ -9,8 +9,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import soundfile as sf
-import torch
+try:
+    import soundfile as sf
+    import torch
+except ImportError as _imp_err:
+    raise unittest.SkipTest(f"Optional GPU/RVC audio deps not installed: {_imp_err}")
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
@@ -23,6 +26,7 @@ from app.services.rvc.lib.hubert import (
 )
 from app.services.rvc.lib.index_reader import PureTorchIndex
 from app.services.rvc.pipeline import KurisuRVCPipeline, _smooth_f0
+from app.services.rvc.rvc_worker import find_model_files
 
 
 class TestRvcJapaneseHubert(unittest.TestCase):
@@ -224,6 +228,10 @@ class TestRvcJapaneseHubert(unittest.TestCase):
         idx = PureTorchIndex(str(titan_idx), device="cpu", is_half=False)
         self.assertIsNotNone(idx.vectors)
         self.assertEqual(tuple(idx.vectors.shape), (124633, 768))
+
+    def test_find_model_files_blocks_path_traversal(self):
+        for bad_name in ("../../evil", "../models/hubert_base", "sub/model", r"..\evil"):
+            self.assertEqual(find_model_files(bad_name), (None, None))
 
 
 if __name__ == "__main__":

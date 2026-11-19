@@ -9,6 +9,7 @@ from typing import List, Tuple
 
 _COMMENT = re.compile(r"(?is)<!--[^>]*?>")
 _JA_TAG = re.compile(r"(?is)<!--\s*ja\s*:\s*(.*?)\s*-->")
+_JA_OR_EMO_COMMENT = re.compile(r"(?is)<!--\s*(?:ja|emotion)\s*:")
 _THINK = re.compile(r"(?is)<(think|thought|reasoning|reflection|internal|scratchpad)>.*?</\1>")
 _OPENERS = ("<!--", "<think", "<thought", "<reasoning", "<reflection", "<internal", "<scratchpad")
 _BOUNDARY = re.compile(r"[.!?…]+[\"')\]]*(?=\s)|[。！？]+[\"')\]」』]*|\n")
@@ -54,6 +55,7 @@ class SentenceStream:
         self._buf = ""
         self._pending = ""
         self._emitted = 0
+        self._ja_mode = False
         self.directive = ""
 
     def _is_abbrev(self, text: str, end: int) -> bool:
@@ -89,41 +91,49 @@ class SentenceStream:
                 else:
                     jm = _JA_TAG.match(raw_c)
                     if jm and jm.group(1).strip():
+                        self._ja_mode = True
                         out.append(("ja", jm.group(1).strip()))
                 self._pending = self._pending.lstrip()[cm.end() :]
 
-            # Find next sentence boundary outside any inline <!-- ... --> comments
-            comment_spans = [cm.span() for cm in _COMMENT.finditer(self._pending)]
-            m = next(
-                (
-                    b for b in _BOUNDARY.finditer(self._pending)
-                    if not self._is_abbrev(self._pending, b.end())
-                    and not any(cs <= b.start() < ce for cs, ce in comment_spans)
-                ),
-                None,
-            )
-            if not m:
-                break
-            piece = self._pending[: m.end()].strip()
-            cleaned_piece = self._clean(piece)
-            has_cjk = bool(_CJK_RE.search(cleaned_piece))
-            threshold = (6 if has_cjk else FIRST_MIN_CHARS) if self._emitted == 0 else (10 if has_cjk else NEXT_MIN_CHARS)
-            if len(cleaned_piece) < threshold:
-                nxt = next(
+            if self._ja_mode:
+                nxt_tag = _JA_OR_EMO_COMMENT.search(self._pending)
+                if not nxt_tag:
+                    break
+                piece = self._pending[: nxt_tag.start()].strip()
+                self._pending = self._pending[nxt_tag.start() :]
+            else:
+                # Find next sentence boundary outside any inline <!-- ... --> comments
+                comment_spans = [cm.span() for cm in _COMMENT.finditer(self._pending)]
+                m = next(
                     (
-                        b for b in _BOUNDARY.finditer(self._pending, m.end())
+                        b for b in _BOUNDARY.finditer(self._pending)
                         if not self._is_abbrev(self._pending, b.end())
                         and not any(cs <= b.start() < ce for cs, ce in comment_spans)
                     ),
                     None,
                 )
-                if not nxt and not final:
+                if not m:
                     break
-                if not nxt:
-                    break  # remainder flushed below
-                piece = self._pending[: nxt.end()].strip()
-                m = nxt
-            self._pending = self._pending[m.end():]
+                piece = self._pending[: m.end()].strip()
+                cleaned_piece = self._clean(piece)
+                has_cjk = bool(_CJK_RE.search(cleaned_piece))
+                threshold = (6 if has_cjk else FIRST_MIN_CHARS) if self._emitted == 0 else (10 if has_cjk else NEXT_MIN_CHARS)
+                if len(cleaned_piece) < threshold:
+                    nxt = next(
+                        (
+                            b for b in _BOUNDARY.finditer(self._pending, m.end())
+                            if not self._is_abbrev(self._pending, b.end())
+                            and not any(cs <= b.start() < ce for cs, ce in comment_spans)
+                        ),
+                        None,
+                    )
+                    if not nxt and not final:
+                        break
+                    if not nxt:
+                        break  # remainder flushed below
+                    piece = self._pending[: nxt.end()].strip()
+                    m = nxt
+                self._pending = self._pending[m.end():]
             for cm in _COMMENT.finditer(piece):
                 if re.search(r"emotion\s*:", cm.group(0), re.I):
                     self.directive = cm.group(0)

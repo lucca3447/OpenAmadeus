@@ -7,7 +7,11 @@ import httpx
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVER_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "..", ".."))
-RVC_PYTHON = os.path.join(SERVER_DIR, "rvc_env", "Scripts", "python.exe")
+CANDIDATE_RVC_PYTHONS = [
+    os.path.join(SERVER_DIR, "rvc_env", "Scripts", "python.exe"),
+    os.path.join(SERVER_DIR, "rvc_env", "bin", "python"),
+    sys.executable,
+]
 WORKER_SCRIPT = os.path.join(CURRENT_DIR, "rvc_worker.py")
 WORKER_URL = "http://127.0.0.1:8001"
 
@@ -36,21 +40,29 @@ class RVCManager:
         return False
 
     @classmethod
+    def get_python_executable(cls) -> Optional[str]:
+        for candidate in CANDIDATE_RVC_PYTHONS:
+            if candidate and os.path.exists(candidate):
+                return candidate
+        return None
+
+    @classmethod
     def start_worker_process(cls) -> bool:
         global _worker_process
-        if not os.path.exists(RVC_PYTHON) or not os.path.exists(WORKER_SCRIPT):
-            print(f"[RVC Manager] Cannot start worker: python or script missing ({RVC_PYTHON})")
+        py_exe = cls.get_python_executable()
+        if not py_exe or not os.path.exists(WORKER_SCRIPT):
+            print(f"[RVC Manager] Cannot start worker: python or script missing ({py_exe})")
             return False
 
         try:
-            print("[RVC Manager] Launching background RVC worker on port 8001...")
+            print(f"[RVC Manager] Launching background RVC worker via {py_exe} on port 8001...")
             # On Windows, DETACHED_PROCESS flag allows worker to run independently
             creationflags = 0
             if sys.platform == "win32":
                 creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
 
             _worker_process = subprocess.Popen(
-                [RVC_PYTHON, WORKER_SCRIPT],
+                [py_exe, WORKER_SCRIPT],
                 cwd=CURRENT_DIR,
                 creationflags=creationflags,
                 stdout=subprocess.DEVNULL,
@@ -60,6 +72,20 @@ class RVCManager:
         except Exception as e:
             print(f"[RVC Manager] Error spawning worker process: {e}")
             return False
+
+    @classmethod
+    def shutdown(cls) -> None:
+        global _worker_process
+        if _worker_process is not None and _worker_process.poll() is None:
+            try:
+                _worker_process.terminate()
+                _worker_process.wait(timeout=3.0)
+            except Exception:
+                try:
+                    _worker_process.kill()
+                except Exception:
+                    pass
+        _worker_process = None
 
     @classmethod
     async def ensure_worker(cls, max_wait_sec: float = 8.0) -> bool:

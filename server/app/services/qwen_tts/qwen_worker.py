@@ -82,8 +82,9 @@ def sanitize_for_qwen(text: str, language: str = "Portuguese") -> str:
     if is_pt and not is_ja:
         s = re.sub(r"!+", ".", s)
         s = re.sub(r"([.,])\s*\.", r"\1", s)
+    if not is_ja:
         s = re.sub(
-            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+)\b\s*[,;:.]*\s*",
+            r"(?i)\b(?:[u]+(?:\s*\.{2,}\s*|-|\s+)[u]+m|[u]+h+m*|[u]+(?:\s*\.{2,}\s*|-|\s+)uh|h+u*m+|e+r+)\b\s*[,;:.]*\s*",
             "",
             s,
         )
@@ -311,7 +312,7 @@ async def lifespan(app: FastAPI):
     print("[Qwen3 Worker] Worker shutting down cleanly.")
 
 
-app = FastAPI(title="Amadeus Kurisu Qwen3-TTS Worker", version="0.2.2", lifespan=lifespan)
+app = FastAPI(title="Amadeus Kurisu Qwen3-TTS Worker", version="0.3.1", lifespan=lifespan)
 
 
 class SynthesizeRequest(BaseModel):

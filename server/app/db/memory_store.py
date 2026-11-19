@@ -243,7 +243,7 @@ class MemoryStore:
             if mem.get("id") and mem.get("triggerKeywords"):
                 self._canonical_keywords[mem["id"]] = mem["triggerKeywords"]
 
-        changed = False
+        changed_memories: List[Dict[str, Any]] = []
         with self._conn() as conn:
             cursor = conn.cursor()
             for mem in memories:
@@ -264,19 +264,38 @@ class MemoryStore:
                             time.time()
                         )
                     )
-                    changed = True
+                    changed_memories.append(mem)
                 elif (row[0], row[1], row[2]) != (mem["title"], mem["content"], emo_weight):
                     cursor.execute(
                         "UPDATE memories SET title = ?, content = ?, emotional_weight = ? WHERE id = ?",
                         (mem["title"], mem["content"], emo_weight, mem_id)
                     )
-                    changed = True
+                    changed_memories.append(mem)
             conn.commit()
             cursor.execute("SELECT COUNT(*) FROM memories")
             sqlite_count = cursor.fetchone()[0]
 
-        if changed or self.collection.count() != sqlite_count:
+        if self.collection.count() != sqlite_count:
             self.rebuild_index(memories)
+        elif changed_memories:
+            ids = [m["id"] for m in changed_memories]
+            documents = [
+                f"{m['title']}: {m['content']} (keywords: {' '.join(self._canonical_keywords.get(m['id'], []))})"
+                if self._canonical_keywords.get(m["id"])
+                else f"{m['title']}: {m['content']}"
+                for m in changed_memories
+            ]
+            metadatas = [
+                {
+                    "title": m["title"],
+                    "category": m.get("category", "biography"),
+                    "emotional_weight": m.get("emotionalWeight", "Factual"),
+                    "source": m.get("source", "canonical"),
+                    "raw_content": m["content"],
+                }
+                for m in changed_memories
+            ]
+            self.collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
     def _query_memory_group(self, query: str, where_filter: Dict[str, Any], group_limit: int, max_distance: float) -> List[Dict[str, Any]]:
         if group_limit <= 0:
@@ -480,6 +499,15 @@ class MemoryStore:
             pass
         return True
 
+    def get_counts(self) -> tuple[int, int]:
+        with self._conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM memories")
+            total_memories = int(cursor.fetchone()[0])
+            cursor.execute("SELECT COUNT(*) FROM sessions")
+            total_sessions = int(cursor.fetchone()[0])
+            return total_memories, total_sessions
+
     def get_all_memories(self) -> List[Dict[str, Any]]:
         with self._conn() as conn:
             conn.row_factory = sqlite3.Row
@@ -544,7 +572,7 @@ class MemoryStore:
             last_ai = _sanitize_field(amadeus_turns[-1]["content"], 180) if amadeus_turns else ""
             last_emo = amadeus_turns[-1].get("emotion", "neutral") if amadeus_turns else "neutral"
             summary = _sanitize_field(
-                f"Operador abordou: {topics}. Última reação de Kurisu ({last_emo}): {last_ai}",
+                f"{topics} — Kurisu ({last_emo}): {last_ai}",
                 600,
             )
         now = time.time()

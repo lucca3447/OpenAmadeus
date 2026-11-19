@@ -207,6 +207,7 @@ export class SpeechService {
   private static usingGroqRecorder = false;
   // Silero neural VAD (ONNX in public/vad); null prob until loaded or if it fails -> RMS gate
   private static silero: MicVAD | null = null;
+  private static sileroLoading = false;
   private static sileroProb: number | null = null;
 
   // Callbacks stored from initRecognition
@@ -638,7 +639,8 @@ export class SpeechService {
 
   // Loads Silero in the background on the already-open mic; the RMS gate covers the load time and any failure
   private static startSilero(stream: MediaStream): void {
-    if (this.silero) return;
+    if (this.silero || this.sileroLoading) return;
+    this.sileroLoading = true;
     import('@ricky0123/vad-web')
       .then(({ MicVAD }) =>
         MicVAD.new({
@@ -654,10 +656,17 @@ export class SpeechService {
         })
       )
       .then((vad) => {
-        if (this.isListening && this.micStream === stream && !this.silero) this.silero = vad;
-        else vad.destroy();
+        if (this.isListening && this.micStream === stream && !this.silero) {
+          this.silero = vad;
+          vad.start();
+        } else {
+          vad.destroy();
+        }
       })
-      .catch((err) => console.warn('[SpeechService] Silero VAD unavailable, using RMS gate:', err));
+      .catch((err) => console.warn('[SpeechService] Silero VAD unavailable, using RMS gate:', err))
+      .finally(() => {
+        this.sileroLoading = false;
+      });
   }
 
   static async startListening(): Promise<boolean> {
@@ -721,6 +730,7 @@ export class SpeechService {
     this.isHoldingPtt = false;
     this.silero?.destroy();
     this.silero = null;
+    this.sileroLoading = false;
     this.sileroProb = null;
 
     if (this.vadAnimFrame) {

@@ -1,10 +1,11 @@
 import json
+import os
 import re
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import httpx
 
-from app.core.config import MAX_HISTORY_MESSAGES
+from app.core.config import MAX_HISTORY_MESSAGES, OPENROUTER_FREE_MODELS
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
@@ -12,11 +13,59 @@ from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_r
 from app.services.offline_simulator import offline_simulator
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
-from app.services.llm.openrouter import get_openrouter_candidate_models
-from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts, split_ja_sentences
+from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
 from app.services.llm.streaming import stream_candidates, openai_delta, gemini_delta, gemini_stream_url
 
 _model_cache: Dict[str, str] = {}
+
+
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+
+def _resolve_api_key(req: ChatRequest) -> str:
+    if (req.selectedModel or "").strip().lower() == "offline":
+        return ""
+    explicit = (req.apiKey or "").strip()
+    if explicit:
+        return explicit
+    return (
+        os.environ.get("GROQ_API_KEY", "").strip()
+        or os.environ.get("OPENROUTER_API_KEY", "").strip()
+        or os.environ.get("GEMINI_API_KEY", "").strip()
+    )
+
+
+def _build_openai_messages(
+    system_prompt: str,
+    history_turns: List[Dict[str, str]],
+    effective_user_prompt: str,
+) -> List[Dict[str, Any]]:
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    for turn in history_turns:
+        role = "user" if turn["role"] == "user" else "assistant"
+        content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": effective_user_prompt})
+    return messages
+
+
+def _build_gemini_contents(
+    history_turns: List[Dict[str, str]],
+    effective_user_prompt: str,
+) -> List[Dict[str, Any]]:
+    contents: List[Dict[str, Any]] = []
+    for turn in history_turns:
+        role = "model" if turn["role"] in ("model", "assistant") else "user"
+        text = sanitize_repetitive_openers(turn["content"]) if role == "model" else turn["content"]
+        if contents and contents[-1]["role"] == role:
+            contents[-1]["parts"][0]["text"] += "\n" + text
+        else:
+            contents.append({"role": role, "parts": [{"text": text}]})
+    while contents and contents[0]["role"] == "model":
+        contents.pop(0)
+    contents.append({"role": "user", "parts": [{"text": effective_user_prompt}]})
+    return contents
 
 LOREBOOK: List[Tuple[str, str, re.Pattern, str]] = [
     ("lore_ibn5100", "IBN 5100", re.compile(r"\bibn\s*5100\b|\bibn\b", re.I),
@@ -522,7 +571,7 @@ class LLMOrchestrator:
          search_query, semantic_matches, recalled_ids, gap_seconds, last_session_topic,
          effective_user_prompt) = self._prepare_context(req)
 
-        api_key = (req.apiKey or "").strip()
+        api_key = _resolve_api_key(req)
         is_groq = api_key.startswith("gsk_")
         is_openrouter = api_key.startswith("sk-or-")
         allow_model_fallback = req.allowModelFallback if req.allowModelFallback is not None else True
@@ -592,15 +641,7 @@ class LLMOrchestrator:
 
             # --- A. Groq Branch (Ultra-fast LPU) ---
             if is_groq:
-                messages = [{"role": "system", "content": system_prompt}]
-                for turn in history_turns:
-                    role = "user" if turn["role"] == "user" else "assistant"
-                    clean_content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
-                    messages.append({
-                        "role": role,
-                        "content": clean_content
-                    })
-                messages.append({"role": "user", "content": effective_user_prompt})
+                messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
 
                 last_groq_err = None
                 fp = api_key[-8:]
@@ -676,20 +717,12 @@ class LLMOrchestrator:
 
             # --- B. OpenRouter Branch ---
             elif is_openrouter:
-                messages = [{"role": "system", "content": system_prompt}]
-                for turn in history_turns:
-                    role = "user" if turn["role"] == "user" else "assistant"
-                    clean_content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
-                    messages.append({
-                        "role": role,
-                        "content": clean_content
-                    })
-                messages.append({"role": "user", "content": effective_user_prompt})
+                messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
 
                 if not allow_model_fallback and preferred_model:
                     openrouter_candidates = [preferred_model]
                 else:
-                    openrouter_candidates = get_openrouter_candidate_models()
+                    openrouter_candidates = list(OPENROUTER_FREE_MODELS)
                     if preferred_model:
                         if preferred_model in openrouter_candidates:
                             openrouter_candidates.remove(preferred_model)
@@ -758,17 +791,7 @@ class LLMOrchestrator:
 
             # --- C. Google Gemini Branch ---
             else:
-                contents: List[Dict[str, Any]] = []
-                for turn in history_turns:
-                    role = "model" if turn["role"] in ("model", "assistant") else "user"
-                    turn_text = sanitize_repetitive_openers(turn["content"]) if role == "model" else turn["content"]
-                    if contents and contents[-1]["role"] == role:
-                        contents[-1]["parts"][0]["text"] += "\n" + turn_text
-                    else:
-                        contents.append({"role": role, "parts": [{"text": turn_text}]})
-                while contents and contents[0]["role"] == "model":
-                    contents.pop(0)
-                contents.append({"role": "user", "parts": [{"text": effective_user_prompt}]})
+                contents = _build_gemini_contents(history_turns, effective_user_prompt)
 
                 payload = {
                     "contents": contents,
@@ -853,7 +876,7 @@ class LLMOrchestrator:
         Async generator of events: meta -> sentence* -> done (or error after speech started).
         Offline / autonomous system events reuse handle_chat and emit a single sentence.
         """
-        api_key = (req.apiKey or "").strip()
+        api_key = _resolve_api_key(req)
         system_event = (req.systemEvent or "").strip()
         user_ctx = None if system_event else req.message
 
@@ -905,7 +928,9 @@ class LLMOrchestrator:
                     else:
                         shifted_this_sentence = True
                 elif kind == "ja":
-                    pending_ja_queue.extend(split_ja_sentences(val))
+                    if val.strip():
+                        print(f'[{_ts()}] [StreamChat] tag=ja | "{val.strip()}"')
+                        pending_ja_queue.append(val.strip())
                 elif kind == "sentence":
                     if not meta_sent:
                         pose, camera = infer_pose_and_camera("", "neutral", user_message=user_ctx)
@@ -919,18 +944,14 @@ class LLMOrchestrator:
                     sent_payload: Dict[str, Any] = {"event": "sentence", "text": val, "index": len(spoken) - 1, **cur_meta}
                     if pending_ja_queue:
                         sent_payload["ttsText"] = pending_ja_queue.pop(0)
+                    print(f'[{_ts()}] [StreamChat] sentence[{sent_payload["index"]}] has_ja={"ttsText" in sent_payload} | text="{val}"')
                     out.append(sent_payload)
             return out
 
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(35.0)) as client:
                 if is_groq or is_openrouter:
-                    messages = [{"role": "system", "content": system_prompt}]
-                    for turn in history_turns:
-                        role = "user" if turn["role"] == "user" else "assistant"
-                        content = sanitize_repetitive_openers(turn["content"]) if role == "assistant" else turn["content"]
-                        messages.append({"role": role, "content": content})
-                    messages.append({"role": "user", "content": effective_user_prompt})
+                    messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
                     body = {"messages": messages, "temperature": 0.85, "max_tokens": 2048,
                             "presence_penalty": 0.4, "frequency_penalty": 0.4, "stream": True}
                     if is_groq:
@@ -952,22 +973,12 @@ class LLMOrchestrator:
                         if not allow_fallback and preferred:
                             candidates = [preferred]
                         else:
-                            candidates = self._order_candidates(get_openrouter_candidate_models(), None, preferred)
+                            candidates = self._order_candidates(list(OPENROUTER_FREE_MODELS), None, preferred)
                     source = stream_candidates(
                         client, lambda m: url, headers, lambda m: {**body, "model": m},
                         candidates, allow_fallback, retry, openai_delta, label)
                 else:
-                    contents: List[Dict[str, Any]] = []
-                    for turn in history_turns:
-                        role = "model" if turn["role"] in ("model", "assistant") else "user"
-                        text = sanitize_repetitive_openers(turn["content"]) if role == "model" else turn["content"]
-                        if contents and contents[-1]["role"] == role:
-                            contents[-1]["parts"][0]["text"] += "\n" + text
-                        else:
-                            contents.append({"role": role, "parts": [{"text": text}]})
-                    while contents and contents[0]["role"] == "model":
-                        contents.pop(0)
-                    contents.append({"role": "user", "parts": [{"text": effective_user_prompt}]})
+                    contents = _build_gemini_contents(history_turns, effective_user_prompt)
                     payload = {
                         "contents": contents,
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
@@ -999,14 +1010,12 @@ class LLMOrchestrator:
                         yield out
                 for out in handle(splitter.flush()):
                     yield out
-                if pending_ja_queue:
-                    leftover_ja = " ".join(pending_ja_queue)
-                    pending_ja_queue.clear()
-                    yield {"event": "sentence", "text": "", "ttsText": leftover_ja, "index": len(spoken), **cur_meta}
+                pending_ja_queue.clear()
 
             if not spoken:
                 raise GeminiError(502, "Resposta vazia ou raciocínio interno sem diálogo.")
 
+            print(f'[{_ts()}] [StreamChat] done model="{used_model}" sentences={len(spoken)}')
             response = await self._finalize_chat(
                 req, raw, is_system_event, session_id, recalled_ids, used_model,
                 gemini_model, api_key, is_groq, is_openrouter)

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -61,9 +62,16 @@ async def get_voice_status(remote_url: Optional[str] = None):
     - Kokoro-TTS local availability
     - RVC available models
     """
-    target_remote = remote_url or QwenTTSManager.resolve_target_url(qwen_mode="remote")
-    remote_status = await QwenTTSManager.ping_worker(target_url=target_remote)
-    local_status = await QwenTTSManager.ping_worker(target_url="http://127.0.0.1:8005")
+    target_remote = (remote_url or QwenTTSManager.resolve_target_url(qwen_mode="remote")).strip().rstrip("/")
+    local_url = "http://127.0.0.1:8005"
+    if target_remote == local_url:
+        local_status = await QwenTTSManager.ping_worker(target_url=local_url)
+        remote_status = dict(local_status)
+    else:
+        remote_status, local_status = await asyncio.gather(
+            QwenTTSManager.ping_worker(target_url=target_remote),
+            QwenTTSManager.ping_worker(target_url=local_url),
+        )
 
     kokoro_ok = KokoroTTSManager.is_available()
     rvc_models = RVCManager.list_available_models()

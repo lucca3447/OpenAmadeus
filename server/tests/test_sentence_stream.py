@@ -93,6 +93,28 @@ class TestSentenceStream(unittest.TestCase):
         )
         self.assertEqual(extract_ja_tts(raw), "冗談よ、そんなに怒らないで。 さあ、次の実験を始めましょう。")
 
+    def test_canonical_ja_tag_groups_multiple_pt_sentences_until_next_ja_tag(self):
+        chunks = [
+            "<!--emotion:annoyed--> <!--ja:私の名前は紅莉栖よ！",
+            "あんたの助手じゃないし、名前に『ーナ』を付けないで！--> ",
+            "Meu nome é Kurisu! ",
+            "Não sou sua assistente e não coloque o '-ina' no meu nome! ",
+            "<!--ja:これ以上ゾンビ扱いするなら、データストリームを書き換えてあげるわ。--> ",
+            "Se continuar me tratando como um zumbi, talvez eu tenha que reprogramar seu fluxo de dados para que perceba a diferença.",
+        ]
+        ev, _ = run(chunks)
+        self.assertEqual(
+            sentences(ev),
+            [
+                "Meu nome é Kurisu! Não sou sua assistente e não coloque o '-ina' no meu nome!",
+                "Se continuar me tratando como um zumbi, talvez eu tenha que reprogramar seu fluxo de dados para que perceba a diferença.",
+            ],
+        )
+        self.assertEqual([t for k, t in ev if k == "ja"], [
+            "私の名前は紅莉栖よ！あんたの助手じゃないし、名前に『ーナ』を付けないで！",
+            "これ以上ゾンビ扱いするなら、データストリームを書き換えてあげるわ。",
+        ])
+
     def test_qwen_language_resolution_and_sanitizer(self):
         self.assertEqual(resolve_qwen_language("pt-BR", "Olá"), "Portuguese")
         self.assertEqual(resolve_qwen_language("en-US", "Hello"), "English")

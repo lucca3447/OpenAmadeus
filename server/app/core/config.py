@@ -1,11 +1,13 @@
 import os
 from pathlib import Path
 from typing import List
+from dotenv import load_dotenv
 
 # Base Directories
 CORE_DIR = Path(__file__).resolve().parent
 APP_DIR = CORE_DIR.parent
 SERVER_DIR = APP_DIR.parent
+load_dotenv(SERVER_DIR / ".env")
 
 DATA_DIR = Path(os.environ.get("AMADEUS_DATA_DIR", str(SERVER_DIR / "data")))
 PERSONAS_DIR = SERVER_DIR / "personas"
@@ -29,7 +31,7 @@ TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 # System Meta
 APP_TITLE = "Amadeus System Core API"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 APP_DESCRIPTION = "Cognitive memory with SQLite & ChromaDB, persona simulation, and neural speech synthesis for Amadeus."
 
 # LLM Config

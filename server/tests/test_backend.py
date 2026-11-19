@@ -1,6 +1,8 @@
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Add server directory to sys.path
 SERVER_DIR = Path(__file__).resolve().parent.parent
@@ -13,11 +15,18 @@ from app.db.memory_store import memory_store
 class TestAmadeusBackend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._env_patch = patch.dict(
+            os.environ,
+            {"GROQ_API_KEY": "", "GEMINI_API_KEY": "", "OPENROUTER_API_KEY": ""},
+            clear=False,
+        )
+        cls._env_patch.start()
         cls.client = TestClient(app)
         cls._initial_sessions = set(r["id"] for r in memory_store.list_sessions())
 
     @classmethod
     def tearDownClass(cls):
+        cls._env_patch.stop()
         current_sessions = set(r["id"] for r in memory_store.list_sessions())
         created = current_sessions - cls._initial_sessions
         if created:
@@ -259,7 +268,7 @@ class TestAmadeusBackend(unittest.TestCase):
         prompt = data.get("systemPrompt", "")
         self.assertIn("analytical", prompt)
         self.assertIn("disdain", prompt)
-        self.assertIn("<!--emotion:NOME-->", prompt)
+        self.assertIn("<!--emotion:EMOTION,pose:POSE,camera:CAMERA-->", prompt)
 
         # 2. Verify dataset contains at least 86 lines and includes pose/camera exemplars
         ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
@@ -326,17 +335,21 @@ class TestAmadeusBackend(unittest.TestCase):
         ja_tts = clean_text_for_tts("クリスティーナって呼ぶな!", lang="ja")
         self.assertIn("!", ja_tts)
 
-        # 6. Verify all 130 exemplars have pose:, camera:, lang, and zero 4th-wall breaks
+        # 6. Verify all 154 trilingual exemplars have pose:, camera:, valid lang, and zero 4th-wall breaks
         ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
         with open(ds_file, "r", encoding="utf-8") as f:
             rows = [json.loads(line) for line in f if line.strip()]
-        self.assertEqual(len(rows), 130)
+        self.assertEqual(len(rows), 154)
+        langs_seen = set()
         for row in rows:
-            self.assertEqual(row.get("lang"), "pt")
+            lang = row.get("lang")
+            self.assertIn(lang, {"pt", "en", "ja"})
+            langs_seen.add(lang)
             assistant_txt = row["messages"][-1]["content"]
             self.assertIn("pose:", assistant_txt)
             self.assertIn("camera:", assistant_txt)
             self.assertNotIn("No universo de STEINS;GATE", assistant_txt)
+        self.assertEqual(langs_seen, {"pt", "en", "ja"})
 
     def test_17_temporal_hiatus_and_autonomous_system_events(self):
         from app.services.llm.orchestrator import _build_call_telemetry, _offline_system_event_reply
@@ -392,6 +405,30 @@ class TestAmadeusBackend(unittest.TestCase):
             self.assertEqual(msgs[0]["sender"], "amadeus")
         finally:
             memory_store.delete_session(sess_id)
+
+    def test_18_security_path_traversal_and_env_key_resolution(self):
+        from fastapi import HTTPException
+        from app.services.persona_service import load_persona
+        from app.services.llm.orchestrator import _resolve_api_key
+        from app.schemas.chat import ChatRequest
+
+        with self.assertRaises(HTTPException) as ctx:
+            load_persona("../../package")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        res = self.client.get("/api/personas/..%2F..%2Fpackage")
+        self.assertIn(res.status_code, (400, 404))
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "gsk_env_key_test"}, clear=False):
+            self.assertEqual(_resolve_api_key(ChatRequest(message="hi")), "gsk_env_key_test")
+            self.assertEqual(
+                _resolve_api_key(ChatRequest(message="hi", selectedModel="offline")),
+                "",
+            )
+            self.assertEqual(
+                _resolve_api_key(ChatRequest(message="hi", apiKey="gsk_req_key")),
+                "gsk_req_key",
+            )
 
 if __name__ == "__main__":
     unittest.main()

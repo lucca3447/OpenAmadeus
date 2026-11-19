@@ -62,3 +62,7 @@ AGENTS.md
 
 # Silero VAD + onnxruntime assets (copied by scripts/copy-vad-assets.mjs on npm install)
 public/vad/
+
+# Local test videos and scratch audio artifacts
+videosteste/
+temp_test_audio*/

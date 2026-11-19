@@ -1,8 +1,10 @@
 import os
 import sys
+import ipaddress
 import subprocess
 import asyncio
 from typing import Optional, Tuple, AsyncGenerator
+from urllib.parse import urlparse
 import httpx
 
 from .emotion_mapper import resolve_acoustic_instruct
@@ -12,11 +14,14 @@ SERVER_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "..", ".."))
 
 # Candidate virtual environments with qwen-tts and torch+cu124 installed
 CANDIDATE_PYTHONS = [
+    os.environ.get("QWEN_PYTHON", ""),
     os.path.join(SERVER_DIR, "qwen_env", "Scripts", "python.exe"),
     os.path.join(SERVER_DIR, "qwen_env", "bin", "python"),
-    r"C:\codigos\qwentsskurisu\qwen_env\Scripts\python.exe",
     os.path.join(SERVER_DIR, "venv", "Scripts", "python.exe"),
     os.path.join(SERVER_DIR, "venv", "bin", "python"),
+    os.path.join(SERVER_DIR, "rvc_env", "Scripts", "python.exe"),
+    os.path.join(SERVER_DIR, "rvc_env", "bin", "python"),
+    sys.executable,
 ]
 
 import socket
@@ -81,9 +86,36 @@ class QwenTTSManager:
     @classmethod
     def get_python_executable(cls) -> Optional[str]:
         for candidate in CANDIDATE_PYTHONS:
-            if os.path.exists(candidate):
+            if candidate and os.path.exists(candidate):
                 return candidate
         return None
+
+    @classmethod
+    def is_allowed_worker_url(cls, url: str) -> bool:
+        """Validates worker URLs to prevent SSRF against internal/private endpoints."""
+        cleaned = (url or "").strip().rstrip("/")
+        if not cleaned:
+            return False
+        env_remote = os.environ.get("QWEN_REMOTE_URL", "").strip().rstrip("/")
+        if env_remote and cleaned == env_remote:
+            return True
+        try:
+            parsed = urlparse(cleaned)
+        except Exception:
+            return False
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        host = parsed.hostname.lower()
+        if host in ("127.0.0.1", "localhost", "::1"):
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            return port == WORKER_PORT
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return parsed.scheme == "https"
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            return False
+        return parsed.scheme == "https"
 
     @classmethod
     def resolve_target_url(
@@ -100,12 +132,14 @@ class QwenTTSManager:
         mode = (qwen_mode or os.environ.get("QWEN_MODE", "remote")).lower()
         if mode == "local":
             if custom_url and custom_url.strip() and not cls.is_remote_url(custom_url):
-                return custom_url.strip().rstrip("/")
+                url = custom_url.strip().rstrip("/")
+                if cls.is_allowed_worker_url(url):
+                    return url
             return f"http://127.0.0.1:{WORKER_PORT}"
 
         if custom_url and custom_url.strip():
             url = custom_url.strip().rstrip("/")
-            if url.startswith("http://") or url.startswith("https://"):
+            if cls.is_allowed_worker_url(url):
                 return url
 
         if mode in ("remote", "auto"):
@@ -126,7 +160,17 @@ class QwenTTSManager:
         Probes the target worker /health endpoint, returning status, device telemetry,
         and latency in milliseconds.
         """
-        url = (target_url or cls.resolve_target_url()).rstrip("/")
+        url = (target_url or cls.resolve_target_url()).strip().rstrip("/")
+        if not cls.is_allowed_worker_url(url):
+            return {
+                "status": "error",
+                "device": None,
+                "vram_allocated_mb": None,
+                "ping_ms": 0.0,
+                "url": url,
+                "mode": "remote" if cls.is_remote_url(url) else "local",
+                "error": "URL de worker não permitida.",
+            }
         import time
         t0 = time.perf_counter()
         try:
@@ -199,7 +243,6 @@ class QwenTTSManager:
 
             log_file = os.path.join(SERVER_DIR, "data", "qwen_worker.log")
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
-            log_handle = open(log_file, "a", encoding="utf-8")
 
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
@@ -207,18 +250,39 @@ class QwenTTSManager:
             env["HF_HUB_OFFLINE"] = "1"
             env["TRANSFORMERS_OFFLINE"] = "1"
 
-            _worker_process = subprocess.Popen(
-                [py_exe, WORKER_SCRIPT],
-                cwd=CURRENT_DIR,
-                creationflags=creationflags,
-                stdout=log_handle,
-                stderr=log_handle,
-                env=env,
-            )
+            with open(log_file, "a", encoding="utf-8") as log_handle:
+                _worker_process = subprocess.Popen(
+                    [py_exe, WORKER_SCRIPT],
+                    cwd=CURRENT_DIR,
+                    creationflags=creationflags,
+                    stdout=log_handle,
+                    stderr=log_handle,
+                    env=env,
+                )
             return True
         except Exception as e:
             print(f"[Qwen3 Manager] Error spawning worker: {e}")
             return False
+
+    @classmethod
+    async def shutdown(cls) -> None:
+        global _worker_process, _client
+        if _client is not None and not _client.is_closed:
+            try:
+                await _client.aclose()
+            except Exception:
+                pass
+        _client = None
+        if _worker_process is not None and _worker_process.poll() is None:
+            try:
+                _worker_process.terminate()
+                _worker_process.wait(timeout=3.0)
+            except Exception:
+                try:
+                    _worker_process.kill()
+                except Exception:
+                    pass
+        _worker_process = None
 
     @classmethod
     async def get_worker_status(cls, target_url: Optional[str] = None) -> Optional[str]:

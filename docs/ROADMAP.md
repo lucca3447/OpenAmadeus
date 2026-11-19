@@ -41,7 +41,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🟢 `v0.2.2`: Sentence-Level LLM &rarr; TTS Streaming, Mid-Speech Pose Shifts & 8GB GPU Optimization (Completed — Current)
+### 🟢 `v0.2.2`: Sentence-Level LLM &rarr; TTS Streaming, Mid-Speech Pose Shifts & 8GB GPU Optimization (Completed)
 *Focus: Real-time responsiveness, dynamic body language during speech, and rock-solid worker execution.*
 1. ✅ **LLM &rarr; TTS Sentence-Level SSE Streaming (`POST /api/chat/stream`)**:
    - `SentenceStreamBuffer` boundary parser emitting `visual`, `sentence`, and `done` events upon first complete clause.
@@ -62,7 +62,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🟢 `v0.3.0`: Acoustic, VAD, Multilingual & Cognitive Depth (Completed — Current)
+### 🟢 `v0.3.0`: Acoustic, VAD, Multilingual & Cognitive Depth (Completed)
 *Focus: Noise-immune speech detection, authentic Steins;Gate lore grounding, trilingual localization, F1/F2 formant lip-sync, and native PT-BR voice fine-tuning.*
 1. ✅ **Silero VAD Web (`@ricky0123/vad-web`)**:
    - Client-side ONNX neural Voice Activity Detection (hosted locally in `public/`) replacing raw RMS volume thresholding.
@@ -75,6 +75,19 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
    - Canonical Japanese dubbing mode (`canonicalJpVoice`) emitting Japanese speech via single-pass inline `<!--ja:...-->` tags while displaying subtitles in the user's chosen language.
    - Native PT-BR Qwen3-TTS hybrid restoration + bilingual replay LoRA training notebook (`notebooks/Amadeus_Qwen3_TTS_PTBR_LoRA.ipynb`) eliminating foreign accent drift.
    - Real-time phonetic vowel/formant lip-sync (`F1/F2` spectral analysis: `600–950 Hz` open &rarr; `02`, `250–550 Hz` close/mid &rarr; `01`, silence &rarr; `00`) driving the 3 canonical mouth frames of the 174 VN sprites.
+
+---
+
+### 🟢 `v0.3.1`: Streaming Sync, Local Hardening, Docker/Env Readiness & CI (Completed — Current)
+*Focus: End-to-end streaming polish, local security hardening, Docker/environment reliability, and clean structural foundations for `v0.4.0` multimodal vision and `v0.5.0` Tauri v2 desktop.*
+1. ✅ **Streaming Subtitle, Lip-Sync & Canonical JP Alignment**:
+   - Preserved progressive typing across multi-sentence responses (`SubtitleBox.tsx`), cleared `isProcessing` on first audible sentence, guarded full history persistence on mid-speech cancel, and silenced synthetic mouth flap during inter-sentence pauses (`AmadeusSpriteView.tsx`).
+   - Grouped multi-sentence translations under each `<!--ja:...-->` delimiter (`sentence_stream.py`), blocked mid-turn PT audio fallback after JA speech begins, and added `[HH:MM:SS.mmm]` stream/TTS telemetry logs.
+2. ✅ **Local Hardening, 3-Tier Stability & Worker Lifecycle**:
+   - Locked default CORS/bind to local origins (`localhost:5173`, `127.0.0.1:5173`, and Tauri v2 `tauri.localhost`), added SSRF worker URL guards (`qwen_manager.py`), and added path traversal validation on persona and RVC checkpoint loaders.
+   - Offloaded blocking Kokoro and RVC inference off the asyncio event loop, added cross-platform RVC Python discovery, skipped PT-only Kokoro on EN/JA fallback, implemented clean worker shutdown in `lifespan.py`, and replaced full-table `/api/health` scans with `SELECT COUNT(*)`.
+3. ✅ **Docker, `.env` Wiring & Automated CI**:
+   - Fixed frontend `Dockerfile` `postinstall` build (`COPY scripts ./scripts`), enabled `server/.env` loading (`load_dotenv`) with env API key fallback and unified LLM message builders (`orchestrator.py`), removed expiring hardcoded Colab URLs, isolated GPU manual scripts into `server/scripts/`, and added GitHub Actions CI (`.github/workflows/ci.yml`).
 
 ---
 

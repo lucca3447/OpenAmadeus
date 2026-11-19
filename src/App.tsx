@@ -403,7 +403,7 @@ export const App: React.FC = () => {
       volume: voiceSettings.volume,
       engine: voiceSettings.engine || 'qwen3',
       qwenMode: voiceSettings.qwenMode || 'remote',
-      qwenRemoteUrl: voiceSettings.qwenMode === 'local' ? undefined : (voiceSettings.qwenRemoteUrl || 'https://serves-pending-accept-firmware.trycloudflare.com'),
+      qwenRemoteUrl: voiceSettings.qwenMode === 'local' ? undefined : (voiceSettings.qwenRemoteUrl || undefined),
       emotion,
       stream: voiceSettings.engine === 'qwen3' ? Boolean(voiceSettings.stream) : false,
       useNeural: voiceSettings.useNeural !== false,
@@ -501,6 +501,8 @@ export const App: React.FC = () => {
     let ttfaLogged = false;
     let subtitleText = '';
     let accumulatedTtsText = '';
+    let fullStreamResponse = '';
+    let fullStreamTts = '';
     let currentMeta: { emotion: Emotion; pose?: CharacterPose; camera?: CameraFraming; recalledIds?: string[] } = {
       emotion: 'neutral',
       pose: 'default',
@@ -529,6 +531,7 @@ export const App: React.FC = () => {
               if (m.camera) setCurrentCamera(m.camera);
             },
             onSentence: (sentence, _index, visual, ttsText) => {
+              if (!sentence && !ttsText) return;
               streamedAny = true;
               if (ttsText) {
                 accumulatedTtsText = accumulatedTtsText ? `${accumulatedTtsText} ${ttsText}` : ttsText;
@@ -538,6 +541,7 @@ export const App: React.FC = () => {
               }
               // Subtitle, chat history & sprite pose/expression update as each sentence becomes audible (or immediately when voice is off)
               const reveal = () => {
+                setIsProcessing(false);
                 if (visual?.emotion) {
                   currentMeta = {
                     ...currentMeta,
@@ -562,22 +566,25 @@ export const App: React.FC = () => {
                 const partialMsg: ChatMessage = {
                   id: aiMsgId,
                   sender: 'amadeus',
-                  content: subtitleText,
+                  content: fullStreamResponse || subtitleText,
                   timestamp: Date.now(),
                   emotion: currentMeta.emotion,
                   pose: currentMeta.pose,
                   camera: currentMeta.camera,
                   recalledMemories: currentMeta.recalledIds ?? matched.map((m: MemoryItem) => m.id),
-                  ttsResponse: accumulatedTtsText || undefined,
+                  ttsResponse: fullStreamTts || accumulatedTtsText || undefined,
                 };
                 const partialHistory = [...nextHistory, partialMsg];
                 setHistory(partialHistory);
                 MemoryService.saveActiveSession(sessionId, partialHistory);
               };
-              // canonical JP mode: speak the Japanese line, or fallback safely to convLang if <!--ja:...--> was omitted
+              // canonical JP mode: speak the Japanese line, or fallback safely to convLang only when no <!--ja:...--> appeared at all
               if (canonicalJp) {
                 if (ttsText) {
                   if (speaker) speaker.enqueue(ttsText, reveal, visual?.emotion);
+                  else reveal();
+                } else if (accumulatedTtsText) {
+                  if (speaker) speaker.enqueue('', reveal, visual?.emotion);
                   else reveal();
                 } else {
                   if (speaker) speaker.enqueue(sentence, reveal, visual?.emotion, getConvSpeakFallback());
@@ -665,19 +672,27 @@ export const App: React.FC = () => {
       preloadEmotionSprites(result.emotion, result.pose, result.camera);
 
       if (streamedAny) {
-        if (subtitleText) {
+        fullStreamResponse = result.response || subtitleText;
+        fullStreamTts = result.ttsResponse || accumulatedTtsText;
+        currentMeta = {
+          emotion: result.emotion,
+          pose: result.pose,
+          camera: result.camera,
+          recalledIds: finalRecalledIds,
+        };
+        if (fullStreamResponse) {
           const syncedHistory = [
             ...nextHistory,
             {
               id: aiMsgId,
               sender: 'amadeus' as const,
-              content: subtitleText,
+              content: fullStreamResponse,
               timestamp: Date.now(),
               emotion: result.emotion,
               pose: result.pose,
               camera: result.camera,
               recalledMemories: finalRecalledIds,
-              ttsResponse: accumulatedTtsText || result.ttsResponse || undefined,
+              ttsResponse: fullStreamTts || undefined,
             },
           ];
           setHistory(syncedHistory);

@@ -26,6 +26,7 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
 
     let animationFrameId: number;
     let phase = 0;
+    let timeData: Uint8Array<ArrayBuffer> | null = null;
 
     const updateSize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -83,7 +84,9 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
       let currentSpeed = 0.05;
 
       if (activeAnalyser) {
-        const timeData = new Uint8Array(activeAnalyser.fftSize);
+        if (!timeData || timeData.length !== activeAnalyser.fftSize) {
+          timeData = new Uint8Array(activeAnalyser.fftSize);
+        }
         activeAnalyser.getByteTimeDomainData(timeData);
 
         let variance = 0;

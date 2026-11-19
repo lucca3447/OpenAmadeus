@@ -1,5 +1,9 @@
+import asyncio
 import os
+import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Dict, List, Optional
 import torch
 from fastapi import FastAPI, Request, HTTPException
@@ -15,38 +19,50 @@ if SERVER_DIR not in sys.path:
 
 from app.services.rvc.pipeline import KurisuRVCPipeline
 
-app = FastAPI(title="Amadeus RVC Neural Voice Worker", version="0.2.2")
+app = FastAPI(title="Amadeus RVC Neural Voice Worker", version="0.3.1")
 
 _pipelines: Dict[str, KurisuRVCPipeline] = {}
 _default_model_name = "KurisuRVCv147"
+_rvc_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rvc_gpu")
+
+
+_SAFE_MODEL_NAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 
 def find_model_files(model_name: str) -> tuple[Optional[str], Optional[str]]:
     """Locates matching .pth and optional .index for a requested model name."""
-    clean_name = os.path.splitext(model_name)[0]
-    
+    raw_name = (model_name or "").strip()
+    if not raw_name or ".." in raw_name or "/" in raw_name or "\\" in raw_name or not _SAFE_MODEL_NAME.fullmatch(raw_name):
+        return None, None
+    clean_name = os.path.splitext(raw_name)[0]
+    weights_root = Path(WEIGHTS_DIR).resolve()
+
     # 1. Search in weights/<model_dir> or weights/kurisu_rvc/
     candidate_dirs = [
-        os.path.join(WEIGHTS_DIR, clean_name),
-        os.path.join(WEIGHTS_DIR, "kurisu_rvc"),
-        WEIGHTS_DIR,
+        weights_root / clean_name,
+        weights_root / "kurisu_rvc",
+        weights_root,
     ]
-    
+
     found_pth = None
     found_index = None
-    
+
     for c_dir in candidate_dirs:
-        if not os.path.isdir(c_dir):
+        resolved_dir = c_dir.resolve()
+        if not resolved_dir.is_relative_to(weights_root) or not resolved_dir.is_dir():
             continue
-        for fname in os.listdir(c_dir):
+        for fname in os.listdir(resolved_dir):
             f_base, f_ext = os.path.splitext(fname)
+            cand_path = (resolved_dir / fname).resolve()
+            if not cand_path.is_relative_to(weights_root):
+                continue
             if f_ext.lower() == ".pth" and (f_base == clean_name or clean_name in f_base):
-                found_pth = os.path.join(c_dir, fname)
+                found_pth = str(cand_path)
             elif f_ext.lower() == ".index" and (f_base == clean_name or clean_name in f_base):
-                found_index = os.path.join(c_dir, fname)
+                found_index = str(cand_path)
         if found_pth:
             break
-            
+
     return found_pth, found_index
 
 
@@ -119,23 +135,28 @@ async def convert_voice(
     protect: float = 0.33,
     model_name: Optional[str] = None,
 ):
-    try:
-        pipeline = get_pipeline(model_name)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"RVC pipeline initialization error: {str(e)}")
+    content = await request.body()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty audio payload")
 
-    try:
-        content = await request.body()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty audio payload")
-
-        out_wav = pipeline.convert_audio(
+    def _run_conversion() -> bytes:
+        try:
+            pipeline = get_pipeline(model_name)
+        except Exception as init_err:
+            raise HTTPException(status_code=503, detail=f"RVC pipeline initialization error: {str(init_err)}")
+        return pipeline.convert_audio(
             audio_bytes=content,
             pitch_shift=pitch_shift,
             index_rate=index_rate,
             protect=protect,
         )
+
+    try:
+        loop = asyncio.get_running_loop()
+        out_wav = await loop.run_in_executor(_rvc_executor, _run_conversion)
         return Response(content=out_wav, media_type="audio/wav")
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

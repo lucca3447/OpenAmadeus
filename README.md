@@ -2,7 +2,7 @@
 
 A full-stack, modular **trilingual (Japanese / English / Brazilian Portuguese)** multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), F1/F2 spectral formant lip-sync, Silero neural VAD, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS Multilingual with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
 
-[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://semver.org/)
+[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](https://semver.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -45,7 +45,7 @@ A full-stack, modular **trilingual (Japanese / English / Brazilian Portuguese)**
   - **Stage 4 — Browser Web Speech API Fallback**: Automatic client-side `SpeechSynthesisUtterance` fallback (`ja-JP` / `en-US` / `pt-BR`) with word-boundary syllable lip-sync if the backend is unreachable.
 - **Real-Time PCM16 Streaming & Web Audio DSP Chain**:
   - Server-side $C^0$ boundary continuity ramp (120-sample / 5 ms linear interpolation across 24 kHz chunk borders) eliminating inter-chunk clicks, paired with language-aware `clean_text_for_tts` punctuation/hesitation sanitization, pure-weight SFT acoustic stability (`QWEN_USE_EMOTION_INSTRUCT=false` by default to prevent attention glitches), and 21 empirical acoustic reference targets (`emotion_mapper.py`).
-  - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 480 ms jitter buffer, `1.65x` (+4.3 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-20 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
+  - Client-side (`src/services/speechService.ts`) 16-bit remainder-byte alignment buffer for HTTP chunked streams, 240 ms jitter buffer, `1.65x` (+4.3 dB) pre-compression make-up `GainNode`, and `DynamicsCompressorNode` (`-20 dB` threshold, `3.5:1` ratio) for uniform loudness between shy whispers and emphatic retorts.
 - **Visual State Machine, F1/F2 Formant Lip-Sync & Audio-Reactive HUD**:
   - Supports **174 visual novel sprite assets** mapped 1:1 with MAGES. SC3 bytecode ground truth across poses (`default`, `crossed_arms`, `backview`) and camera framings (`closeup`, `medium`, `full`), featuring composite directive parsing (`<!--emotion:analytical,pose:crossed_arms,camera:closeup-->`), trilingual `infer_sentence_shift`, 2-beat expression shifts, emotion-aligned blinking, and a procedural holographic silhouette fallback when sprites are absent.
   - Real-time spectral **F1/F2 formant vowel classification** (`classifyFormantMouth` in `src/services/speechService.ts`) driving 3 canonical mouth frames (`00` silence, `01` mid/close vowels `250–550 Hz`, `02` open vowels `600–950 Hz`), alongside an HTML5 Canvas **Audio Oscilloscope** (`AudioOscilloscope.tsx`).
@@ -61,7 +61,7 @@ A full-stack, modular **trilingual (Japanese / English / Brazilian Portuguese)**
 - **Dynamic Few-Shot RAG, Canonical Lorebook & Episodic Memory (`server/training/` & [ChromaDB](https://www.trychroma.com/))**:
   - Automatically indexes **154 curated trilingual ChatML dialogue exemplars** (`kurisu_finetuning_dataset_enhanced.jsonl`) with hash-based re-sync and **36 PT/EN/JA canonical memories** into [ChromaDB](https://www.trychroma.com/) (`server/data/memory_db`) + persistent **SQLite** (`server/data/amadeus.db`), paired with a deterministic trilingual **Steins;Gate Lorebook** (*IBN 5100*, *SERN / Z-Report*, *Prof. Leskinen*, *Kerr Black Hole*, *Operation Skuld*).
 - **Multi-Provider LLM Orchestration (`server/app/services/llm/`)**:
-  - Fault-tolerant routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`gemma-4-31b-it:free`, `nemotron-3.5-lightning:free`), local **Ollama**, and an offline **Heuristic Simulator** (`offline_simulator.py`).
+  - Fault-tolerant routing across **Google Gemini** (`gemini-2.5-flash`), **Groq Cloud LPU** (`llama-3.3-70b-versatile`, `qwen/qwen3.8-27b`), **OpenRouter Free Tier** (`gemma-4-31b-it:free`, `nemotron-3.5-lightning:free`), and an offline **Heuristic Simulator** (`offline_simulator.py`).
 
 ## 💻 Universal Hardware Compatibility & Benchmarks
 
@@ -85,7 +85,7 @@ flowchart TD
         Oscilloscope["AudioOscilloscope (HTML5 Canvas FFT)"]
         MicVAD["Silero VAD v5 (@ricky0123/vad-web ONNX) + Groq Whisper STT"]
         Reader["speechService.ts: PCM16 Stream Reader + SentenceSpeaker"]
-        DSP["Web Audio DSP: Jitter (+480ms) -> Make-up Gain (1.65x) -> Compressor (-20dB) -> AnalyserNode"]
+        DSP["Web Audio DSP: Jitter (+240ms) -> Make-up Gain (1.65x) -> Compressor (-20dB) -> AnalyserNode"]
         UI --> Reader
         MicVAD --> UI
         Reader --> DSP
@@ -264,7 +264,7 @@ The `server/training/` directory ships with a complete persona alignment toolkit
 
 ## 🐳 Docker Deployment
 
-Spin up the full-stack environment (`amadeus-frontend` on Nginx `:5173` + `amadeus-backend` on [FastAPI](https://fastapi.tiangolo.com/) `:8000`) with persistent volumes:
+Spin up the full-stack **CPU / Zero-VRAM** environment (`amadeus-frontend` on Nginx `:5173` + `amadeus-backend` on [FastAPI](https://fastapi.tiangolo.com/) `:8000` with SQLite, ChromaDB, Cloud LLMs, Remote Colab Qwen3-TTS, and Edge-TTS) with persistent volumes:
 
 ```bash
 docker compose up --build -d
