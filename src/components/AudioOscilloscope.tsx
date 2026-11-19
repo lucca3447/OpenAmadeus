@@ -26,7 +26,7 @@ export const AudioOscilloscope: React.FC<AudioOscilloscopeProps> = ({
 
     let animationFrameId: number;
     let phase = 0;
-    let timeData: Uint8Array | null = null;
+    let timeData: Uint8Array<ArrayBuffer> | null = null;
 
     const updateSize = () => {
       const rect = canvas.getBoundingClientRect();

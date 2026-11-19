@@ -268,7 +268,7 @@ class TestAmadeusBackend(unittest.TestCase):
         prompt = data.get("systemPrompt", "")
         self.assertIn("analytical", prompt)
         self.assertIn("disdain", prompt)
-        self.assertIn("<!--emotion:NOME-->", prompt)
+        self.assertIn("<!--emotion:EMOTION,pose:POSE,camera:CAMERA-->", prompt)
 
         # 2. Verify dataset contains at least 86 lines and includes pose/camera exemplars
         ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
@@ -335,17 +335,21 @@ class TestAmadeusBackend(unittest.TestCase):
         ja_tts = clean_text_for_tts("クリスティーナって呼ぶな!", lang="ja")
         self.assertIn("!", ja_tts)
 
-        # 6. Verify all 130 exemplars have pose:, camera:, lang, and zero 4th-wall breaks
+        # 6. Verify all 154 trilingual exemplars have pose:, camera:, valid lang, and zero 4th-wall breaks
         ds_file = TRAINING_DIR / "kurisu_finetuning_dataset_enhanced.jsonl"
         with open(ds_file, "r", encoding="utf-8") as f:
             rows = [json.loads(line) for line in f if line.strip()]
-        self.assertEqual(len(rows), 130)
+        self.assertEqual(len(rows), 154)
+        langs_seen = set()
         for row in rows:
-            self.assertEqual(row.get("lang"), "pt")
+            lang = row.get("lang")
+            self.assertIn(lang, {"pt", "en", "ja"})
+            langs_seen.add(lang)
             assistant_txt = row["messages"][-1]["content"]
             self.assertIn("pose:", assistant_txt)
             self.assertIn("camera:", assistant_txt)
             self.assertNotIn("No universo de STEINS;GATE", assistant_txt)
+        self.assertEqual(langs_seen, {"pt", "en", "ja"})
 
     def test_17_temporal_hiatus_and_autonomous_system_events(self):
         from app.services.llm.orchestrator import _build_call_telemetry, _offline_system_event_reply
