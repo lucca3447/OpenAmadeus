@@ -75,6 +75,33 @@ OpenAmadeus scales from CPU-only laptops to local NVIDIA GPUs and free/low-cost 
 | **Tier 4: Qwen3-TTS (`faster`)** | **Streaming PCM16 (CUDA Graphs)** | **Colab L4/A100 or Local GPU (~4–6 GB VRAM)** | **~391 ms** | **1.92x** *(L4)* | End-to-end Kurisu synthesis with natural sighs, calibrated cadence, and pure-weight SFT stability |
 | **Tier 4 (Legacy): Qwen3-TTS (`stock`)** | Batch WAV (Dynamic Cache) | NVIDIA GPU (~6 GB VRAM) | ~14,000–20,000 ms | ~0.44x | Fallback batch mode when `faster-qwen3-tts` is disabled (`QWEN_BACKEND=stock`) |
 
+### 📈 Measured Performance & Optimization Gains (`v0.3.2`)
+
+Empirical runtime measurements collected with OpenAmadeus' built-in telemetry (`/api/metrics`) and [server/scripts/benchmark_amadeus.py](server/scripts/benchmark_amadeus.py):
+
+#### Cold-Start & Backend Pipeline (`v0.3.1` → `v0.3.2`)
+
+| Metric | Before (`v0.3.1`) | After (`v0.3.2`) | Measured Gain |
+| :--- | ---: | ---: | :--- |
+| **First Turn (`Cold` end-to-end, live)** | `29,353 ms` | **`2,016–2,971 ms`** | **~10×–14.5× faster** (background ONNX warm-up eliminates ~27.7 s stall) |
+| **LLM Model Discovery (`GET /models`, warm `p50`)** | `365–432 ms` | **`0 ms`** | **Eliminated** (10-min TTL cache + keep-alive `httpx` client) |
+| **RAG ONNX Embeddings per Turn** | `4×` | **`1×`** | **-75% CPU** (LRU single-embedding reuse across canonical, learned & 154 exemplars) |
+| **Offline `/api/chat` (`p50`)** | `369.2 ms` | **`96.7 ms`** | **`3.8×` faster** |
+| **Offline `/api/chat/stream` (`p50`)** | `693.6 ms` | **`87.7 ms`** | **`7.9×` faster** |
+
+#### Live Pipeline Breakdown (`v0.3.2`, Groq LPU + Remote Colab Qwen3-TTS Tunnel, `cuda:0` 4,247 MB VRAM)
+
+| Stage / Test Case | First Byte / TTFA | Speed / Duration | Reliability & DSP Notes |
+| :--- | :--- | :--- | :--- |
+| **Gateway `/api/health`** | `4.3 ms` (`p50: 5.9 ms`) | — | Fast `SELECT COUNT(*)` SQLite + ChromaDB probe |
+| **Qwen3-TTS Stream — PT-BR (`tsundere`)** | **`826.5 ms`** | **`1.52×`** (`5.76 s` audio in `3.78 s`) | `6.8×` lower TTFA than batch WAV (`5,599.6 ms`, `0.90×`) |
+| **Qwen3-TTS Stream — EN (`analytical`)** | **`810.4 ms`** | **`1.46×`** (`4.24 s` audio in `2.91 s`) | Clean F0 (`273 / 389 Hz`), zero truncations |
+| **Qwen3-TTS Stream — JA (`annoyed`)** | **`1,422.2 ms`** | **`1.12×`** (`3.52 s` audio in `3.15 s`) | High-energy expressiveness (`F0 462 / 600 Hz`) |
+| **Live Multi-Turn Session (`5–12` turns)** | `LLM 1st Sent p50: ~1,946–2,016 ms` | `TTS TTFB p50: 854–1,335 ms` (`1.5×–1.6×`) | `Discovery p50: 0 ms` • `0` PCM underruns • `0` errors/fallbacks |
+| **Barge-In / Mid-Stream Abort** | Immediate cancel | Instant recovery | `PASS` — worker `/health` stays `ready` after mid-stream disconnect |
+
+> Reproduce locally via `python server/scripts/benchmark_amadeus.py --offline` / `--live` or inspect live per-turn waterfalls in **Setup → SYSTEM**.
+
 ## 🏛️ System Architecture & DSP Pipeline
 
 ```mermaid
