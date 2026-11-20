@@ -23,6 +23,14 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "X-Audio-Format",
+        "X-Sample-Rate",
+        "X-TTS-Engine",
+        "X-TTS-Fallback",
+        "X-TTS-Mode",
+        "X-TTS-Handshake-Ms",
+    ],
 )
 
 # Primary API endpoints prefixed with /api

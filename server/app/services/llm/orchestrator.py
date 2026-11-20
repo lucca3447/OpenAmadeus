@@ -1,9 +1,14 @@
+import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 import re
+import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import httpx
+
+_REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 from app.core.config import MAX_HISTORY_MESSAGES, OPENROUTER_FREE_MODELS
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -11,6 +16,7 @@ from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
 from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera, infer_lead_expression, infer_sentence_shift
 from app.services.offline_simulator import offline_simulator
+from app.services.metrics import metrics_registry
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
@@ -393,6 +399,29 @@ def _offline_system_event_reply(
 class LLMOrchestrator:
     def __init__(self):
         self.model_cache = _model_cache
+        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    @asynccontextmanager
+    async def _llm_client(self, timeout_sec: float = 35.0):
+        """Reuses a keep-alive httpx.AsyncClient in production while honoring mocked httpx.AsyncClient in tests."""
+        if httpx.AsyncClient is not _REAL_ASYNC_CLIENT:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_sec)) as client:
+                yield client
+            return
+        loop = asyncio.get_running_loop()
+        if self._http_client is None or self._http_client.is_closed or self._http_client_loop is not loop:
+            if self._http_client is not None and not self._http_client.is_closed and self._http_client_loop is loop:
+                await self._http_client.aclose()
+            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_sec))
+            self._http_client_loop = loop
+        yield self._http_client
+
+    async def aclose(self) -> None:
+        if self._http_client is not None and not self._http_client.is_closed:
+            await self._http_client.aclose()
+        self._http_client = None
+        self._http_client_loop = None
 
     def _resolve_history_turns(self, session_id: str, client_history: List[Any]) -> List[Dict[str, str]]:
         """
@@ -468,7 +497,8 @@ class LLMOrchestrator:
         lang_code = (req.lang or "pt").strip().lower()[:2]
         canonical_voice = bool(getattr(req, "canonicalVoice", False)) and lang_code != "ja"
         kurisu_memories = [m for m in semantic_matches if m.get("source") != "learned"]
-        user_memories = memory_store.get_learned_context(search_query)
+        learned_matches = [m for m in semantic_matches if m.get("source") == "learned"]
+        user_memories = memory_store.get_learned_context(search_query, precomputed_learned=learned_matches)
 
         turn_count = (len(history_turns) // 2) + 1
         memory_ctx_blocks = [_build_call_telemetry(turn_count, len(user_memories), gap_seconds, last_session_topic, lang_code)]
@@ -567,9 +597,13 @@ class LLMOrchestrator:
         )
 
     async def handle_chat(self, req: ChatRequest) -> ChatResponse:
+        t_start = time.perf_counter()
+        t_rag0 = time.perf_counter()
         (persona, session_id, history_turns, context_summary, system_event, is_system_event,
          search_query, semantic_matches, recalled_ids, gap_seconds, last_session_topic,
          effective_user_prompt) = self._prepare_context(req)
+        rag_ms = (time.perf_counter() - t_rag0) * 1000.0
+        req_lang = (req.lang or "pt").strip().lower()[:2]
 
         api_key = _resolve_api_key(req)
         is_groq = api_key.startswith("gsk_")
@@ -582,15 +616,21 @@ class LLMOrchestrator:
         if not api_key:
             if not allow_offline_fallback:
                 err_msg = "[MODO ESTRITO DE LLM] Nenhuma chave de API configurada e as respostas do Simulador Offline foram bloqueadas."
+                recorded = metrics_registry.record_chat({
+                    "status": "error", "provider": "offline", "model": "", "stream": False,
+                    "rag_ms": rag_ms, "total_ms": (time.perf_counter() - t_start) * 1000.0,
+                    "recalled_count": len(recalled_ids), "lang": req_lang,
+                })
                 return ChatResponse(
                     response=err_msg,
                     emotion="serious",
                     recalledMemories=recalled_ids,
                     sessionId=session_id,
                     error=err_msg,
+                    metrics=recorded,
                 )
 
-            lang_code = (req.lang or "pt").strip().lower()[:2]
+            lang_code = req_lang
             canonical_voice = bool(getattr(req, "canonicalVoice", False)) and lang_code != "ja"
             tts_resp = None
             if is_system_event:
@@ -616,6 +656,14 @@ class LLMOrchestrator:
                 learned.id = saved["id"]
 
             memory_store.save_message(session_id, sender="amadeus", content=clean_text, emotion=emotion, recalled=recalled_ids)
+            total_ms = (time.perf_counter() - t_start) * 1000.0
+            recorded = metrics_registry.record_chat({
+                "status": "ok", "provider": "offline", "model": "Simulador Local (ChromaDB + SQLite)",
+                "stream": False, "cold_start": False, "rag_ms": rag_ms, "model_discovery_ms": 0.0,
+                "llm_fallback_attempts": 0, "llm_ttft_ms": 0.0, "llm_first_sentence_ms": total_ms,
+                "llm_total_ms": 0.0, "total_ms": total_ms, "sentences_count": 1,
+                "recalled_count": len(recalled_ids), "canonical_ja_tags": 1 if tts_resp else 0, "lang": req_lang,
+            })
             return ChatResponse(
                 response=clean_text,
                 ttsResponse=tts_resp,
@@ -627,12 +675,21 @@ class LLMOrchestrator:
                 recalledMemories=recalled_ids,
                 sessionId=session_id,
                 learnedMemory=learned,
-                model="Simulador Local (ChromaDB + SQLite)"
+                model="Simulador Local (ChromaDB + SQLite)",
+                metrics=recorded,
             )
 
+        t_prompt0 = time.perf_counter()
         system_prompt = self._build_system_prompt(
             req, persona, semantic_matches, search_query, history_turns, context_summary, gap_seconds, last_session_topic
         )
+        rag_ms += (time.perf_counter() - t_prompt0) * 1000.0
+
+        provider = "groq" if is_groq else ("openrouter" if is_openrouter else "gemini")
+        cold_start = metrics_registry.mark_llm_cold_start(f"{provider}:{api_key[-8:]}")
+        model_discovery_ms = 0.0
+        fallback_attempts = 0
+        llm_total_ms: Optional[float] = None
 
         try:
             raw_reply = ""
@@ -645,11 +702,13 @@ class LLMOrchestrator:
 
                 last_groq_err = None
                 fp = api_key[-8:]
-                async with httpx.AsyncClient(timeout=35.0) as client:
+                async with self._llm_client(35.0) as client:
                     if not allow_model_fallback and preferred_model:
                         groq_candidates = [preferred_model]
                     else:
+                        t_disc0 = time.perf_counter()
                         groq_candidates = await get_groq_candidate_models(client, api_key)
+                        model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
                         if fp in self.model_cache and self.model_cache[fp] in groq_candidates:
                             groq_candidates.remove(self.model_cache[fp])
                             groq_candidates.insert(0, self.model_cache[fp])
@@ -658,6 +717,7 @@ class LLMOrchestrator:
                                 groq_candidates.remove(preferred_model)
                             groq_candidates.insert(0, preferred_model)
 
+                    t_llm0 = time.perf_counter()
                     for candidate_groq in groq_candidates:
                         try:
                             res = await client.post(
@@ -686,6 +746,7 @@ class LLMOrchestrator:
                                     or "rate limit" in err_body.lower()
                                 )
                                 if is_retryable:
+                                    fallback_attempts += 1
                                     print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned {res.status_code} ({err_body[:80]}...), trying next...")
                                     continue
                                 raise GeminiError(res.status_code, err_body)
@@ -698,6 +759,7 @@ class LLMOrchestrator:
                             if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
                                 if not allow_model_fallback:
                                     raise GeminiError(502, f"[MODO FIXO GROQ • {candidate_groq}] Resposta vazia ou raciocínio interno sem diálogo.")
+                                fallback_attempts += 1
                                 print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned empty/reasoning, trying next candidate...")
                                 continue
 
@@ -709,8 +771,10 @@ class LLMOrchestrator:
                         except GeminiError as e:
                             last_groq_err = e
                             if allow_model_fallback and e.code in (400, 404, 429, 502, 503):
+                                fallback_attempts += 1
                                 continue
                             raise
+                    llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
 
                 if last_groq_err and not raw_reply:
                     raise last_groq_err
@@ -729,7 +793,8 @@ class LLMOrchestrator:
                         openrouter_candidates.insert(0, preferred_model)
 
                 last_or_err = None
-                async with httpx.AsyncClient(timeout=35.0) as client:
+                async with self._llm_client(35.0) as client:
+                    t_llm0 = time.perf_counter()
                     for candidate_or in openrouter_candidates:
                         try:
                             res = await client.post(
@@ -761,6 +826,7 @@ class LLMOrchestrator:
                                     or "rate limit" in err_body.lower()
                                 )
                                 if is_retryable:
+                                    fallback_attempts += 1
                                     print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned {res.status_code}, trying next...")
                                     continue
                                 raise GeminiError(res.status_code, err_body)
@@ -773,6 +839,7 @@ class LLMOrchestrator:
                             if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
                                 if not allow_model_fallback:
                                     raise GeminiError(502, f"[MODO FIXO OPENROUTER • {candidate_or}] Resposta vazia ou raciocínio interno.")
+                                fallback_attempts += 1
                                 print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned empty/reasoning, trying next candidate...")
                                 continue
 
@@ -783,8 +850,10 @@ class LLMOrchestrator:
                         except GeminiError as e:
                             last_or_err = e
                             if allow_model_fallback and e.code in (404, 429, 502, 503):
+                                fallback_attempts += 1
                                 continue
                             raise
+                    llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
 
                 if last_or_err and not raw_reply:
                     raise last_or_err
@@ -804,11 +873,13 @@ class LLMOrchestrator:
                     },
                 }
 
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with self._llm_client(30.0) as client:
                     if not allow_model_fallback and preferred_model:
                         candidates = [preferred_model]
                     else:
+                        t_disc0 = time.perf_counter()
                         candidates = await get_candidate_models(client, api_key, self.model_cache)
+                        model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
                         if preferred_model:
                             if preferred_model in candidates:
                                 candidates.remove(preferred_model)
@@ -818,6 +889,7 @@ class LLMOrchestrator:
                     data = None
                     last_error = None
 
+                    t_llm0 = time.perf_counter()
                     for candidate_model in candidates:
                         try:
                             data = await gemini_request(client, "POST", f"models/{candidate_model}:generateContent", api_key, payload)
@@ -828,9 +900,11 @@ class LLMOrchestrator:
                         except GeminiError as e:
                             last_error = e
                             if allow_model_fallback and e.code in (503, 429, 404):
+                                fallback_attempts += 1
                                 print(f"[OpenAmadeus Core] Model {candidate_model} returned {e.code}, trying next...")
                                 continue
                             raise
+                    llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
 
                     if last_error and not data:
                         raise last_error
@@ -841,19 +915,51 @@ class LLMOrchestrator:
                     used_model = selected_model
                     selected_gemini_model = selected_model
 
-            return await self._finalize_chat(
+            response = await self._finalize_chat(
                 req, raw_reply, is_system_event, session_id, recalled_ids, used_model,
                 selected_gemini_model, api_key, is_groq, is_openrouter,
             )
+            total_ms = (time.perf_counter() - t_start) * 1000.0
+            response.metrics = metrics_registry.record_chat({
+                "status": "ok",
+                "provider": provider,
+                "model": used_model,
+                "stream": False,
+                "cold_start": cold_start,
+                "rag_ms": rag_ms,
+                "model_discovery_ms": model_discovery_ms,
+                "llm_fallback_attempts": fallback_attempts,
+                "llm_ttft_ms": llm_total_ms,
+                "llm_first_sentence_ms": total_ms,
+                "llm_total_ms": llm_total_ms,
+                "total_ms": total_ms,
+                "sentences_count": 1,
+                "recalled_count": len(recalled_ids),
+                "canonical_ja_tags": 1 if response.ttsResponse else 0,
+                "lang": req_lang,
+            })
+            return response
 
         except GeminiError as e:
             print(f"[Core Error]: {e}")
             err_msg = f"[ERRO {e.code or 'REDE'}] {e.message}"
-            return ChatResponse(response=err_msg, emotion="serious", recalledMemories=recalled_ids, sessionId=session_id, error=err_msg)
+            recorded = metrics_registry.record_chat({
+                "status": "error", "provider": provider, "model": "", "stream": False, "cold_start": cold_start,
+                "rag_ms": rag_ms, "model_discovery_ms": model_discovery_ms, "llm_fallback_attempts": fallback_attempts,
+                "llm_total_ms": llm_total_ms, "total_ms": (time.perf_counter() - t_start) * 1000.0,
+                "recalled_count": len(recalled_ids), "lang": req_lang,
+            })
+            return ChatResponse(response=err_msg, emotion="serious", recalledMemories=recalled_ids, sessionId=session_id, error=err_msg, metrics=recorded)
         except Exception as e:
             print(f"[General Error]: {e}")
             err_msg = f"[ERRO] {str(e)}"
-            return ChatResponse(response=err_msg, emotion="serious", recalledMemories=recalled_ids, sessionId=session_id, error=err_msg)
+            recorded = metrics_registry.record_chat({
+                "status": "error", "provider": provider, "model": "", "stream": False, "cold_start": cold_start,
+                "rag_ms": rag_ms, "model_discovery_ms": model_discovery_ms, "llm_fallback_attempts": fallback_attempts,
+                "llm_total_ms": llm_total_ms, "total_ms": (time.perf_counter() - t_start) * 1000.0,
+                "recalled_count": len(recalled_ids), "lang": req_lang,
+            })
+            return ChatResponse(response=err_msg, emotion="serious", recalledMemories=recalled_ids, sessionId=session_id, error=err_msg, metrics=recorded)
 
     # ------------------------------------------------------------------ streaming (v0.2.2)
     @staticmethod
@@ -891,15 +997,21 @@ class LLMOrchestrator:
             yield {"event": "done", "response": res.model_dump()}
             return
 
+        t_start = time.perf_counter()
+        t_rag0 = time.perf_counter()
         (persona, session_id, history_turns, context_summary, _sys, is_system_event,
          search_query, semantic_matches, recalled_ids, gap_seconds, last_session_topic,
          effective_user_prompt) = self._prepare_context(req)
         system_prompt = self._build_system_prompt(
             req, persona, semantic_matches, search_query, history_turns, context_summary, gap_seconds, last_session_topic
         )
+        rag_ms = (time.perf_counter() - t_rag0) * 1000.0
+        req_lang = (req.lang or "pt").strip().lower()[:2]
 
         is_groq = api_key.startswith("gsk_")
         is_openrouter = api_key.startswith("sk-or-")
+        provider = "groq" if is_groq else ("openrouter" if is_openrouter else "gemini")
+        cold_start = metrics_registry.mark_llm_cold_start(f"{provider}:{api_key[-8:]}")
         allow_fallback = req.allowModelFallback if req.allowModelFallback is not None else True
         preferred = (req.selectedModel or "").strip() if req.selectedModel and req.selectedModel != "offline" else ""
 
@@ -912,10 +1024,17 @@ class LLMOrchestrator:
         pending_ja_queue: List[str] = []
         meta_sent = False
         completed = False
+        recorded_metric = False
+        model_discovery_ms = 0.0
+        fallback_attempts = 0
+        llm_ttft_ms: Optional[float] = None
+        llm_first_sentence_ms: Optional[float] = None
+        llm_total_ms: Optional[float] = None
+        ja_tags_count = 0
 
         def handle(events):
             """Turns splitter events into outgoing events, guaranteeing one meta before the 1st sentence and per-sentence visual shifts."""
-            nonlocal meta_sent, first_emotion, cur_meta, shifted_this_sentence
+            nonlocal meta_sent, first_emotion, cur_meta, shifted_this_sentence, llm_first_sentence_ms, ja_tags_count
             out = []
             for kind, val in events:
                 if kind == "directive":
@@ -941,15 +1060,40 @@ class LLMOrchestrator:
                         cur_meta = infer_sentence_shift(val, len(spoken), cur_meta["emotion"], cur_meta["pose"], cur_meta["camera"])
                     shifted_this_sentence = False
                     spoken.append(val)
+                    if llm_first_sentence_ms is None:
+                        llm_first_sentence_ms = (time.perf_counter() - t_start) * 1000.0
                     sent_payload: Dict[str, Any] = {"event": "sentence", "text": val, "index": len(spoken) - 1, **cur_meta}
                     if pending_ja_queue:
                         sent_payload["ttsText"] = pending_ja_queue.pop(0)
+                        ja_tags_count += 1
                     print(f'[{_ts()}] [StreamChat] sentence[{sent_payload["index"]}] has_ja={"ttsText" in sent_payload} | text="{val}"')
                     out.append(sent_payload)
             return out
 
+        def _record_stream(status: str) -> Dict[str, Any]:
+            nonlocal recorded_metric
+            recorded_metric = True
+            return metrics_registry.record_chat({
+                "status": status,
+                "provider": provider,
+                "model": used_model,
+                "stream": True,
+                "cold_start": cold_start,
+                "rag_ms": rag_ms,
+                "model_discovery_ms": model_discovery_ms,
+                "llm_fallback_attempts": fallback_attempts,
+                "llm_ttft_ms": llm_ttft_ms,
+                "llm_first_sentence_ms": llm_first_sentence_ms,
+                "llm_total_ms": llm_total_ms,
+                "total_ms": (time.perf_counter() - t_start) * 1000.0,
+                "sentences_count": len(spoken),
+                "recalled_count": len(recalled_ids),
+                "canonical_ja_tags": ja_tags_count,
+                "lang": req_lang,
+            })
+
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(35.0)) as client:
+            async with self._llm_client(35.0) as client:
                 if is_groq or is_openrouter:
                     messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
                     body = {"messages": messages, "temperature": 0.85, "max_tokens": 2048,
@@ -961,9 +1105,11 @@ class LLMOrchestrator:
                         if not allow_fallback and preferred:
                             candidates = [preferred]
                         else:
+                            t_disc0 = time.perf_counter()
+                            discovered = await get_groq_candidate_models(client, api_key)
+                            model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
                             candidates = self._order_candidates(
-                                await get_groq_candidate_models(client, api_key),
-                                self.model_cache.get(api_key[-8:]), preferred)
+                                discovered, self.model_cache.get(api_key[-8:]), preferred)
                     else:
                         label, url = "OPENROUTER", "https://openrouter.ai/api/v1/chat/completions"
                         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
@@ -988,14 +1134,20 @@ class LLMOrchestrator:
                     if not allow_fallback and preferred:
                         candidates = [preferred]
                     else:
-                        candidates = self._order_candidates(
-                            await get_candidate_models(client, api_key, self.model_cache), None, preferred)
+                        t_disc0 = time.perf_counter()
+                        discovered = await get_candidate_models(client, api_key, self.model_cache)
+                        model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                        candidates = self._order_candidates(discovered, None, preferred)
                     source = stream_candidates(
                         client, gemini_stream_url,
                         {"Content-Type": "application/json", "x-goog-api-key": api_key},
                         lambda m: payload, candidates, allow_fallback, (503, 429, 404), gemini_delta, "GEMINI")
 
+                t_llm0 = time.perf_counter()
                 async for kind, val in source:
+                    if kind == "fallback":
+                        fallback_attempts += 1
+                        continue
                     if kind == "model":
                         used_model = f"{val} (Groq LPU)" if is_groq else (
                             f"{val.replace(':free', '')} (OpenRouter)" if is_openrouter else val)
@@ -1005,12 +1157,15 @@ class LLMOrchestrator:
                             gemini_model = val
                             self.model_cache[api_key[-8:]] = val
                         continue
+                    if llm_ttft_ms is None:
+                        llm_ttft_ms = (time.perf_counter() - t_llm0) * 1000.0
                     raw += val
                     for out in handle(splitter.feed(val)):
                         yield out
                 for out in handle(splitter.flush()):
                     yield out
                 pending_ja_queue.clear()
+                llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
 
             if not spoken:
                 raise GeminiError(502, "Resposta vazia ou raciocínio interno sem diálogo.")
@@ -1019,28 +1174,33 @@ class LLMOrchestrator:
             response = await self._finalize_chat(
                 req, raw, is_system_event, session_id, recalled_ids, used_model,
                 gemini_model, api_key, is_groq, is_openrouter)
+            response.metrics = _record_stream("ok")
             completed = True
             yield {"event": "done", "response": response.model_dump()}
 
         except GeminiError as e:
             completed = not spoken  # nothing was said: report like /chat does
             err_msg = f"[ERRO {e.code or 'REDE'}] {e.message}"
+            recorded = _record_stream("error")
             if spoken:
                 yield {"event": "error", "message": err_msg}
             else:
                 err = ChatResponse(response=err_msg, emotion="serious", recalledMemories=recalled_ids,
-                                   sessionId=session_id, error=err_msg)
+                                   sessionId=session_id, error=err_msg, metrics=recorded)
                 yield {"event": "done", "response": err.model_dump()}
         except Exception as e:  # noqa: BLE001 - mirrors handle_chat's catch-all
             completed = not spoken
             err_msg = f"[ERRO] {e}"
+            recorded = _record_stream("error")
             if spoken:
                 yield {"event": "error", "message": err_msg}
             else:
                 err = ChatResponse(response=err_msg, emotion="serious", recalledMemories=recalled_ids,
-                                   sessionId=session_id, error=err_msg)
+                                   sessionId=session_id, error=err_msg, metrics=recorded)
                 yield {"event": "done", "response": err.model_dump()}
         finally:
+            if not recorded_metric:
+                _record_stream("aborted")
             # Cut stream (barge-in, network, provider): keep exactly what was said; skip memory/summary.
             if not completed and spoken:
                 memory_store.save_message(session_id, sender="amadeus", content=" ".join(spoken),

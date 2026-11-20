@@ -1,7 +1,10 @@
+import asyncio
 import io
 import re
+import time
+import wave
 from datetime import datetime
-from typing import AsyncGenerator, Tuple, Union, Optional, List
+from typing import Any, AsyncGenerator, Dict, Tuple, Union, Optional, List
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -15,10 +18,76 @@ except ImportError:
 from app.services.rvc.rvc_manager import RVCManager
 from app.services.qwen_tts.qwen_manager import QwenTTSManager
 from app.services.kokoro_tts.kokoro_manager import KokoroTTSManager
+from app.services.metrics import metrics_registry
 
 
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+
+def _estimate_audio_duration_s(content_type: str, total_bytes: int, first_chunk: bytes = b"") -> Optional[float]:
+    if total_bytes <= 0:
+        return None
+    if "L16" in content_type:
+        return total_bytes / 48000.0  # 24kHz * 16-bit mono
+    if "wav" in content_type:
+        try:
+            with wave.open(io.BytesIO(first_chunk), "rb") as wf:
+                sr = wf.getframerate()
+                ch = wf.getnchannels()
+                sw = wf.getsampwidth()
+                if sr > 0 and ch > 0 and sw > 0:
+                    data_bytes = max(0, total_bytes - 44)
+                    return data_bytes / float(sr * ch * sw)
+        except Exception:
+            pass
+        return max(0, total_bytes - 44) / 48000.0
+    return None
+
+
+def _instrument_tts_stream(
+    gen: AsyncGenerator[bytes, None],
+    content_type: str,
+    t0: float,
+    meta: Dict[str, Any],
+) -> AsyncGenerator[bytes, None]:
+    async def _wrapped() -> AsyncGenerator[bytes, None]:
+        ttfb_ms: Optional[float] = None
+        total_bytes = 0
+        first_chunk = b""
+        aborted = False
+        status = "ok"
+        try:
+            async for chunk in gen:
+                if not chunk:
+                    continue
+                if ttfb_ms is None:
+                    ttfb_ms = (time.perf_counter() - t0) * 1000.0
+                    first_chunk = chunk[:512]
+                total_bytes += len(chunk)
+                yield chunk
+        except (asyncio.CancelledError, GeneratorExit):
+            aborted = True
+            raise
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            total_ms = (time.perf_counter() - t0) * 1000.0
+            dur_s = _estimate_audio_duration_s(content_type, total_bytes, first_chunk)
+            speed_x = (dur_s / (total_ms / 1000.0)) if (dur_s and total_ms > 0) else None
+            metrics_registry.record_tts({
+                **meta,
+                "status": status,
+                "ttfb_ms": ttfb_ms if ttfb_ms is not None else meta.get("handshake_ms"),
+                "total_ms": total_ms,
+                "bytes_sent": total_bytes,
+                "audio_duration_s": dur_s,
+                "realtime_speed_x": speed_x,
+                "aborted": aborted,
+            })
+
+    return _wrapped()
 
 
 def check_edge_tts_available() -> bool:
@@ -177,6 +246,7 @@ async def synthesize_speech(
     allow_fallback: bool = True,
     allowed_fallbacks: Optional[List[str]] = None,
     lang: Optional[str] = "pt",
+    metrics_out: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, AsyncGenerator[bytes, None]]:
     """
     Modular speech orchestrator with user-controlled strict mode vs. sequential fallback:
@@ -185,21 +255,70 @@ async def synthesize_speech(
     3. Kokoro-TTS (Lightweight 82M offline local synthesis if 'kokoro' allowed)
     4. Edge-TTS (Neural cloud fallback if 'edge_rvc' allowed)
     """
+    t0 = time.perf_counter()
     clean_text = clean_speech_text(text)
     if not clean_text:
         raise HTTPException(status_code=400, detail="Texto não pode ser vazio para síntese de voz.")
 
-    active_engine = (engine or "qwen3").lower()
+    requested_engine = (engine or "qwen3").lower()
+    active_engine = requested_engine
     permitted = set(allowed_fallbacks if allowed_fallbacks is not None else ["qwen_local", "kokoro", "edge_rvc"])
+    fallback_chain: List[str] = []
+
+    qwen_lang = resolve_qwen_language(lang, clean_text)
+    eff_lang_code = "ja" if qwen_lang == "Japanese" else ("en" if qwen_lang == "English" else "pt")
+
+    def _finish(
+        content_type: str,
+        gen: AsyncGenerator[bytes, None],
+        engine_used: str,
+        mode_used: str,
+        is_stream: bool,
+    ) -> Tuple[str, AsyncGenerator[bytes, None]]:
+        handshake_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+        fallback_used = bool(fallback_chain) or (engine_used != requested_engine)
+        meta: Dict[str, Any] = {
+            "requested_engine": requested_engine,
+            "engine_used": engine_used,
+            "mode": mode_used,
+            "stream": is_stream,
+            "fallback_used": fallback_used,
+            "fallback_chain": list(fallback_chain),
+            "handshake_ms": handshake_ms,
+            "chars": len(clean_text),
+            "lang": eff_lang_code,
+        }
+        if metrics_out is not None:
+            metrics_out.update(meta)
+        return content_type, _instrument_tts_stream(gen, content_type, t0, meta)
+
+    def _fail(status_code: int, detail: str, engine_label: str, mode_label: str) -> None:
+        total_ms = (time.perf_counter() - t0) * 1000.0
+        metrics_registry.record_tts({
+            "status": "error",
+            "requested_engine": requested_engine,
+            "engine_used": engine_label,
+            "mode": mode_label,
+            "stream": stream,
+            "fallback_used": bool(fallback_chain),
+            "fallback_chain": list(fallback_chain),
+            "handshake_ms": total_ms,
+            "ttfb_ms": None,
+            "total_ms": total_ms,
+            "bytes_sent": 0,
+            "chars": len(clean_text),
+            "lang": eff_lang_code,
+            "aborted": False,
+        })
+        raise HTTPException(status_code=status_code, detail=detail)
 
     # =========================================================================
     # STEP 1: Qwen3-TTS (Primary)
     # =========================================================================
-    qwen_lang = resolve_qwen_language(lang, clean_text)
-    eff_lang_code = "ja" if qwen_lang == "Japanese" else ("en" if qwen_lang == "English" else "pt")
     if active_engine == "qwen3":
         qwen_text = clean_text_for_tts(text, lang=eff_lang_code)
         primary_err = None
+        eff_qwen_mode = qwen_mode or "remote"
         print(f"[{_ts()}] [OpenAmadeus Voice] Qwen3 Synthesis (lang: {qwen_lang}, mode: {qwen_mode}, stream: {stream}, strict: {not allow_fallback}) | Emotion: '{emotion or 'neutral'}'")
 
         # 1.1 Complete WAV delivery
@@ -210,27 +329,30 @@ async def synthesize_speech(
                     emotion=emotion,
                     custom_instruct=instruct,
                     language=qwen_lang,
-                    qwen_mode=qwen_mode or "remote",
+                    qwen_mode=eff_qwen_mode,
                     qwen_remote_url=qwen_remote_url,
                 )
                 if wav_bytes:
                     async def _wav_generator():
                         yield wav_bytes
-                    return "audio/wav", _wav_generator()
+                    return _finish("audio/wav", _wav_generator(), "qwen3", eff_qwen_mode, False)
             except Exception as e:
                 primary_err = e
                 print(f"[{_ts()}] [OpenAmadeus Voice] Primary Qwen3 ({qwen_mode}) WAV error: {e}")
 
             if not allow_fallback:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"[MODO ESTRITO DE VOZ] Falha no motor Qwen3-TTS ({qwen_mode}): {primary_err or 'Worker inacessível'}. Cascata de fallback desativada.",
+                _fail(
+                    503,
+                    f"[MODO ESTRITO DE VOZ] Falha no motor Qwen3-TTS ({qwen_mode}): {primary_err or 'Worker inacessível'}. Cascata de fallback desativada.",
+                    "qwen3",
+                    eff_qwen_mode,
                 )
 
             # Local fallback for complete WAV (only if permitted)
             if qwen_mode == "remote" and "qwen_local" in permitted:
                 local_url = "http://127.0.0.1:8005"
                 if await QwenTTSManager.is_worker_healthy(local_url):
+                    fallback_chain.append("qwen_local")
                     print(f"[{_ts()}] [OpenAmadeus Voice] Remote Qwen offline, attempting Local Qwen WAV...")
                     try:
                         local_wav = await QwenTTSManager.synthesize(
@@ -243,7 +365,7 @@ async def synthesize_speech(
                         if local_wav:
                             async def _local_wav_gen():
                                 yield local_wav
-                            return "audio/wav", _local_wav_gen()
+                            return _finish("audio/wav", _local_wav_gen(), "qwen_local", "local", False)
                     except Exception as local_err:
                         print(f"[{_ts()}] [OpenAmadeus Voice] Local Qwen WAV fallback error: {local_err}")
 
@@ -255,23 +377,26 @@ async def synthesize_speech(
                     emotion=emotion,
                     custom_instruct=instruct,
                     language=qwen_lang,
-                    qwen_mode=qwen_mode or "remote",
+                    qwen_mode=eff_qwen_mode,
                     qwen_remote_url=qwen_remote_url,
                 )
-                return content_type, stream_gen
+                return _finish(content_type, stream_gen, "qwen3", eff_qwen_mode, True)
             except Exception as e:
                 primary_err = e
                 print(f"[{_ts()}] [OpenAmadeus Voice] Primary Qwen3 ({qwen_mode}) streaming error: {e}")
 
             if not allow_fallback:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"[MODO ESTRITO DE VOZ] Falha no streaming Qwen3-TTS ({qwen_mode}): {primary_err or 'Worker inacessível'}. Cascata de fallback desativada.",
+                _fail(
+                    503,
+                    f"[MODO ESTRITO DE VOZ] Falha no streaming Qwen3-TTS ({qwen_mode}): {primary_err or 'Worker inacessível'}. Cascata de fallback desativada.",
+                    "qwen3",
+                    eff_qwen_mode,
                 )
 
             if qwen_mode == "remote" and "qwen_local" in permitted:
                 local_url = "http://127.0.0.1:8005"
                 if await QwenTTSManager.is_worker_healthy(local_url):
+                    fallback_chain.append("qwen_local")
                     print(f"[{_ts()}] [OpenAmadeus Voice] Remote Qwen offline, attempting Local Qwen stream...")
                     try:
                         content_type, local_stream_gen = await QwenTTSManager.synthesize_stream(
@@ -281,23 +406,27 @@ async def synthesize_speech(
                             language=qwen_lang,
                             qwen_mode="local",
                         )
-                        return content_type, local_stream_gen
+                        return _finish(content_type, local_stream_gen, "qwen_local", "local", True)
                     except Exception as local_err:
                         print(f"[{_ts()}] [OpenAmadeus Voice] Local Qwen fallback error: {local_err}")
 
         # Next cascade step from Qwen3
         if "kokoro" in permitted and eff_lang_code == "pt":
+            fallback_chain.append("kokoro")
             print(f"[{_ts()}] [OpenAmadeus Voice] Qwen3 offline; cascading to Kokoro-TTS + RVC.")
             active_engine = "kokoro"
             use_rvc = True
         elif "edge_rvc" in permitted:
+            fallback_chain.append("edge_rvc")
             print(f"[{_ts()}] [OpenAmadeus Voice] Qwen3 offline; cascading to Edge-TTS + RVC.")
             active_engine = "edge_rvc"
             use_rvc = True
         else:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Falha no Qwen3-TTS ({primary_err or 'offline'}) e nenhum motor secundário foi autorizado na fila de reserva.",
+            _fail(
+                503,
+                f"Falha no Qwen3-TTS ({primary_err or 'offline'}) e nenhum motor secundário foi autorizado na fila de reserva.",
+                "qwen3",
+                eff_qwen_mode,
             )
 
     # =========================================================================
@@ -305,12 +434,15 @@ async def synthesize_speech(
     # =========================================================================
     if active_engine == "kokoro" and eff_lang_code != "pt":
         if allow_fallback and "edge_rvc" in permitted:
+            fallback_chain.append("edge_rvc")
             print(f"[{_ts()}] [OpenAmadeus Voice] Kokoro-TTS supports PT-BR only; skipping to Edge-TTS for lang '{eff_lang_code}'.")
             active_engine = "edge_rvc"
         else:
-            raise HTTPException(
-                status_code=503,
-                detail="Kokoro-TTS local suporta apenas Português (pf_dora) nesta configuração.",
+            _fail(
+                503,
+                "Kokoro-TTS local suporta apenas Português (pf_dora) nesta configuração.",
+                "kokoro",
+                "local",
             )
 
     if active_engine == "kokoro":
@@ -335,17 +467,20 @@ async def synthesize_speech(
                     if converted_wav:
                         async def _kokoro_rvc_gen():
                             yield converted_wav
-                        return "audio/wav", _kokoro_rvc_gen()
+                        return _finish("audio/wav", _kokoro_rvc_gen(), "kokoro_rvc", "local", False)
                     if not allow_fallback:
-                        raise HTTPException(
-                            status_code=503,
-                            detail=f"[MODO ESTRITO DE VOZ] Conversão de timbre RVC ({rvc_model}) falhou sobre o áudio Kokoro.",
+                        _fail(
+                            503,
+                            f"[MODO ESTRITO DE VOZ] Conversão de timbre RVC ({rvc_model}) falhou sobre o áudio Kokoro.",
+                            "kokoro_rvc",
+                            "local",
                         )
+                    fallback_chain.append("kokoro_base")
                     print(f"[{_ts()}] [OpenAmadeus Voice] RVC conversion failed; serving base Kokoro-TTS audio.")
 
                 async def _kokoro_gen():
                     yield kokoro_wav
-                return "audio/wav", _kokoro_gen()
+                return _finish("audio/wav", _kokoro_gen(), "kokoro", "local", False)
         except HTTPException:
             raise
         except Exception as e:
@@ -353,11 +488,14 @@ async def synthesize_speech(
             print(f"[{_ts()}] [OpenAmadeus Voice] Kokoro-TTS failed ({e}).")
 
         if not allow_fallback or "edge_rvc" not in permitted:
-            raise HTTPException(
-                status_code=503,
-                detail=f"[MODO ESTRITO DE VOZ] Falha no motor Kokoro-TTS: {kokoro_err or 'Modelo indisponível'}.",
+            _fail(
+                503,
+                f"[MODO ESTRITO DE VOZ] Falha no motor Kokoro-TTS: {kokoro_err or 'Modelo indisponível'}.",
+                "kokoro",
+                "local",
             )
 
+        fallback_chain.append("edge_rvc")
         active_engine = "edge_rvc"
 
     # =========================================================================
@@ -368,7 +506,7 @@ async def synthesize_speech(
     print(f"[{_ts()}] [OpenAmadeus Voice] Edge-TTS Synthesis (RVC: {use_rvc}, voice: {voice}) | Text: \"{clean_text}\"")
     try:
         if not use_rvc:
-            return "audio/mpeg", generate_edge_tts_stream(clean_text, voice=voice, rate=rate, pitch=pitch)
+            return _finish("audio/mpeg", generate_edge_tts_stream(clean_text, voice=voice, rate=rate, pitch=pitch), "edge", "cloud", True)
 
         edge_chunks = []
         async for chunk in generate_edge_tts_stream(clean_text, voice=voice, rate=rate, pitch=pitch):
@@ -376,7 +514,7 @@ async def synthesize_speech(
 
         edge_audio_bytes = b"".join(edge_chunks)
         if not edge_audio_bytes:
-            raise HTTPException(status_code=500, detail="Falha ao gerar áudio base Edge-TTS.")
+            _fail(500, "Falha ao gerar áudio base Edge-TTS.", "edge_rvc", "cloud")
 
         converted_wav = await RVCManager.convert(
             audio_bytes=edge_audio_bytes,
@@ -388,23 +526,23 @@ async def synthesize_speech(
         if converted_wav:
             async def _wav_gen():
                 yield converted_wav
-            return "audio/wav", _wav_gen()
+            return _finish("audio/wav", _wav_gen(), "edge_rvc", "hybrid", False)
 
         if not allow_fallback:
-            raise HTTPException(
-                status_code=503,
-                detail=f"[MODO ESTRITO DE VOZ] O worker RVC ({rvc_model}) não respondeu e o fallback para voz sem timbre está bloqueado.",
+            _fail(
+                503,
+                f"[MODO ESTRITO DE VOZ] O worker RVC ({rvc_model}) não respondeu e o fallback para voz sem timbre está bloqueado.",
+                "edge_rvc",
+                "hybrid",
             )
 
+        fallback_chain.append("edge_base")
         async def _edge_fallback():
             yield edge_audio_bytes
-        return "audio/mpeg", _edge_fallback()
+        return _finish("audio/mpeg", _edge_fallback(), "edge", "cloud", False)
 
     except HTTPException:
         raise
     except Exception as edge_err:
         print(f"[OpenAmadeus Voice] Edge-TTS error: {edge_err}")
-        raise HTTPException(
-            status_code=502,
-            detail=f"Falha na síntese de voz: {str(edge_err)}"
-        )
+        _fail(502, f"Falha na síntese de voz: {str(edge_err)}", "edge_rvc" if use_rvc else "edge", "cloud")

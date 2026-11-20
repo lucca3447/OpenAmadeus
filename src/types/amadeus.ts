@@ -152,3 +152,95 @@ export interface VoiceEngineStatus {
   active_engine: string;
 }
 
+export interface ChatTurnMetrics {
+  ts?: number;
+  status: 'ok' | 'error' | 'aborted' | string;
+  provider: string;
+  model: string;
+  stream: boolean;
+  cold_start: boolean;
+  rag_ms: number | null;
+  model_discovery_ms: number | null;
+  llm_fallback_attempts: number;
+  llm_ttft_ms: number | null;
+  llm_first_sentence_ms: number | null;
+  llm_total_ms: number | null;
+  total_ms: number | null;
+  sentences_count: number;
+  recalled_count: number;
+  canonical_ja_tags: number;
+  lang: string;
+}
+
+export interface AudioTurnMetrics {
+  ttsEngine?: string;
+  ttsMode?: string;
+  ttsFallback?: boolean;
+  ttsHandshakeMs?: number | null;
+  ttsTtfbMs?: number | null;
+  underruns: number;
+}
+
+export interface ClientTurnTelemetry {
+  timestamp: number;
+  e2eTtfaMs: number | null;
+  sttMs: number | null;
+  backend?: ChatTurnMetrics | null;
+  audio?: AudioTurnMetrics | null;
+}
+
+export interface MetricSeriesSummary {
+  count: number;
+  avg: number | null;
+  p50: number | null;
+  p95: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface BackendMetricsSnapshot {
+  uptimeSeconds: number;
+  windowSize: number;
+  counters: {
+    chat_total: number;
+    chat_errors: number;
+    chat_aborts: number;
+    llm_fallbacks: number;
+    tts_total: number;
+    tts_errors: number;
+    tts_aborts: number;
+    tts_fallbacks: number;
+    chat_error_rate: number;
+    tts_fallback_rate: number;
+  };
+  chat: {
+    last: ChatTurnMetrics | null;
+    rag_ms: MetricSeriesSummary;
+    model_discovery_ms: MetricSeriesSummary;
+    llm_ttft_ms: MetricSeriesSummary;
+    llm_first_sentence_ms: MetricSeriesSummary;
+    llm_total_ms: MetricSeriesSummary;
+    total_ms: MetricSeriesSummary;
+    cold_vs_warm: {
+      cold_count: number;
+      cold_avg_total_ms: number | null;
+      cold_avg_discovery_ms: number | null;
+      warm_count: number;
+      warm_avg_total_ms: number | null;
+      warm_avg_discovery_ms: number | null;
+    };
+  };
+  tts: {
+    last: Record<string, any> | null;
+    handshake_ms: MetricSeriesSummary;
+    ttfb_ms: MetricSeriesSummary;
+    total_ms: MetricSeriesSummary;
+    realtime_speed_x: MetricSeriesSummary;
+    engines: Record<string, number>;
+  };
+  recent: {
+    chat: ChatTurnMetrics[];
+    tts: Record<string, any>[];
+  };
+}
+

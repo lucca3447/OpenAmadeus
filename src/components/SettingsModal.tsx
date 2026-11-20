@@ -26,10 +26,13 @@ import {
   LLMFallbackSettings,
   TtsFallbackEngine,
   AppLanguage,
+  ClientTurnTelemetry,
+  BackendMetricsSnapshot,
+  VoiceEngineStatus,
 } from '../types/amadeus';
 import { SpeechService } from '../services/speechService';
 import { AIService } from '../services/aiService';
-import { BackendService } from '../services/backendService';
+import { BackendService, BackendHealth } from '../services/backendService';
 import { getBcp47Lang, getUiText, normalizeAppLang } from '../i18n';
 
 interface SettingsModalProps {
@@ -49,6 +52,8 @@ interface SettingsModalProps {
   lang?: string;
   uiLang?: AppLanguage;
   onChangeUiLang?: (lang: AppLanguage) => void;
+  lastTurnTelemetry?: ClientTurnTelemetry | null;
+  turnTelemetryHistory?: ClientTurnTelemetry[];
 }
 
 const CAPSULE_SECTIONS: { id: SettingsSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -137,6 +142,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   lang,
   uiLang,
   onChangeUiLang,
+  lastTurnTelemetry,
+  turnTelemetryHistory = [],
 }) => {
   const ui = getUiText(uiLang || lang);
   const t = ui.settingsModal;
@@ -156,6 +163,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [qwenPingStatus, setQwenPingStatus] = useState<QwenWorkerStatus | null>(null);
   const [isPinging, setIsPinging] = useState(false);
   const [availableRvcModels, setAvailableRvcModels] = useState<string[]>(['KurisuRVCv147']);
+  const [backendMetrics, setBackendMetrics] = useState<BackendMetricsSnapshot | null>(null);
+  const [diagHealth, setDiagHealth] = useState<BackendHealth | null>(null);
+  const [diagVoice, setDiagVoice] = useState<VoiceEngineStatus | null>(null);
+  const [isRunningDiag, setIsRunningDiag] = useState(false);
+
+  const handleRunDiagnostics = async () => {
+    setIsRunningDiag(true);
+    const remoteUrl = voiceSettings.qwenMode === 'local' ? undefined : voiceSettings.qwenRemoteUrl;
+    const [m, h, v] = await Promise.all([
+      BackendService.getMetrics(),
+      BackendService.checkHealth(),
+      BackendService.getVoiceStatus(remoteUrl),
+    ]);
+    setBackendMetrics(m);
+    setDiagHealth(h);
+    setDiagVoice(v);
+    setIsRunningDiag(false);
+  };
+
+  const handleResetMetrics = async () => {
+    await BackendService.resetMetrics();
+    const m = await BackendService.getMetrics();
+    setBackendMetrics(m);
+  };
+
+  useEffect(() => {
+    if (isOpen && activeSection === 'system') {
+      BackendService.getMetrics().then(setBackendMetrics);
+    }
+  }, [isOpen, activeSection]);
 
   useEffect(() => {
     if (isOpen && initialSection) {
@@ -1455,6 +1492,149 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* ==================== SECTION 5: SYSTEM & ARCHITECTURE ==================== */}
             {activeSection === 'system' && (
               <div className="space-y-4">
+                {/* Live Latency Telemetry & Diagnostics */}
+                <div className="p-4 border border-orange-500/40 bg-black/75 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-orange-400 shrink-0" />
+                      <h3 className="engraved-serif text-xs font-bold text-amber-100">
+                        {t.systemSec.telemetryTitle}
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRunDiagnostics}
+                        disabled={isRunningDiag}
+                        className="copper-capsule px-2.5 py-1 flex items-center gap-1.5 text-[10px] font-bold text-amber-200 hover:text-white disabled:opacity-50"
+                      >
+                        {isRunningDiag ? <Loader2 className="w-3 h-3 animate-spin text-orange-400" /> : <Zap className="w-3 h-3 text-orange-400" />}
+                        <span>{isRunningDiag ? t.systemSec.runningDiagBtn : t.systemSec.runDiagBtn}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetMetrics}
+                        className="px-2 py-1 border border-zinc-700 bg-zinc-900 text-[10px] font-mono text-zinc-300 hover:text-white hover:border-orange-500/50"
+                      >
+                        {t.systemSec.resetMetricsBtn}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Last Turn Waterfall */}
+                  {lastTurnTelemetry ? (() => {
+                    const b = lastTurnTelemetry.backend;
+                    const a = lastTurnTelemetry.audio;
+                    const total = lastTurnTelemetry.e2eTtfaMs ?? b?.total_ms ?? 0;
+                    const stages = [
+                      { label: 'STT (Whisper)', ms: lastTurnTelemetry.sttMs, color: 'bg-sky-400' },
+                      { label: 'RAG / ChromaDB', ms: b?.rag_ms ?? null, color: 'bg-emerald-400' },
+                      { label: 'Model Discovery', ms: b?.model_discovery_ms ?? null, color: 'bg-amber-400' },
+                      { label: 'LLM TTFT', ms: b?.llm_ttft_ms ?? null, color: 'bg-orange-400' },
+                      { label: 'LLM 1ª Frase', ms: b?.llm_first_sentence_ms ?? null, color: 'bg-orange-500' },
+                      { label: 'TTS TTFB', ms: a?.ttsTtfbMs ?? null, color: 'bg-purple-400' },
+                    ].filter((s) => s.ms != null);
+                    const scaleMax = Math.max(total || 1, ...stages.map((s) => s.ms || 0), 100);
+                    return (
+                      <div className="space-y-2 pt-1 border-t border-amber-900/30">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-amber-200 font-bold">E2E TTFA: {lastTurnTelemetry.e2eTtfaMs ?? '-'}ms</span>
+                            {b && (
+                              <span className={`px-1.5 py-0.5 text-[9px] border ${b.cold_start ? 'border-amber-500/60 bg-amber-500/15 text-amber-300' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}>
+                                {b.cold_start ? t.systemSec.coldBadge : t.systemSec.warmBadge}
+                              </span>
+                            )}
+                            {((b?.llm_fallback_attempts || 0) > 0 || a?.ttsFallback) && (
+                              <span className="px-1.5 py-0.5 text-[9px] border border-rose-500/50 bg-rose-500/15 text-rose-300">
+                                {t.systemSec.fallbackBadge}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-zinc-400 text-[10px]">
+                            {b?.model || 'local'} • {a?.ttsEngine || voiceSettings.engine || 'qwen3'} • {t.systemSec.underrunsLabel}: <strong className={a?.underruns ? 'text-rose-400' : 'text-emerald-400'}>{a?.underruns ?? 0}</strong>
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {stages.map((s) => (
+                            <div key={s.label} className="grid grid-cols-[112px_1fr_52px] items-center gap-2 text-[10px] font-mono">
+                              <span className="text-zinc-400 truncate">{s.label}</span>
+                              <div className="h-2 bg-zinc-900 border border-zinc-800 overflow-hidden">
+                                <div className={`h-full ${s.color}`} style={{ width: `${Math.min(100, Math.max(2, ((s.ms || 0) / scaleMax) * 100))}%` }} />
+                              </div>
+                              <span className="text-right text-zinc-200">{Math.round(s.ms || 0)}ms</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })() : (
+                    <p className="text-[11px] text-zinc-400 font-mono">{t.systemSec.noTurnsYet}</p>
+                  )}
+
+                  {/* Aggregated Backend p50/p95 & Cold vs Warm */}
+                  {backendMetrics && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-amber-900/30 text-[10px] font-mono">
+                      <div className="p-2 bg-black/80 border border-zinc-800">
+                        <div className="text-zinc-500">RAG p50 / p95</div>
+                        <div className="text-emerald-300 font-bold">
+                          {backendMetrics.chat.rag_ms.p50 ?? '-'} / {backendMetrics.chat.rag_ms.p95 ?? '-'} ms
+                        </div>
+                      </div>
+                      <div className="p-2 bg-black/80 border border-zinc-800">
+                        <div className="text-zinc-500">Discovery p50 / p95</div>
+                        <div className="text-amber-300 font-bold">
+                          {backendMetrics.chat.model_discovery_ms.p50 ?? '-'} / {backendMetrics.chat.model_discovery_ms.p95 ?? '-'} ms
+                        </div>
+                      </div>
+                      <div className="p-2 bg-black/80 border border-zinc-800">
+                        <div className="text-zinc-500">LLM 1ª Frase p50/p95</div>
+                        <div className="text-orange-300 font-bold">
+                          {backendMetrics.chat.llm_first_sentence_ms.p50 ?? '-'} / {backendMetrics.chat.llm_first_sentence_ms.p95 ?? '-'} ms
+                        </div>
+                      </div>
+                      <div className="p-2 bg-black/80 border border-zinc-800">
+                        <div className="text-zinc-500">TTS TTFB / Speed</div>
+                        <div className="text-purple-300 font-bold">
+                          {backendMetrics.tts.ttfb_ms.p50 ?? '-'}ms / {backendMetrics.tts.realtime_speed_x.p50 ?? '-'}x
+                        </div>
+                      </div>
+                      <div className="col-span-2 sm:col-span-4 flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 bg-zinc-950/90 border border-zinc-800 text-[10px]">
+                        <span className="text-zinc-400">
+                          {t.systemSec.coldVsWarmLabel}:{' '}
+                          <strong className="text-amber-300">{backendMetrics.chat.cold_vs_warm.cold_avg_total_ms ?? '-'}ms</strong>
+                          {' '}vs{' '}
+                          <strong className="text-emerald-300">{backendMetrics.chat.cold_vs_warm.warm_avg_total_ms ?? '-'}ms</strong>
+                          {' '}(Discovery cold: {backendMetrics.chat.cold_vs_warm.cold_avg_discovery_ms ?? '-'}ms)
+                        </span>
+                        <span className="text-zinc-400">
+                          Turnos: {backendMetrics.counters.chat_total} ({turnTelemetryHistory.length} UI) • Erros: {backendMetrics.counters.chat_errors} • Fallbacks LLM/TTS: {backendMetrics.counters.llm_fallbacks}/{backendMetrics.counters.tts_fallbacks} • Aborts: {backendMetrics.counters.chat_aborts + backendMetrics.counters.tts_aborts}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quick Diagnostics Output */}
+                  {(diagHealth || diagVoice) && (
+                    <div className="p-2 bg-zinc-950 border border-amber-900/40 text-[10px] font-mono text-zinc-300 space-y-1">
+                      {diagHealth && (
+                        <div>
+                          Backend: <span className="text-emerald-400 font-bold">{diagHealth.status}</span> ({diagHealth.system}) • ChromaDB: {diagHealth.chromaCount} • Sessões: {diagHealth.totalSessions}
+                        </div>
+                      )}
+                      {diagVoice && (
+                        <div>
+                          Qwen Remoto: <span className={diagVoice.qwen_remote.status === 'ready' ? 'text-emerald-400 font-bold' : 'text-rose-400'}>{diagVoice.qwen_remote.status}</span>
+                          {diagVoice.qwen_remote.ping_ms != null ? ` (${diagVoice.qwen_remote.ping_ms}ms` : ''}
+                          {diagVoice.qwen_remote.vram_allocated_mb != null ? `, ${diagVoice.qwen_remote.vram_allocated_mb}MB VRAM)` : diagVoice.qwen_remote.ping_ms != null ? ')' : ''}
+                          {' '}• Qwen Local: <span className={diagVoice.qwen_local.status === 'ready' ? 'text-emerald-400' : 'text-zinc-500'}>{diagVoice.qwen_local.status}</span>
+                          {' '}• Kokoro: {diagVoice.kokoro_available ? 'OK' : 'OFF'} • RVC: {diagVoice.rvc_available ? diagVoice.rvc_models.join(', ') : 'OFF'}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="p-4 border border-amber-900/50 bg-black/60 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <div>

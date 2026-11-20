@@ -49,6 +49,7 @@ async def stream_candidates(
                     err = GeminiError(res.status_code, f"[{label} • {model}] {err_body}")
                     if allow_fallback and res.status_code in retry_codes:
                         last_err = err
+                        yield ("fallback", f"{model}:{res.status_code}")
                         continue
                     raise err
                 async for chunk in _sse_data(res):
@@ -64,12 +65,14 @@ async def stream_candidates(
             last_err = GeminiError(502, f"[{label} • {model}] Resposta vazia.")
             if not allow_fallback:
                 raise last_err
+            yield ("fallback", f"{model}:empty")
         except httpx.HTTPError as e:
             if started:
                 raise GeminiError(0, f"Conexão com o provedor interrompida: {e}")
             last_err = GeminiError(0, f"Sem conexão com o provedor: {e}")
             if not allow_fallback:
                 raise last_err
+            yield ("fallback", f"{model}:network")
     if last_err:
         raise last_err
     raise GeminiError(502, f"[{label}] Nenhum modelo candidato disponível.")

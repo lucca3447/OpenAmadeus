@@ -1,4 +1,4 @@
-import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
+import { AutonomousEventType, BackendMetricsSnapshot, CameraFraming, CharacterPose, ChatMessage, ChatTurnMetrics, Emotion, MemoryItem, CallSession, QwenWorkerStatus, VoiceEngineStatus } from '../types/amadeus';
 
 export const BACKEND_URL =
   ((import.meta as any).env?.VITE_API_URL as string) || 'http://localhost:8000';
@@ -32,6 +32,7 @@ export interface BackendChatResponse {
     emotionalWeight?: string;
   };
   error?: string;
+  metrics?: ChatTurnMetrics;
   /** true when the stream was cancelled (barge-in / new message) before any sentence arrived */
   aborted?: boolean;
 }
@@ -408,5 +409,29 @@ export class BackendService {
       // ignore
     }
     return null;
+  }
+
+  /**
+   * Fetches aggregated runtime latency and reliability metrics from backend
+   */
+  static async getMetrics(): Promise<BackendMetricsSnapshot | null> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/metrics`);
+      if (res.ok) {
+        return (await res.json()) as BackendMetricsSnapshot;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  static async resetMetrics(): Promise<boolean> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/metrics/reset`, { method: 'POST' });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 }

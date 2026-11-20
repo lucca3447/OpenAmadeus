@@ -1,13 +1,29 @@
 import re
-from typing import List
+import time
+from typing import Dict, List, Tuple
 import httpx
 from app.core.config import GROQ_FALLBACK_MODELS
 
-async def get_groq_candidate_models(client: httpx.AsyncClient, api_key: str) -> List[str]:
+MODEL_LIST_TTL_SEC = 600.0
+_groq_models_cache: Dict[str, Tuple[float, List[str]]] = {}
+
+
+def clear_groq_model_cache() -> None:
+    _groq_models_cache.clear()
+
+
+async def get_groq_candidate_models(client: httpx.AsyncClient, api_key: str, force: bool = False) -> List[str]:
     """
     Queries Groq's /openai/v1/models endpoint using the user's API key to find
-    which models are currently active, avoiding decommissioned models.
+    which models are currently active, caching the discovered list for 10 minutes.
     """
+    fp = api_key[-8:] if api_key else ""
+    now = time.monotonic()
+    if not force and fp in _groq_models_cache:
+        cached_at, cached_models = _groq_models_cache[fp]
+        if now - cached_at < MODEL_LIST_TTL_SEC:
+            return list(cached_models)
+
     try:
         res = await client.get(
             "https://api.groq.com/openai/v1/models",
@@ -39,6 +55,8 @@ async def get_groq_candidate_models(client: httpx.AsyncClient, api_key: str) -> 
                     return score
 
                 models.sort(key=score_groq, reverse=True)
+                if fp:
+                    _groq_models_cache[fp] = (now, list(models))
                 print(f"[Amadeus Core] Groq active models discovered: {models[:6]}")
                 return models
     except Exception as e:

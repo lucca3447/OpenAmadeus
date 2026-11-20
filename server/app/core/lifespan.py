@@ -1,3 +1,4 @@
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -47,12 +48,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Amadeus Core] Startup status check error: {e}")
 
+    # Prime ONNX embeddings in the background so Turn 1 does not stall waiting for cold model load
+    async def _bg_warmup() -> None:
+        try:
+            ms = await asyncio.to_thread(memory_store.warmup_embeddings)
+            print(f"[Amadeus Core] ChromaDB ONNX embeddings warm in {ms} ms.")
+        except Exception as e:
+            print(f"[Amadeus Core] Embedding warmup skipped: {e}")
+
+    warmup_task = asyncio.create_task(_bg_warmup())
+
     yield
 
     # --- Shutdown ---
+    if not warmup_task.done():
+        warmup_task.cancel()
     try:
+        from app.services.llm.orchestrator import orchestrator
         from app.services.qwen_tts.qwen_manager import QwenTTSManager
         from app.services.rvc.rvc_manager import RVCManager
+        await orchestrator.aclose()
         await QwenTTSManager.shutdown()
         RVCManager.shutdown()
     except Exception as e:

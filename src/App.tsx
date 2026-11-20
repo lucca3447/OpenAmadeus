@@ -12,6 +12,7 @@ import {
   LLMFallbackSettings,
   SettingsSectionId,
   AppLanguage,
+  ClientTurnTelemetry,
 } from './types/amadeus';
 import { MemoryService } from './services/memoryService';
 import {
@@ -154,6 +155,8 @@ export const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [ttfaMs, setTtfaMs] = useState<number | null>(null);
+  const [lastTurnTelemetry, setLastTurnTelemetry] = useState<ClientTurnTelemetry | null>(null);
+  const [turnTelemetryHistory, setTurnTelemetryHistory] = useState<ClientTurnTelemetry[]>([]);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [interimTranscript, setInterimTranscript] = useState<string>('');
   const [micError, setMicError] = useState<string | null>(null);
@@ -492,13 +495,22 @@ export const App: React.FC = () => {
     if (preReaction.camera) setCurrentCamera(preReaction.camera);
 
     // v0.2.2 sentence streaming: the speaker is created BEFORE the request (it stops previous speech/streams)
+    const turnSttMs = SpeechService.consumeLastSttMs();
+    const turnTs = Date.now();
     const speakOpts = buildSpeakOptions();
+    speakOpts.onMetrics = (audioMetrics) => {
+      setLastTurnTelemetry((prev) =>
+        prev && prev.timestamp === turnTs ? { ...prev, audio: audioMetrics } : prev
+      );
+    };
     const speaker: SentenceSpeaker | null =
       voiceSettings.enabled && voiceSettings.autoSpeak ? SpeechService.createSentenceSpeaker(speakOpts) : null;
     const sentAt = performance.now();
     const aiMsgId = newId();
     let streamedAny = false;
     let ttfaLogged = false;
+    let measuredTtfaMs: number | null = null;
+    setLastTurnTelemetry({ timestamp: turnTs, e2eTtfaMs: null, sttMs: turnSttMs, backend: null, audio: { underruns: 0 } });
     let subtitleText = '';
     let accumulatedTtsText = '';
     let fullStreamResponse = '';
@@ -560,7 +572,13 @@ export const App: React.FC = () => {
                 if (!ttfaLogged) {
                   ttfaLogged = true;
                   const ms = Math.round(performance.now() - sentAt);
+                  measuredTtfaMs = ms;
                   setTtfaMs(ms);
+                  setLastTurnTelemetry((prev) =>
+                    prev && prev.timestamp === turnTs
+                      ? { ...prev, e2eTtfaMs: ms, audio: SpeechService.getLastAudioMetrics() }
+                      : prev
+                  );
                   console.info(`[OpenAmadeus] ttfa_ms=${ms}`);
                 }
                 const partialMsg: ChatMessage = {
@@ -600,6 +618,16 @@ export const App: React.FC = () => {
       );
 
       if (result.aborted) return;
+
+      const finalEntry: ClientTurnTelemetry = {
+        timestamp: turnTs,
+        e2eTtfaMs: measuredTtfaMs ?? Math.round(performance.now() - sentAt),
+        sttMs: turnSttMs,
+        backend: result.metrics ?? null,
+        audio: SpeechService.getLastAudioMetrics(),
+      };
+      setLastTurnTelemetry(finalEntry);
+      setTurnTelemetryHistory((prev) => [...prev.slice(-19), finalEntry]);
 
       const finalRecalledIds = result.recalledMemories ?? matched.map((m: MemoryItem) => m.id);
       setRecalledMemoryIds(finalRecalledIds);
@@ -765,6 +793,8 @@ export const App: React.FC = () => {
     }
 
     try {
+      const greetStart = performance.now();
+      const greetTs = Date.now();
       const result = await AIService.queryAmadeus(
         '[ATENDIMENTO]',
         persona,
@@ -776,6 +806,17 @@ export const App: React.FC = () => {
         { ...llmSettings, ...langOpts, systemEvent: 'call_greeting' }
       );
       if (!result.isError && result.response) {
+        const greetMs = Math.round(performance.now() - greetStart);
+        const greetEntry: ClientTurnTelemetry = {
+          timestamp: greetTs,
+          e2eTtfaMs: greetMs,
+          sttMs: null,
+          backend: result.metrics ?? null,
+          audio: SpeechService.getLastAudioMetrics(),
+        };
+        setTtfaMs(greetMs);
+        setLastTurnTelemetry(greetEntry);
+        setTurnTelemetryHistory((prev) => [...prev.slice(-19), greetEntry]);
         const liveMsg: ChatMessage = {
           id: initialMsgId,
           sender: 'amadeus',
@@ -1166,6 +1207,7 @@ export const App: React.FC = () => {
         llmSettings={llmSettings}
         onOpenSettingsWithSection={handleOpenSettingsWithSection}
         ttfaMs={ttfaMs}
+        lastTurnTelemetry={lastTurnTelemetry}
         onChangeUiLang={handleSelectUiLang}
         onChangeConvLang={handleSelectConvLang}
         onChangeLang={handleSelectConvLang}
@@ -1376,6 +1418,8 @@ export const App: React.FC = () => {
             onToggleScanlines={handleToggleScanlines}
             defaultCamera={defaultCamera}
             onSaveDefaultCamera={handleSaveDefaultCamera}
+            lastTurnTelemetry={lastTurnTelemetry}
+            turnTelemetryHistory={turnTelemetryHistory}
           />
         )}
 

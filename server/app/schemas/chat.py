@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 class HistoryTurn(BaseModel):
@@ -37,3 +37,4 @@ class ChatResponse(BaseModel):
     model: Optional[str] = None
     learnedMemory: Optional[LearnedMemoryInfo] = None
     error: Optional[str] = None
+    metrics: Optional[Dict[str, Any]] = None
