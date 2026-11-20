@@ -1,5 +1,6 @@
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,7 +11,7 @@ sys.path.insert(0, str(SERVER_DIR))
 import httpx
 from fastapi.testclient import TestClient
 from main import app
-from app.db.memory_store import memory_store
+from app.db.memory_store import MemoryStore, memory_store
 from app.services.metrics import MetricsRegistry, metrics_registry, percentile
 from app.services.llm import orchestrator as orch_module
 from app.services.qwen_tts.qwen_manager import QwenTTSManager
@@ -206,21 +207,33 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(models_calls, 1)
 
         # Verify embedding is computed only once across search_memories + get_learned_context + search_exemplars
-        orig_ef = memory_store.collection._embedding_function
-        embed_calls = 0
+        # Uses an isolated temporary store so CI environments with empty server/data/ still exercise real queries.
+        with tempfile.TemporaryDirectory(prefix="amadeus_test_metrics_", ignore_cleanup_errors=True) as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = MemoryStore(sqlite_path=tmp_path / "metrics.db", chroma_dir=tmp_path / "memory_db")
+            store.add_memory("research", "Curvas Temporais", "Equações de Kerr e paradoxo.", source="canonical")
+            store.add_memory("user", "Estudo", "Pesquisa física teórica.", source="learned")
+            store.exemplars_collection.upsert(
+                ids=["ex_1"],
+                documents=["Curvas temporais"],
+                metadatas=[{"user": "Curvas temporais", "assistant": "Kerr.", "lang": "pt"}],
+            )
 
-        def counting_ef(texts):
-            nonlocal embed_calls
-            embed_calls += 1
-            return orig_ef(texts)
+            orig_ef = store.collection._embedding_function
+            embed_calls = 0
 
-        memory_store._embed_cache.clear()
-        with patch.object(memory_store.collection, "_embedding_function", side_effect=counting_ef):
-            q = "Pesquisa sobre curvas temporais fechadas"
-            mems = memory_store.search_memories(q, max_kurisu=2, max_learned=2)
-            memory_store.get_learned_context(q, precomputed_learned=[m for m in mems if m.get("source") == "learned"])
-            memory_store.search_exemplars(q, n_results=3, lang="pt")
-        self.assertEqual(embed_calls, 1)
+            def counting_ef(texts):
+                nonlocal embed_calls
+                embed_calls += 1
+                return orig_ef(texts)
+
+            store._embed_cache.clear()
+            with patch.object(store.collection, "_embedding_function", side_effect=counting_ef):
+                q = "Pesquisa sobre curvas temporais fechadas"
+                mems = store.search_memories(q, max_kurisu=2, max_learned=2)
+                store.get_learned_context(q, precomputed_learned=[m for m in mems if m.get("source") == "learned"])
+                store.search_exemplars(q, n_results=1, lang="pt")
+            self.assertEqual(embed_calls, 1)
 
 
 if __name__ == "__main__":
