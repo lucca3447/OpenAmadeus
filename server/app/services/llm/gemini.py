@@ -1,7 +1,15 @@
 import re
-from typing import List, Dict, Optional
+import time
+from typing import List, Dict, Optional, Tuple
 import httpx
 from app.core.config import API_BASE_GEMINI, PREFERRED_GEMINI_MODELS
+
+MODEL_LIST_TTL_SEC = 600.0
+_gemini_usable_cache: Dict[str, Tuple[float, List[str]]] = {}
+
+
+def clear_gemini_model_cache() -> None:
+    _gemini_usable_cache.clear()
 
 class GeminiError(Exception):
     def __init__(self, code: int, message: str):
@@ -39,14 +47,24 @@ async def gemini_request(client: httpx.AsyncClient, method: str, path: str, api_
 
 async def get_candidate_models(client: httpx.AsyncClient, api_key: str, model_cache: Dict[str, str], force: bool = False) -> List[str]:
     fp = api_key[-8:]
-    data = await gemini_request(client, "GET", "models?pageSize=1000", api_key)
-    usable = [
-        m["name"].replace("models/", "")
-        for m in data.get("models", [])
-        if "generateContent" in m.get("supportedGenerationMethods", [])
-        and m["name"].replace("models/", "").startswith("gemini")
-        and not re.search(r"tts|image|audio|live|embedding", m["name"])
-    ]
+    now = time.monotonic()
+    usable: Optional[List[str]] = None
+    if not force and fp in _gemini_usable_cache:
+        cached_at, cached_usable = _gemini_usable_cache[fp]
+        if now - cached_at < MODEL_LIST_TTL_SEC:
+            usable = list(cached_usable)
+
+    if usable is None:
+        data = await gemini_request(client, "GET", "models?pageSize=1000", api_key)
+        usable = [
+            m["name"].replace("models/", "")
+            for m in data.get("models", [])
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+            and m["name"].replace("models/", "").startswith("gemini")
+            and not re.search(r"tts|image|audio|live|embedding", m["name"])
+        ]
+        if usable:
+            _gemini_usable_cache[fp] = (now, list(usable))
 
     if not usable:
         raise GeminiError(404, "Nenhum modelo de chat disponível para esta chave.")

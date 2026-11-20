@@ -12,6 +12,7 @@ router = APIRouter()
 
 @router.post("/tts")
 async def text_to_speech(req: TTSRequest):
+    tts_meta: dict = {}
     content_type, audio_stream = await synthesize_speech(
         text=req.text,
         voice=req.voice or "pt-BR-FranciscaNeural",
@@ -31,11 +32,18 @@ async def text_to_speech(req: TTSRequest):
         allow_fallback=req.allow_fallback if req.allow_fallback is not None else True,
         allowed_fallbacks=req.allowed_fallbacks,
         lang=req.lang or "pt",
+        metrics_out=tts_meta,
     )
     headers = {
         "X-Accel-Buffering": "no",
         "Cache-Control": "no-cache",
     }
+    if tts_meta:
+        headers["X-TTS-Engine"] = str(tts_meta.get("engine_used", "unknown"))
+        headers["X-TTS-Fallback"] = "true" if tts_meta.get("fallback_used") else "false"
+        headers["X-TTS-Mode"] = str(tts_meta.get("mode", "unknown"))
+        if tts_meta.get("handshake_ms") is not None:
+            headers["X-TTS-Handshake-Ms"] = str(tts_meta["handshake_ms"])
     if "L16" in content_type:
         headers["X-Audio-Format"] = "pcm_s16le"
         headers["X-Sample-Rate"] = "24000"

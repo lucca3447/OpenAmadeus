@@ -296,9 +296,10 @@ def check_health(url: str, client: Any = None) -> Dict[str, Any]:
             return {"status_code": resp.status, "data": data}
 
 
-def run_comparison(local_url: Optional[str] = None, remote_url: Optional[str] = None):
+def run_comparison(local_url: Optional[str] = None, remote_url: Optional[str] = None, language: str = "Portuguese"):
     print("=" * 86)
     print("🔬 OpenAmadeus — Diagnóstico & Comparador Acústico: Qwen3-TTS")
+    print(f"Idioma: {language}")
     if local_url and remote_url:
         print("Modo: Comparação A/B")
         print(f"Local:  {local_url}")
@@ -355,7 +356,7 @@ def run_comparison(local_url: Optional[str] = None, remote_url: Optional[str] = 
 
         payload = {
             "text": t_text,
-            "language": "Portuguese",
+            "language": language,
             "instruct": t_instruct,
             "temperature": 0.65,
             "top_p": 0.90,
@@ -406,40 +407,39 @@ def run_comparison(local_url: Optional[str] = None, remote_url: Optional[str] = 
         })
 
     # Imprime Tabela Resumo
-    print("\n" + "=" * 120)
+    print("\n" + "=" * 136)
     if local_url and remote_url:
-        print(f"{'Caso de Teste':<32} | {'LOCAL (Dur/Voz/F0/Gap)':<30} | {'REMOTO (Dur/Voz/F0/Gap)':<30} | {'Veredito Acústico'}")
-        print("=" * 120)
+        print(f"{'Caso de Teste':<28} | {'LOCAL (Lat/Speed/Voz/F0)':<34} | {'REMOTO (Lat/Speed/Voz/F0)':<34} | {'Veredito Acústico'}")
+        print("=" * 136)
         for row in summary_rows:
-            t_name = row["title"][:32]
+            t_name = row["title"][:28]
             loc = row["loc"]
             rem = row["rem"]
             diag = row["diag"]
-            loc_str = (
-                f"{loc['duration_s']}s (voz:{loc['active_s']}s F0:{int(loc['med_f0'])}Hz gap:{loc['max_gap_s']}s)"
-                if loc and loc.get("ok")
-                else f"ERRO: {loc.get('error') if loc else 'off'}"
-            )
-            rem_str = (
-                f"{rem['duration_s']}s (voz:{rem['active_s']}s F0:{int(rem['med_f0'])}Hz gap:{rem['max_gap_s']}s)"
-                if rem and rem.get("ok")
-                else f"ERRO: {rem.get('error') if rem else 'off'}"
-            )
-            print(f"{t_name:<32} | {loc_str:<30} | {rem_str:<30} | {diag}")
+            def _fmt_ab(r):
+                if not r or not r.get("ok"):
+                    return f"ERRO: {r.get('error') if r else 'off'}"
+                spd = round(r["duration_s"] / r["time_s"], 2) if r.get("time_s", 0) > 0 else 0.0
+                lat = f"ttfb:{r['ttfb_s']}s/" if r.get("ttfb_s") is not None else ""
+                return f"{lat}{r['time_s']}s ({spd}x) F0:{int(r['med_f0'])}Hz"
+            print(f"{t_name:<28} | {_fmt_ab(loc):<34} | {_fmt_ab(rem):<34} | {diag}")
     else:
-        print(f"{'Caso de Teste':<35} | {'Duração (Voz Ativa)':<22} | {'Pitch (med/p95 F0)':<20} | {'Max Gap':<9} | {'Veredito Acústico'}")
-        print("=" * 120)
+        print(f"{'Caso de Teste':<32} | {'Lat (TTFB/Tot)':<16} | {'Speed':<7} | {'Dur (Voz)':<17} | {'Pitch (med/p95)':<18} | {'Gap':<6} | {'Veredito'}")
+        print("=" * 136)
         for row in summary_rows:
             r = row["loc"] if local_url else row["rem"]
             if r and r.get("ok"):
-                dur_str = f"{r['duration_s']}s ({r['active_s']}s voz)"
-                f0_str = f"{r['med_f0']} / {r['p95_f0']} Hz"
+                spd = round(r["duration_s"] / r["time_s"], 2) if r.get("time_s", 0) > 0 else 0.0
+                lat_str = f"{r['ttfb_s']}s/{r['time_s']}s" if r.get("ttfb_s") is not None else f"-/{r['time_s']}s"
+                spd_str = f"{spd}x"
+                dur_str = f"{r['duration_s']}s ({r['active_s']}s)"
+                f0_str = f"{r['med_f0']}/{r['p95_f0']}Hz"
                 gap_str = f"{r['max_gap_s']}s"
             else:
-                dur_str, f0_str, gap_str = "-", "-", "-"
-            print(f"{row['title'][:35]:<35} | {dur_str:<22} | {f0_str:<20} | {gap_str:<9} | {row['diag']}")
+                lat_str, spd_str, dur_str, f0_str, gap_str = "-", "-", "-", "-", "-"
+            print(f"{row['title'][:32]:<32} | {lat_str:<16} | {spd_str:<7} | {dur_str:<17} | {f0_str:<18} | {gap_str:<6} | {row['diag']}")
 
-    print("=" * 120)
+    print("=" * 136)
     print("\n💡 DICA DE OURO:")
     print("Abra a pasta dos áudios gerados no Windows Explorer para ouvir com fone de ouvido:")
     print("  explorer server\\data\\comparison_probes\n")
@@ -451,9 +451,10 @@ if __name__ == "__main__":
     parser.add_argument("--remote", type=str, default=None, help="URL pública do Colab/Cloudflare (ex: https://xxx.trycloudflare.com)")
     parser.add_argument("--local-only", action="store_true", help="Executa apenas no worker local ignorando remoto")
     parser.add_argument("--remote-only", action="store_true", help="Executa apenas no worker remoto ignorando local")
+    parser.add_argument("--lang", type=str, default="Portuguese", help="Idioma da síntese (Portuguese, English, Japanese)")
     args = parser.parse_args()
 
     target_local = None if args.remote_only else args.local
     target_remote = None if args.local_only else args.remote
 
-    run_comparison(local_url=target_local, remote_url=target_remote)
+    run_comparison(local_url=target_local, remote_url=target_remote, language=args.lang)

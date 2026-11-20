@@ -1,7 +1,7 @@
 import { BackendService, BACKEND_URL } from './backendService';
 import type { MicVAD } from '@ricky0123/vad-web';
 import { isVoiced } from './vadGate';
-import type { MouthState } from '../types/amadeus';
+import type { AudioTurnMetrics, MouthState } from '../types/amadeus';
 
 export type SpeechCallback = (text: string) => void;
 export type SpeechStateCallback = (isListening: boolean) => void;
@@ -91,6 +91,7 @@ export interface SpeakOptions {
   onStart?: () => void;
   onEnd?: () => void;
   onError?: (errMessage: string) => void;
+  onMetrics?: (metrics: AudioTurnMetrics) => void;
 }
 
 /**
@@ -234,6 +235,18 @@ export class SpeechService {
   private static lipSyncAnimFrame: number | null = null;
   private static simulatedLipSyncTimeout: number | null = null;
   private static activeAbortController: AbortController | null = null;
+  private static lastSttMs: number | null = null;
+  private static lastAudioMetrics: AudioTurnMetrics = { underruns: 0 };
+
+  static consumeLastSttMs(): number | null {
+    const val = this.lastSttMs;
+    this.lastSttMs = null;
+    return val;
+  }
+
+  static getLastAudioMetrics(): AudioTurnMetrics {
+    return { ...this.lastAudioMetrics };
+  }
 
   static isRecognitionSupported(): boolean {
     if (typeof window === 'undefined') return false;
@@ -509,6 +522,7 @@ export class SpeechService {
       formData.append('language', whisperLang);
       formData.append('temperature', '0');
 
+      const tStt0 = performance.now();
       const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}` },
@@ -529,6 +543,7 @@ export class SpeechService {
       const data = await res.json();
       const cleaned = normalizeTranscriptLore(data?.text || '');
       if (cleaned) {
+        this.lastSttMs = Math.round(performance.now() - tStt0);
         this.onResultCb?.(cleaned);
       }
     } catch (err: any) {
@@ -975,6 +990,7 @@ export class SpeechService {
 
     const res = await this.requestNeural(cleanText, options, abortCtrl.signal);
     if (!res) return;
+    this.lastAudioMetrics = { underruns: 0 };
     return this.playNeuralResponse(res, options, abortCtrl.signal);
   }
 
@@ -983,6 +999,7 @@ export class SpeechService {
     const voice = options.neuralVoice || 'pt-BR-FranciscaNeural';
     const rate = options.rate ? `${Math.round((options.rate - 1) * 100)}%` : '+4%';
     const pitch = options.pitch ? `${Math.round((options.pitch - 1) * 20)}Hz` : '+10Hz';
+    const tReq0 = performance.now();
 
     let res: Response;
     try {
@@ -1023,6 +1040,20 @@ export class SpeechService {
       const detail = errJson?.detail || `Erro HTTP ${res.status} no servidor de síntese vocal.`;
       throw new Error(detail);
     }
+    const ttsEngine = res.headers.get('x-tts-engine') || options.engine || 'qwen3';
+    const ttsMode = res.headers.get('x-tts-mode') || options.qwenMode || 'remote';
+    const ttsFallback = res.headers.get('x-tts-fallback') === 'true';
+    const handshakeHeader = res.headers.get('x-tts-handshake-ms');
+    const ttsHandshakeMs = handshakeHeader != null ? parseFloat(handshakeHeader) : null;
+    this.lastAudioMetrics = {
+      ...this.lastAudioMetrics,
+      ttsEngine,
+      ttsMode,
+      ttsFallback,
+      ttsHandshakeMs: Number.isFinite(ttsHandshakeMs) ? ttsHandshakeMs : null,
+      ttsTtfbMs: this.lastAudioMetrics.ttsTtfbMs ?? Math.round(performance.now() - tReq0),
+    };
+    options.onMetrics?.({ ...this.lastAudioMetrics });
     return res;
   }
 
@@ -1194,6 +1225,8 @@ export class SpeechService {
           nextStartTime = now + JITTER_BUFFER_SEC;
         } else if (nextStartTime < now) {
           // Underrun: rebuffer with a real cushion; a 15ms lead just underruns again on every late chunk (stutter)
+          this.lastAudioMetrics.underruns += 1;
+          options.onMetrics?.({ ...this.lastAudioMetrics });
           nextStartTime = now + JITTER_BUFFER_SEC;
         }
 
@@ -1267,6 +1300,7 @@ export class SpeechService {
    */
   static createSentenceSpeaker(options: SpeakOptions): SentenceSpeaker {
     this.stopSpeaking();
+    this.lastAudioMetrics = { underruns: 0 };
     const ctrl = new AbortController();
     this.activeAbortController = ctrl;
     const { signal } = ctrl;

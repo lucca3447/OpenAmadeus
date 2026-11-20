@@ -129,9 +129,12 @@ python -m app.services.qwen_tts.qwen_worker
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/api/health` | `GET` | Core gateway health, ChromaDB vector count, and active subsystem status |
-| `/api/chat` | `POST` | Turn execution with RAG exemplars, emotion parsing, and LLM fallback |
-| `/api/tts` | `POST` | Universal speech synthesis (`audio/L16;rate=24000` PCM stream, `audio/wav`, or `audio/mpeg`) |
+| `/api/health` | `GET` | Core gateway health, uptime, ChromaDB vector count, and active subsystem status |
+| `/api/metrics` | `GET` | Rolling (`p50`/`p95`) chat/RAG/LLM/TTS latency telemetry, cold vs. warm comparison, and counters |
+| `/api/metrics/reset` | `POST` | Resets in-memory runtime metrics counters and rolling buffers |
+| `/api/chat` | `POST` | Turn execution with RAG exemplars, emotion parsing, LLM fallback, and per-turn `metrics` |
+| `/api/chat/stream` | `POST` | Sentence-level SSE streaming (`meta` -> `sentence*` -> `done`) with per-stage timing breakdown |
+| `/api/tts` | `POST` | Universal speech synthesis (`audio/L16;rate=24000` PCM stream, `audio/wav`, or `audio/mpeg`) emitting `X-TTS-*` headers |
 | `/api/voice/status` | `GET` | Real-time diagnostics across Remote Qwen3, Local Qwen3 (`:8005`), Kokoro, and RVC v2 |
 | `/api/voice/ping` | `POST` | Probes Qwen3-TTS worker `/health` and measures round-trip latency + VRAM |
 | `/api/voice/models` | `GET` | Lists discovered RVC checkpoints, Kokoro voices, and Edge-TTS voices |
@@ -140,9 +143,18 @@ python -m app.services.qwen_tts.qwen_worker
 
 ---
 
-## 🧪 Automated Testing
+## 🧪 Automated Testing & Benchmarks
 
 Execute the backend test suite:
 ```bash
 python -m unittest discover -s tests -p "test_*.py"
+```
+
+Run the unified latency & functioning benchmark CLI (writes JSON + Markdown reports to `server/data/benchmarks/`):
+```bash
+# Deterministic offline suite (health, RAG p50/p95 & hit rate, offline chat/SSE, metrics API)
+python scripts/benchmark_amadeus.py --offline
+
+# Live E2E suite (cold vs. warm LLM + remote/local Qwen3-TTS streaming, acoustic DSP & barge-in)
+python scripts/benchmark_amadeus.py --live --in-process --api-key "<KEY>" --qwen-url "https://<tunnel>.trycloudflare.com"
 ```

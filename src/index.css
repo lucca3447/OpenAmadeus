@@ -351,3 +351,30 @@
 .animate-fadeOutQuick {
   animation: amadeus-fade-out 200ms ease-out forwards;
 }
+
+/* Native Setup Modal Dialog (Top-Layer + Scroll Containment) */
+dialog.amadeus-modal-dialog {
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+}
+
+dialog.amadeus-modal-dialog[open] {
+  display: flex;
+}
+
+dialog.amadeus-modal-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.amadeus-modal-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}

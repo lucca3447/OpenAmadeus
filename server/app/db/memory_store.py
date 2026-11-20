@@ -1,8 +1,10 @@
+from collections import OrderedDict
 import hashlib
 import os
 import re
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from contextlib import contextmanager
@@ -28,8 +30,42 @@ class MemoryStore:
         self.sqlite_path = sqlite_path
         self.chroma_dir = chroma_dir
         self._canonical_keywords: Dict[str, List[str]] = {}
+        self._embed_lock = threading.Lock()
+        self._embed_cache: OrderedDict[str, List[float]] = OrderedDict()
         self._init_sqlite()
         self._init_chroma()
+
+    def _embed_query(self, query: str) -> Optional[List[float]]:
+        """Computes the ChromaDB query embedding once and reuses it across memory + exemplar queries."""
+        key = (query or "").strip()
+        if not key:
+            return None
+        with self._embed_lock:
+            cached = self._embed_cache.get(key)
+            if cached is not None:
+                self._embed_cache.move_to_end(key)
+                return cached
+            ef = getattr(self.collection, "_embedding_function", None)
+            if ef is None:
+                return None
+            try:
+                raw = ef([key])
+                if not raw:
+                    return None
+                vec = raw[0]
+                vec_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+                self._embed_cache[key] = vec_list
+                if len(self._embed_cache) > 32:
+                    self._embed_cache.popitem(last=False)
+                return vec_list
+            except Exception:
+                return None
+
+    def warmup_embeddings(self) -> float:
+        """Primes the ONNX embedding model at server boot so Turn 1 avoids the cold-load stall."""
+        t0 = time.perf_counter()
+        self._embed_query("amadeus warmup")
+        return round((time.perf_counter() - t0) * 1000.0, 1)
 
     @contextmanager
     def _conn(self):
@@ -164,14 +200,24 @@ class MemoryStore:
             return []
 
         limit = min(n_results, count)
-        query_kwargs: Dict[str, Any] = {"query_texts": [query], "n_results": limit}
+        query_vec = self._embed_query(query)
+        query_kwargs: Dict[str, Any] = (
+            {"query_embeddings": [query_vec], "n_results": limit}
+            if query_vec is not None
+            else {"query_texts": [query], "n_results": limit}
+        )
         if lang:
             query_kwargs["where"] = {"lang": lang.strip().lower()[:2]}
 
         try:
             results = self.exemplars_collection.query(**query_kwargs)
         except Exception:
-            results = self.exemplars_collection.query(query_texts=[query], n_results=limit)
+            fallback_kwargs: Dict[str, Any] = (
+                {"query_embeddings": [query_vec], "n_results": limit}
+                if query_vec is not None
+                else {"query_texts": [query], "n_results": limit}
+            )
+            results = self.exemplars_collection.query(**fallback_kwargs)
 
         matched: List[Dict[str, str]] = []
         if results and results.get("metadatas") and len(results["metadatas"]) > 0:
@@ -297,18 +343,29 @@ class MemoryStore:
             ]
             self.collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
-    def _query_memory_group(self, query: str, where_filter: Dict[str, Any], group_limit: int, max_distance: float) -> List[Dict[str, Any]]:
+    def _query_memory_group(
+        self,
+        query: str,
+        where_filter: Dict[str, Any],
+        group_limit: int,
+        max_distance: float,
+        query_embedding: Optional[List[float]] = None,
+    ) -> List[Dict[str, Any]]:
         if group_limit <= 0:
             return []
         group_ids = (self.collection.get(where=where_filter, include=[]) or {}).get("ids") or []
         if not group_ids:
             return []
 
-        results = self.collection.query(
-            query_texts=[query],
-            n_results=min(group_limit, len(group_ids)),
-            where=where_filter
-        )
+        q_kwargs: Dict[str, Any] = {
+            "n_results": min(group_limit, len(group_ids)),
+            "where": where_filter,
+        }
+        if query_embedding is not None:
+            q_kwargs["query_embeddings"] = [query_embedding]
+        else:
+            q_kwargs["query_texts"] = [query]
+        results = self.collection.query(**q_kwargs)
 
         matched: List[Dict[str, Any]] = []
         if results and results.get("ids") and len(results["ids"]) > 0:
@@ -353,14 +410,20 @@ class MemoryStore:
             max_kurisu = n_results
             max_learned = n_results
 
-        kurisu_matches = self._query_memory_group(query, {"source": {"$ne": "learned"}}, max_kurisu, max_distance)
-        learned_matches = self._query_memory_group(query, {"source": "learned"}, max_learned, max_distance)
+        query_vec = self._embed_query(query)
+        kurisu_matches = self._query_memory_group(query, {"source": {"$ne": "learned"}}, max_kurisu, max_distance, query_embedding=query_vec)
+        learned_matches = self._query_memory_group(query, {"source": "learned"}, max_learned, max_distance, query_embedding=query_vec)
 
         combined = kurisu_matches + learned_matches
         combined.sort(key=lambda m: m["distance"])
         return combined
 
-    def get_learned_context(self, query: str, limit: int = 12) -> List[Dict[str, Any]]:
+    def get_learned_context(
+        self,
+        query: str,
+        limit: int = 12,
+        precomputed_learned: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Operator profile: returns up to `limit` most recent learned facts from SQLite
         plus any semantic learned matches within MEMORY_MAX_DISTANCE, deduplicated.
@@ -385,11 +448,12 @@ class MemoryStore:
             if r["title"] and r["content"]
         ]
         seen = {m["id"] for m in recent}
-        extra = [
-            m
-            for m in self._query_memory_group(query, {"source": "learned"}, 2, MEMORY_MAX_DISTANCE)
-            if m["id"] not in seen
-        ]
+        semantic_learned = (
+            precomputed_learned
+            if precomputed_learned is not None
+            else self._query_memory_group(query, {"source": "learned"}, 2, MEMORY_MAX_DISTANCE, query_embedding=self._embed_query(query))
+        )
+        extra = [m for m in semantic_learned if m["id"] not in seen]
         return recent + extra
 
     def add_memory(self, category: str, title: str, content: str, emotional_weight: str = "Factual", source: str = "learned") -> Dict[str, Any]:

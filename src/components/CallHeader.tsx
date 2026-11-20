@@ -11,10 +11,11 @@ import {
   Volume2,
   Mic,
   Sliders,
+  Activity,
 } from 'lucide-react';
 import { AIStatus } from '../services/aiService';
 import { BackendHealth } from '../services/backendService';
-import { AppLanguage, LLMFallbackSettings, SettingsSectionId, VoiceSettings } from '../types/amadeus';
+import { AppLanguage, ClientTurnTelemetry, LLMFallbackSettings, SettingsSectionId, VoiceSettings } from '../types/amadeus';
 import { getUiText, normalizeAppLang } from '../i18n';
 
 interface CallHeaderProps {
@@ -34,6 +35,7 @@ interface CallHeaderProps {
   llmSettings?: LLMFallbackSettings;
   onOpenSettingsWithSection?: (section: SettingsSectionId) => void;
   ttfaMs?: number | null;
+  lastTurnTelemetry?: ClientTurnTelemetry | null;
   lang?: string;
   uiLang?: AppLanguage;
   convLang?: AppLanguage;
@@ -60,6 +62,7 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
   llmSettings,
   onOpenSettingsWithSection,
   ttfaMs,
+  lastTurnTelemetry,
   lang,
   uiLang,
   convLang,
@@ -219,14 +222,46 @@ export const CallHeader: React.FC<CallHeaderProps> = ({
           >
             {isTtsStrict ? 'Estrito' : 'Cascata'}
           </span>
-          {ttfaMs != null && (
-            <span
-              title={t.ttfaTitle}
-              className="text-[9px] px-1.5 py-0.2 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-            >
-              {ttfaMs}ms
-            </span>
-          )}
+          {ttfaMs != null && (() => {
+            const b = lastTurnTelemetry?.backend;
+            const a = lastTurnTelemetry?.audio;
+            const tone =
+              ttfaMs < 1200
+                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                : ttfaMs <= 2500
+                  ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+                  : 'border-rose-500/40 bg-rose-500/15 text-rose-300';
+            const parts = [
+              `${t.ttfaTitle}: ${ttfaMs}ms`,
+              lastTurnTelemetry?.sttMs != null ? `STT ${lastTurnTelemetry.sttMs}ms` : null,
+              b?.rag_ms != null ? `RAG ${b.rag_ms}ms` : null,
+              b?.model_discovery_ms != null && b.model_discovery_ms > 0 ? `Discovery ${b.model_discovery_ms}ms` : null,
+              b?.llm_first_sentence_ms != null ? `LLM 1ª ${b.llm_first_sentence_ms}ms` : null,
+              a?.ttsTtfbMs != null ? `TTS ${a.ttsTtfbMs}ms` : null,
+              a?.underruns ? `Underruns ${a.underruns}` : null,
+            ].filter(Boolean);
+            return (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenSettingsWithSection?.('system');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.stopPropagation();
+                    onOpenSettingsWithSection?.('system');
+                  }
+                }}
+                title={parts.join(' • ')}
+                className={`text-[9px] px-1.5 py-0.2 rounded border inline-flex items-center gap-1 hover:brightness-125 ${tone}`}
+              >
+                <Activity className="w-2.5 h-2.5" />
+                {ttfaMs}ms
+              </span>
+            );
+          })()}
         </button>
 
         {/* Whisper STT Subsystem Pill */}

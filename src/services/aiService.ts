@@ -1,4 +1,4 @@
-import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
+import { AutonomousEventType, CameraFraming, CharacterPose, ChatMessage, ChatTurnMetrics, Emotion, MemoryItem, PersonaProfile } from '../types/amadeus';
 import { KURISU_PERSONA } from '../data/personas/kurisu';
 import { BackendService, type ChatStreamHandlers } from './backendService';
 import { MemoryService } from './memoryService';
@@ -211,6 +211,7 @@ export interface AIResult {
   decommissionNotice?: string;
   /** stream cancelled before any sentence (barge-in / newer message) */
   aborted?: boolean;
+  metrics?: ChatTurnMetrics;
 }
 
 /** Error from the Gemini/Groq/OpenRouter API, carrying the HTTP status (0 = network / empty response). */
@@ -1060,6 +1061,7 @@ export class AIService {
           isError: Boolean(backendRes.error),
           learnedMemory: backendRes.learnedMemory,
           sessionId: backendRes.sessionId,
+          metrics: backendRes.metrics,
         };
       } catch (err) {
         console.warn('[OpenAmadeus] Local Python Backend failed, falling back to browser-mode:', err);

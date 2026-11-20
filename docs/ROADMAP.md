@@ -78,7 +78,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🟢 `v0.3.1`: Streaming Sync, Local Hardening, Docker/Env Readiness & CI (Completed — Current)
+### 🟢 `v0.3.1`: Streaming Sync, Local Hardening, Docker/Env Readiness & CI (Completed)
 *Focus: End-to-end streaming polish, local security hardening, Docker/environment reliability, and clean structural foundations for `v0.4.0` multimodal vision and `v0.5.0` Tauri v2 desktop.*
 1. ✅ **Streaming Subtitle, Lip-Sync & Canonical JP Alignment**:
    - Preserved progressive typing across multi-sentence responses (`SubtitleBox.tsx`), cleared `isProcessing` on first audible sentence, guarded full history persistence on mid-speech cancel, and silenced synthetic mouth flap during inter-sentence pauses (`AmadeusSpriteView.tsx`).
@@ -88,6 +88,22 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
    - Offloaded blocking Kokoro and RVC inference off the asyncio event loop, added cross-platform RVC Python discovery, skipped PT-only Kokoro on EN/JA fallback, implemented clean worker shutdown in `lifespan.py`, and replaced full-table `/api/health` scans with `SELECT COUNT(*)`.
 3. ✅ **Docker, `.env` Wiring & Automated CI**:
    - Fixed frontend `Dockerfile` `postinstall` build (`COPY scripts ./scripts`), enabled `server/.env` loading (`load_dotenv`) with env API key fallback and unified LLM message builders (`orchestrator.py`), removed expiring hardcoded Colab URLs, isolated GPU manual scripts into `server/scripts/`, and added GitHub Actions CI (`.github/workflows/ci.yml`).
+
+---
+
+### 🟢 `v0.3.2`: Runtime Latency Telemetry, E2E Benchmarks & Cold-Start Optimization (Completed — Current)
+*Focus: Full per-stage latency observability, automated offline/live benchmarking, and empirical elimination of first-turn cold-start bottlenecks.*
+1. ✅ **Backend & Frontend Runtime Telemetry (`GET /api/metrics`, `X-TTS-*`, Setup → `SYSTEM`)**:
+   - Added zero-dependency rolling metrics collector (`server/app/services/metrics.py`, `deque(maxlen=50)`) exposing `p50`/`p95`, cold vs. warm averages, and error/fallback/abort counters via `GET /api/metrics` and `POST /api/metrics/reset`.
+   - Instrumented `/api/chat`, `/api/chat/stream`, and `/api/tts` with per-stage breakdowns (`rag_ms`, `model_discovery_ms`, `llm_fallback_attempts`, `llm_ttft_ms`, `llm_first_sentence_ms`, `handshake_ms`, `ttfb_ms`, `realtime_speed_x`), exposed via `ChatResponse.metrics` and CORS-exposed `X-TTS-*` headers.
+   - Upgraded `CallHeader.tsx` TTFA badge (color-coded + clickable) and added a localized PT/EN/JA **Live Latency Telemetry & Diagnostics** panel in `SettingsModal.tsx` (`SYSTEM` tab) displaying per-turn waterfalls, STT Whisper latency, PCM audio underrun counts, and 1-click subsystem probes.
+   - Migrated `SettingsModal.tsx` to native `<dialog>` (`showModal()`, `closedby="any"` + light-dismiss fallback, `overscroll-behavior: contain`) with auto-diagnostics on `SYSTEM` open and an actionable `v0.3.2` Active Runtime Stack ledger.
+2. ✅ **Unified CLI Benchmark Suite & Script Upgrades**:
+   - Created `server/scripts/benchmark_amadeus.py` supporting `--offline` (health, RAG hit rate & latency, offline chat/SSE, `SentenceStream`, `/api/metrics`) and `--live` (cold vs. warm LLM, trilingual/canonical JP, Colab/local Qwen3 streaming/WAV + DSP acoustic anomaly checks, and barge-in abort recovery) with automatic JSON + Markdown report export to `server/data/benchmarks/`.
+   - Updated `compare_local_remote.py` and `qwen_probe.py` to print `TTFB`, total latency, and real-time speed (`x`) in summary tables, and added unit coverage in `server/tests/test_metrics.py`.
+3. ✅ **Empirical Cold-Start & Per-Turn Latency Optimization**:
+   - Added background ONNX embedding warm-up on server startup (`lifespan.py`) and LRU single-embedding reuse (`_embed_query` + `query_embeddings` in `memory_store.py`), eliminating the ~25–28s first-turn ONNX cold stall and reducing per-turn embeddings from 4x to 1x (~3.8x–7.9x faster offline/RAG turns).
+   - Added 10-minute TTL caching for Groq/Gemini `/models` discovery (`groq.py`, `gemini.py`) plus a loop-aware keep-alive `httpx.AsyncClient` in `orchestrator.py`, dropping warm `model_discovery_ms` from ~430 ms to 0 ms.
 
 ---
 

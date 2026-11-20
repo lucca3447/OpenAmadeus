@@ -102,6 +102,7 @@ def run_probe(url: str, runs: int = 3):
         expected_min_duration = round(char_len * 0.05, 1)  # ~14-18 chars/sec em fala normal (~8-10s para 160 chars)
 
         durations = []
+        latencies = []
         errors = 0
 
         for r in range(runs):
@@ -121,6 +122,7 @@ def run_probe(url: str, runs: int = 3):
                 if res.status_code == 200 and len(res.content) > 1000:
                     dur = get_audio_duration_wave(res.content)
                     durations.append(dur)
+                    latencies.append(elapsed)
                     if r == 0:
                         wav_path = os.path.join(out_dir, f"probe_var_{idx}.wav")
                         with open(wav_path, "wb") as f:
@@ -131,6 +133,8 @@ def run_probe(url: str, runs: int = 3):
                 errors += 1
 
         avg_dur = round(sum(durations) / len(durations), 2) if durations else 0.0
+        avg_lat = round(sum(latencies) / len(latencies), 2) if latencies else 0.0
+        speed_x = round(avg_dur / avg_lat, 2) if avg_lat > 0 else 0.0
         # If duration is significantly lower than expected minimum duration, it truncated!
         is_truncated = avg_dur < (expected_min_duration * 0.65) if avg_dur > 0 else True
 
@@ -142,17 +146,19 @@ def run_probe(url: str, runs: int = 3):
             "name": name,
             "char_len": char_len,
             "avg_dur": avg_dur,
+            "avg_lat": avg_lat,
+            "speed_x": speed_x,
             "expected_min": expected_min_duration,
             "status": status,
         })
 
     # Summary table
-    print("-" * 75)
-    print(f"{'Variante':<45} | {'Chars':<6} | {'Média (s)':<9} | {'Status':<10}")
-    print("-" * 75)
+    print("-" * 100)
+    print(f"{'Variante':<45} | {'Chars':<5} | {'Áudio(s)':<8} | {'Lat(s)':<7} | {'Speed':<7} | {'Status':<10}")
+    print("-" * 100)
     for res in results:
-        print(f"{res['name']:<45} | {res['char_len']:<6} | {res['avg_dur']:<9} | {res['status']:<10}")
-    print("-" * 75)
+        print(f"{res['name']:<45} | {res['char_len']:<5} | {res['avg_dur']:<8} | {res['avg_lat']:<7} | {res['speed_x']}x{'':<3} | {res['status']:<10}")
+    print("-" * 100)
     print(f"\nGravações de teste salvas em: {os.path.abspath(out_dir)}\n")
 
 
