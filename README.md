@@ -27,7 +27,7 @@ A full-stack, modular **trilingual (Japanese / English / Brazilian Portuguese)**
 | ![Cortex & Synaptic Inspector](docs/screenshots/03_cortex_synaptic_inspector.png)<br><sub>*Japanese UI Synaptic Inspector displaying ChromaDB vector memories with trilingual JA/EN/PT retrieval tags and SQLite session counts*</sub> | ![System Settings Modal](docs/screenshots/06_settings_neural_voice_tts.png)<br><sub>*Independent Interface vs. Conversation language controls, Japanese Voice + Translated Subtitles toggle, and Qwen3-TTS 1.7B streaming*</sub> |
 
 <p align="center">
-  <img src="docs/screenshots/05_settings_llm_credentials.png" alt="Cortex LLM Credentials & Impatience Telemetry" width="880">
+  <img src="docs/screenshots/05_settings_llm_credentials.png" alt="Cortex LLM Credentials & Impatience Telemetry" width="760">
   <br>
   <em>Cortex Configuration Modal — Multi-provider LLM routing (Groq, Gemini, OpenRouter), strict model pinning, and 2-stage contextual impatience telemetry.</em>
 </p>
@@ -356,9 +356,9 @@ OpenAmadeus/
 Live runtime diagnostics are available directly in the UI (**click the TTFA latency pill in the top bar** or open **Setup → SYSTEM**) showing the per-turn waterfall (`STT` → `RAG` → `Model Discovery` → `LLM TTFT / 1st Sentence` → `TTS TTFB`), rolling `p50`/`p95` stats, PCM underrun counts, and cold vs. warm averages.
 
 <p align="center">
-  <img src="docs/screenshots/07_settings_live_telemetry_diagnostics.png" alt="Live Latency Telemetry & Diagnostics Panel" width="880">
+  <img src="docs/screenshots/07_settings_live_telemetry_diagnostics.png" alt="Live Latency Telemetry & Diagnostics Panel" width="760">
   <br>
-  <em>Setup → SYSTEM — Per-stage latency waterfall (STT, RAG, Model Discovery, LLM TTFT/1st Sentence, TTS TTFB), rolling p50/p95 percentiles, cold vs. warm averages, PCM underruns, and 1-click subsystem diagnostics.</em>
+  <em>Setup → SYSTEM (native &lt;dialog&gt; modal) — Live Latency Telemetry &amp; Diagnostics (p50/p95 percentiles, cold vs. warm averages, 1-click subsystem probes) paired with the Active Runtime Stack ledger for v0.3.2.</em>
 </p>
 
 Run the automated test and benchmark suites before submitting pull requests:

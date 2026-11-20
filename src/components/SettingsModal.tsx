@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Key,
   Volume2,
@@ -7,10 +7,8 @@ import {
   Zap,
   Loader2,
   AlertTriangle,
-  Sparkles,
   ExternalLink,
   Cpu,
-  Database,
   Layers,
   Radio,
   Globe,
@@ -167,6 +165,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [diagHealth, setDiagHealth] = useState<BackendHealth | null>(null);
   const [diagVoice, setDiagVoice] = useState<VoiceEngineStatus | null>(null);
   const [isRunningDiag, setIsRunningDiag] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
 
   const handleRunDiagnostics = async () => {
     setIsRunningDiag(true);
@@ -190,9 +191,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     if (isOpen && activeSection === 'system') {
-      BackendService.getMetrics().then(setBackendMetrics);
+      void handleRunDiagnostics();
     }
   }, [isOpen, activeSection]);
+
+  useEffect(() => {
+    if (bodyScrollRef.current) {
+      bodyScrollRef.current.scrollTop = 0;
+    }
+  }, [activeSection]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (isOpen && !dialog.open) {
+      dialog.showModal();
+    } else if (!isOpen && dialog.open) {
+      dialog.close();
+    }
+  }, [isOpen]);
+
+  // Fallback light-dismiss for browsers without <dialog closedby="any"> (e.g. Safari)
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || !isOpen || 'closedBy' in HTMLDialogElement.prototype) return;
+    const isOutside = (e: PointerEvent) => {
+      const r = dialog.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    let pressedOutside = false;
+    const onDown = (e: PointerEvent) => {
+      pressedOutside = isOutside(e);
+    };
+    const onUp = (e: PointerEvent) => {
+      if (pressedOutside && isOutside(e) && dialog.open) {
+        dialog.close();
+      }
+      pressedOutside = false;
+    };
+    dialog.addEventListener('pointerdown', onDown);
+    dialog.addEventListener('pointerup', onUp);
+    return () => {
+      dialog.removeEventListener('pointerdown', onDown);
+      dialog.removeEventListener('pointerup', onUp);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (isOpen && initialSection) {
@@ -240,8 +291,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   }, []);
 
-  if (!isOpen) return null;
-
   const commitKeys = () => {
     const trimmedMain = tempApiKey.trim();
     const trimmedStt = tempSttKey.trim();
@@ -254,12 +303,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const commitKeysRef = useRef(commitKeys);
+  commitKeysRef.current = commitKeys;
+
+  if (!isOpen) return null;
+
+  const handleDialogClose = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setSavedSuccess(false);
+    if (dialogRef.current) {
+      dialogRef.current.returnValue = '';
+    }
+    commitKeysRef.current();
+    onClose();
+  };
+
   const handleApplyAndClose = () => {
     commitKeys();
     setSavedSuccess(true);
-    setTimeout(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
       setSavedSuccess(false);
-      onClose();
+      if (dialogRef.current?.open) {
+        dialogRef.current.close();
+      } else {
+        onClose();
+      }
     }, 350);
   };
 
@@ -335,14 +410,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const sttMode = voiceSettings.sttKeyMode || 'unified';
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-fadeIn select-none"
-      role="dialog"
-      aria-modal="true"
+    <dialog
+      ref={dialogRef}
       aria-labelledby="amadeus-setup-title"
+      onClose={handleDialogClose}
+      {...({ closedby: 'any' } as Record<string, string>)}
+      className="amadeus-modal-dialog animate-fadeIn select-none"
     >
       {/* Main Technical Workbench Frame */}
-      <div className="relative w-full max-w-5xl max-h-[90vh] flex flex-col md:flex-row chalkboard-grid border border-orange-500/40 shadow-[0_0_50px_rgba(0,0,0,0.95)] overflow-hidden">
+      <div className="relative w-[calc(100vw-1.5rem)] sm:w-[calc(100vw-3rem)] max-w-5xl max-h-[90vh] flex flex-col md:flex-row chalkboard-grid border border-orange-500/40 shadow-[0_0_50px_rgba(0,0,0,0.95)] overflow-hidden">
         {/* Subtle Radial Amber Spotlight */}
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_60%_25%,rgba(234,88,12,0.09),transparent_65%)] pointer-events-none" />
 
@@ -423,6 +499,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               type="button"
               onClick={handleApplyAndClose}
               title={t.footer.applyCloseTitle}
+              aria-label={t.footer.applyCloseTitle}
               className="w-8 h-8 rounded-full border border-amber-900/60 bg-black/60 flex items-center justify-center text-zinc-400 hover:text-amber-200 hover:border-orange-400 transition-colors"
             >
               <X className="w-4 h-4" />
@@ -430,7 +507,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Scrollable Section Body */}
-          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 font-mono text-xs">
+          <div ref={bodyScrollRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-6 font-mono text-xs">
             {/* ==================== SECTION 1: CÓRTEX LLM ==================== */}
             {activeSection === 'cortex' && (
               <div className="space-y-6">
@@ -1531,7 +1608,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       { label: 'RAG / ChromaDB', ms: b?.rag_ms ?? null, color: 'bg-emerald-400' },
                       { label: 'Model Discovery', ms: b?.model_discovery_ms ?? null, color: 'bg-amber-400' },
                       { label: 'LLM TTFT', ms: b?.llm_ttft_ms ?? null, color: 'bg-orange-400' },
-                      { label: 'LLM 1ª Frase', ms: b?.llm_first_sentence_ms ?? null, color: 'bg-orange-500' },
+                      { label: t.systemSec.firstSentenceLabel, ms: b?.llm_first_sentence_ms ?? null, color: 'bg-orange-500' },
                       { label: 'TTS TTFB', ms: a?.ttsTtfbMs ?? null, color: 'bg-purple-400' },
                     ].filter((s) => s.ms != null);
                     const scaleMax = Math.max(total || 1, ...stages.map((s) => s.ms || 0), 100);
@@ -1588,7 +1665,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
                       </div>
                       <div className="p-2 bg-black/80 border border-zinc-800">
-                        <div className="text-zinc-500">LLM 1ª Frase p50/p95</div>
+                        <div className="text-zinc-500">{t.systemSec.firstSentenceLabel} p50/p95</div>
                         <div className="text-orange-300 font-bold">
                           {backendMetrics.chat.llm_first_sentence_ms.p50 ?? '-'} / {backendMetrics.chat.llm_first_sentence_ms.p95 ?? '-'} ms
                         </div>
@@ -1608,7 +1685,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           {' '}(Discovery cold: {backendMetrics.chat.cold_vs_warm.cold_avg_discovery_ms ?? '-'}ms)
                         </span>
                         <span className="text-zinc-400">
-                          Turnos: {backendMetrics.counters.chat_total} ({turnTelemetryHistory.length} UI) • Erros: {backendMetrics.counters.chat_errors} • Fallbacks LLM/TTS: {backendMetrics.counters.llm_fallbacks}/{backendMetrics.counters.tts_fallbacks} • Aborts: {backendMetrics.counters.chat_aborts + backendMetrics.counters.tts_aborts}
+                          {t.systemSec.turnsLabel}: {backendMetrics.counters.chat_total} ({turnTelemetryHistory.length} UI) • {t.systemSec.errorsLabel}: {backendMetrics.counters.chat_errors} • Fallbacks LLM/TTS: {backendMetrics.counters.llm_fallbacks}/{backendMetrics.counters.tts_fallbacks} • Aborts: {backendMetrics.counters.chat_aborts + backendMetrics.counters.tts_aborts}
                         </span>
                       </div>
                     </div>
@@ -1619,15 +1696,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="p-2 bg-zinc-950 border border-amber-900/40 text-[10px] font-mono text-zinc-300 space-y-1">
                       {diagHealth && (
                         <div>
-                          Backend: <span className="text-emerald-400 font-bold">{diagHealth.status}</span> ({diagHealth.system}) • ChromaDB: {diagHealth.chromaCount} • Sessões: {diagHealth.totalSessions}
+                          Backend: <span className="text-emerald-400 font-bold">{diagHealth.status}</span> ({diagHealth.system}) • ChromaDB: {diagHealth.chromaCount} • {t.systemSec.sessionsLabel}: {diagHealth.totalSessions}
                         </div>
                       )}
                       {diagVoice && (
                         <div>
-                          Qwen Remoto: <span className={diagVoice.qwen_remote.status === 'ready' ? 'text-emerald-400 font-bold' : 'text-rose-400'}>{diagVoice.qwen_remote.status}</span>
+                          {t.systemSec.qwenRemoteLabel}: <span className={diagVoice.qwen_remote.status === 'ready' ? 'text-emerald-400 font-bold' : 'text-rose-400'}>{diagVoice.qwen_remote.status}</span>
                           {diagVoice.qwen_remote.ping_ms != null ? ` (${diagVoice.qwen_remote.ping_ms}ms` : ''}
                           {diagVoice.qwen_remote.vram_allocated_mb != null ? `, ${diagVoice.qwen_remote.vram_allocated_mb}MB VRAM)` : diagVoice.qwen_remote.ping_ms != null ? ')' : ''}
-                          {' '}• Qwen Local: <span className={diagVoice.qwen_local.status === 'ready' ? 'text-emerald-400' : 'text-zinc-500'}>{diagVoice.qwen_local.status}</span>
+                          {' '}• {t.systemSec.qwenLocalLabel}: <span className={diagVoice.qwen_local.status === 'ready' ? 'text-emerald-400' : 'text-zinc-500'}>{diagVoice.qwen_local.status}</span>
                           {' '}• Kokoro: {diagVoice.kokoro_available ? 'OK' : 'OFF'} • RVC: {diagVoice.rvc_available ? diagVoice.rvc_models.join(', ') : 'OFF'}
                         </div>
                       )}
@@ -1635,84 +1712,152 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   )}
                 </div>
 
-                <div className="p-4 border border-amber-900/50 bg-black/60 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-orange-400 shrink-0" />
-                        <h3 className="engraved-serif text-xs font-bold text-amber-100">
-                          {t.systemSec.qwenCardTitle}
-                        </h3>
-                      </div>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">
-                        starrydark / Kurisu_Qwen3_TTS • Alibaba Qwen3-TTS 1.7B
-                      </p>
-                    </div>
-                    <a
-                      href="https://huggingface.co/starrydark/Kurisu_Qwen3_TTS"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="copper-capsule px-3 py-1 flex items-center gap-1 text-[10px] text-amber-200 hover:text-white shrink-0"
-                    >
-                      <span>HuggingFace</span>
-                      <ExternalLink className="w-3 h-3 text-orange-400" />
-                    </a>
-                  </div>
-                  <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
-                    {t.systemSec.qwenCardDesc}
-                  </p>
-                </div>
+                {/* Active Runtime Architecture Spec Ledger */}
+                {(() => {
+                  const isOnlineBackend = diagHealth?.status === 'online';
+                  const qwenReady =
+                    diagVoice?.qwen_remote.status === 'ready' || diagVoice?.qwen_local.status === 'ready';
+                  const hasGroqStt = tempSttKey.trim().startsWith('gsk_') || tempApiKey.trim().startsWith('gsk_');
+                  const stackRows: {
+                    id: string;
+                    title: string;
+                    spec: string;
+                    desc: string;
+                    dotClass: string;
+                    targetTab: SettingsSectionId;
+                    links: { label: string; href: string }[];
+                  }[] = [
+                    {
+                      id: 'voice-stack',
+                      title: t.systemSec.voiceStackTitle,
+                      spec: 'lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added • faster-qwen3-tts (CUDA Graphs)',
+                      desc: t.systemSec.voiceStackDesc,
+                      dotClass: qwenReady
+                        ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
+                        : diagVoice
+                          ? 'bg-amber-400'
+                          : 'bg-zinc-500',
+                      targetTab: 'voice',
+                      links: [
+                        {
+                          label: 'HuggingFace',
+                          href: 'https://huggingface.co/lucca3447/Makise_Kurisu_Qwen3_TTS_PTBR_added',
+                        },
+                      ],
+                    },
+                    {
+                      id: 'timbre-stack',
+                      title: t.systemSec.timbreStackTitle,
+                      spec: 'FrancescoCaracciolo/Kurisu-RVC • yky-h/japanese-hubert-base • hexgrad/Kokoro-82M',
+                      desc: t.systemSec.timbreStackDesc,
+                      dotClass:
+                        diagVoice?.rvc_available || diagVoice?.kokoro_available
+                          ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
+                          : diagVoice
+                            ? 'bg-zinc-500'
+                            : 'bg-amber-400/60',
+                      targetTab: 'voice',
+                      links: [
+                        { label: 'Kurisu-RVC', href: 'https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC' },
+                        { label: 'Kokoro-82M', href: 'https://huggingface.co/hexgrad/Kokoro-82M' },
+                      ],
+                    },
+                    {
+                      id: 'input-sync',
+                      title: t.systemSec.inputSyncTitle,
+                      spec: 'Silero VAD v5 (ONNX Web) • whisper-large-v3-turbo • F1/F2 Formants • 174 VN Sprites',
+                      desc: t.systemSec.inputSyncDesc,
+                      dotClass: hasGroqStt ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-amber-400',
+                      targetTab: 'whisper',
+                      links: [],
+                    },
+                    {
+                      id: 'memory-cortex',
+                      title: t.systemSec.memoryCortexTitle,
+                      spec: `FastAPI + ChromaDB (${diagHealth?.chromaCount ?? 36}+) + SQLite WAL • Groq / Gemini / OpenRouter`,
+                      desc: t.systemSec.memoryCortexDesc,
+                      dotClass:
+                        isOnlineBackend && Boolean(tempApiKey.trim())
+                          ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
+                          : isOnlineBackend
+                            ? 'bg-amber-400'
+                            : 'bg-zinc-500',
+                      targetTab: 'cortex',
+                      links: [],
+                    },
+                  ];
 
-                <div className="p-4 border border-amber-900/50 bg-black/60 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Volume2 className="w-4 h-4 text-orange-400 shrink-0" />
-                        <h3 className="engraved-serif text-xs font-bold text-amber-100">
-                          {t.systemSec.rvcCardTitle}
-                        </h3>
+                  return (
+                    <div className="border border-amber-900/45 bg-black/65 divide-y divide-amber-900/30">
+                      <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 bg-black/45">
+                        <div className="flex items-center gap-2">
+                          <Layers className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                          <h3 className="engraved-serif text-xs font-bold text-amber-100">
+                            {t.systemSec.stackHeading}
+                          </h3>
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] font-mono">
+                          <span className="px-2 py-0.5 border border-amber-900/50 bg-zinc-950 text-amber-200">
+                            {diagHealth?.system || 'AMADEUS OS v0.3.2'}
+                          </span>
+                          <a
+                            href="https://github.com/lucca3447/OpenAmadeus"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-zinc-400 hover:text-amber-200 transition-colors"
+                          >
+                            <span>GitHub</span>
+                            <ExternalLink className="w-3 h-3 text-orange-400" />
+                          </a>
+                        </div>
                       </div>
-                      <p className="text-[10px] text-zinc-400 mt-0.5">
-                        FrancescoCaracciolo / Kurisu-RVC • Extração RMVPE + HuBERT
-                      </p>
-                    </div>
-                    <a
-                      href="https://huggingface.co/FrancescoCaracciolo/Kurisu-RVC/tree/main"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="copper-capsule px-3 py-1 flex items-center gap-1 text-[10px] text-amber-200 hover:text-white shrink-0"
-                    >
-                      <span>HuggingFace</span>
-                      <ExternalLink className="w-3 h-3 text-orange-400" />
-                    </a>
-                  </div>
-                  <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
-                    {t.systemSec.rvcCardDesc}
-                  </p>
-                </div>
 
-                <div className="p-4 border border-amber-900/50 bg-black/60 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Database className="w-4 h-4 text-orange-400 shrink-0" />
-                    <h3 className="engraved-serif text-xs font-bold text-amber-100">
-                      {t.systemSec.ragCardTitle}
-                    </h3>
-                  </div>
-                  <p className="text-[11px] text-zinc-300 font-sans leading-relaxed">
-                    {t.systemSec.ragCardDesc}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    <span className="px-2 py-0.5 bg-black border border-amber-900/50 text-[10px] text-orange-300">
-                      FastAPI + ChromaDB
-                    </span>
-                    <span className="px-2 py-0.5 bg-black border border-amber-900/50 text-[10px] text-zinc-300">
-                      Groq Whisper Large-v3
-                    </span>
-                    <span className="px-2 py-0.5 bg-black border border-amber-900/50 text-[10px] text-zinc-300">
-                      WebAudio Lip-Sync
-                    </span>
-                  </div>
-                </div>
+                      {stackRows.map((row) => (
+                        <div
+                          key={row.id}
+                          className="px-4 py-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2.5"
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${row.dotClass}`} />
+                            <div className="space-y-1 min-w-0">
+                              <div className="text-xs font-semibold text-amber-100 font-sans">
+                                {row.title}
+                              </div>
+                              <div className="text-[10px] font-mono text-orange-300/80 break-words">
+                                {row.spec}
+                              </div>
+                              <p className="text-[11px] text-zinc-300 font-sans leading-relaxed max-w-[74ch]">
+                                {row.desc}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 sm:shrink-0 pl-4 sm:pl-0 pt-0.5">
+                            {row.links.map((lnk) => (
+                              <a
+                                key={lnk.href}
+                                href={lnk.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-1 border border-amber-900/50 bg-black/70 text-[10px] font-mono text-amber-200/90 hover:text-white hover:border-orange-400/70 inline-flex items-center gap-1 transition-colors"
+                              >
+                                <span>{lnk.label}</span>
+                                <ExternalLink className="w-2.5 h-2.5 text-orange-400" />
+                              </a>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => setActiveSection(row.targetTab)}
+                              className="px-2 py-1 border border-zinc-700 bg-zinc-900/90 text-[10px] font-mono text-zinc-200 hover:text-white hover:border-orange-500/60 transition-colors"
+                            >
+                              {t.systemSec.configureAction}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -1740,6 +1885,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };
