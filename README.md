@@ -2,7 +2,7 @@
 
 A full-stack, modular **trilingual (Japanese / English / Brazilian Portuguese)** multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), F1/F2 spectral formant lip-sync, Silero neural VAD, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS Multilingual with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
 
-[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](https://semver.org/)
+[![Version](https://img.shields.io/badge/version-0.3.2-blue.svg)](https://semver.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -285,9 +285,12 @@ docker compose up --build -d
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/api/health` | `GET` | Core gateway health, ChromaDB vector count, and active subsystem status |
-| `/api/chat` | `POST` | Conversational turn execution with RAG retrieval, emotion parsing, and LLM fallback |
-| `/api/tts` | `POST` | Universal speech synthesis (`audio/L16;rate=24000` PCM stream, `audio/wav`, or `audio/mpeg`) |
+| `/api/health` | `GET` | Core gateway health, uptime, ChromaDB vector count, and active subsystem status |
+| `/api/metrics` | `GET` | Rolling (`p50`/`p95`) chat/RAG/LLM/TTS latency telemetry, cold vs. warm comparison, and error/fallback/abort counters |
+| `/api/metrics/reset` | `POST` | Resets in-memory runtime metrics counters and rolling buffers (useful between benchmark runs) |
+| `/api/chat` | `POST` | Conversational turn execution with RAG retrieval, emotion parsing, LLM fallback, and per-turn `metrics` |
+| `/api/chat/stream` | `POST` | Sentence-level SSE streaming (`meta` -> `sentence*` -> `done`) with per-stage timing breakdown |
+| `/api/tts` | `POST` | Universal speech synthesis (`audio/L16;rate=24000` PCM stream, `audio/wav`, or `audio/mpeg`) emitting `X-TTS-*` headers |
 | `/api/voice/status` | `GET` | Real-time diagnostics across Remote Qwen3, Local Qwen3 (`:8005`), Kokoro, and RVC v2 |
 | `/api/voice/ping` | `POST` | Probes Qwen3-TTS worker `/health` and measures round-trip latency + allocated VRAM |
 | `/api/voice/models` | `GET` | Lists discovered RVC checkpoints, Kokoro voices (`pf_dora`), and Edge-TTS voices |
@@ -324,10 +327,12 @@ OpenAmadeus/
 │   │       ├── rvc/                       # rvc_manager.py, rvc_worker.py, pipeline.py & lib/ (HuBERT, RMVPE, PureTorchIndex)
 │   │       ├── voice_service.py           # 4-stage voice cascade & trilingual clean_text_for_tts sanitizer
 │   │       ├── emotion_service.py         # Sentiment/pose/camera parsing & trilingual shift inference
+│   │       ├── metrics.py                 # In-memory rolling latency/reliability registry (p50/p95, cold vs. warm)
 │   │       └── offline_simulator.py       # Zero-internet trilingual heuristic dialogue fallback
 │   ├── personas/                          # Persona definitions, languageProfiles & canonical memories (kurisu.json)
+│   ├── scripts/                           # Unified E2E benchmark CLI (benchmark_amadeus.py), DSP probes & RAG calibration
 │   ├── training/                          # 154-pair PT/EN/JA ChatML dataset, Unsloth LoRA script, Ollama Modelfile
-│   ├── tests/                             # Unit, streaming, RAG & RVC suites (test_chat_stream.py, test_rvc_hubert.py, etc.)
+│   ├── tests/                             # Unit, streaming, metrics, RAG & RVC suites (test_metrics.py, test_chat_stream.py, etc.)
 │   ├── weights/                           # Local model directory (kurisu_rvc/, kurisu_qwen3/, models/)
 │   ├── main.py                            # FastAPI gateway entry point
 │   ├── remote_worker.py                   # Standalone remote worker runner
@@ -346,18 +351,34 @@ OpenAmadeus/
 └── package.json                           # Frontend dependencies and build scripts
 ```
 
-## 🧪 Testing & Quality Assurance
+## 🧪 Testing, Latency Telemetry & Benchmarking
 
-Run the automated test suites before submitting pull requests:
+Live runtime diagnostics are available directly in the UI (**click the TTFA latency pill in the top bar** or open **Setup → SYSTEM**) showing the per-turn waterfall (`STT` → `RAG` → `Model Discovery` → `LLM TTFT / 1st Sentence` → `TTS TTFB`), rolling `p50`/`p95` stats, PCM underrun counts, and cold vs. warm averages.
+
+<p align="center">
+  <img src="docs/screenshots/07_settings_live_telemetry_diagnostics.png" alt="Live Latency Telemetry & Diagnostics Panel" width="880">
+  <br>
+  <em>Setup → SYSTEM — Per-stage latency waterfall (STT, RAG, Model Discovery, LLM TTFT/1st Sentence, TTS TTFB), rolling p50/p95 percentiles, cold vs. warm averages, PCM underruns, and 1-click subsystem diagnostics.</em>
+</p>
+
+Run the automated test and benchmark suites before submitting pull requests:
 
 ```bash
-# 1. Backend unit tests (core API, Qwen3 streaming, C0 DSP ramp, text sanitizer, and RVC)
+# 1. Backend unit tests (core API, metrics, Qwen3 streaming, C0 DSP ramp, text sanitizer, and RVC)
 python -m unittest discover -s server/tests -p "test_*.py"
 
 # 2. Frontend TypeScript strict type-checking and production build verification
 npx tsc --noEmit
 npm run build
+
+# 3. Unified E2E latency & functioning benchmark (deterministic offline — zero API cost)
+python server/scripts/benchmark_amadeus.py --offline
+
+# 4. Live E2E benchmark (real LLM cold vs. warm + Colab/local Qwen3-TTS streaming, DSP & barge-in)
+python server/scripts/benchmark_amadeus.py --live --in-process --api-key "<KEY>" --qwen-url "https://<tunnel>.trycloudflare.com"
 ```
+
+Timestamped JSON and Markdown benchmark reports are saved automatically to `server/data/benchmarks/`.
 
 ## 🗺️ Roadmap
 
