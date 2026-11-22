@@ -1798,7 +1798,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
                         <div className="flex items-center gap-3 text-[10px] font-mono">
                           <span className="px-2 py-0.5 border border-amber-900/50 bg-zinc-950 text-amber-200">
-                            {diagHealth?.system || 'AMADEUS OS v0.3.2'}
+                            {diagHealth?.system || 'AMADEUS OS v0.3.3'}
                           </span>
                           <a
                             href="https://github.com/lucca3447/OpenAmadeus"

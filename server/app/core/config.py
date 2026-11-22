@@ -9,7 +9,7 @@ APP_DIR = CORE_DIR.parent
 SERVER_DIR = APP_DIR.parent
 load_dotenv(SERVER_DIR / ".env")
 
-DATA_DIR = Path(os.environ.get("AMADEUS_DATA_DIR", str(SERVER_DIR / "data")))
+DATA_DIR = Path((os.environ.get("AMADEUS_DATA_DIR") or "").strip() or str(SERVER_DIR / "data"))
 PERSONAS_DIR = SERVER_DIR / "personas"
 WEIGHTS_DIR = SERVER_DIR / "weights"
 TRAINING_DIR = SERVER_DIR / "training"
@@ -31,7 +31,7 @@ TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 # System Meta
 APP_TITLE = "Amadeus System Core API"
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 APP_DESCRIPTION = "Cognitive memory with SQLite & ChromaDB, persona simulation, and neural speech synthesis for Amadeus."
 
 # LLM Config

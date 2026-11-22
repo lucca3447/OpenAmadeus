@@ -91,7 +91,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🟢 `v0.3.2`: Runtime Latency Telemetry, E2E Benchmarks & Cold-Start Optimization (Completed — Current)
+### 🟢 `v0.3.2`: Runtime Latency Telemetry, E2E Benchmarks & Cold-Start Optimization (Completed)
 *Focus: Full per-stage latency observability, automated offline/live benchmarking, and empirical elimination of first-turn cold-start bottlenecks.*
 1. ✅ **Backend & Frontend Runtime Telemetry (`GET /api/metrics`, `X-TTS-*`, Setup → `SYSTEM`)**:
    - Added zero-dependency rolling metrics collector (`server/app/services/metrics.py`, `deque(maxlen=50)`) exposing `p50`/`p95`, cold vs. warm averages, and error/fallback/abort counters via `GET /api/metrics` and `POST /api/metrics/reset`.
@@ -104,6 +104,20 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 3. ✅ **Empirical Cold-Start & Per-Turn Latency Optimization**:
    - Added background ONNX embedding warm-up on server startup (`lifespan.py`) and LRU single-embedding reuse (`_embed_query` + `query_embeddings` in `memory_store.py`), eliminating the ~25–28s first-turn ONNX cold stall and reducing per-turn embeddings from 4x to 1x (~3.8x–7.9x faster offline/RAG turns).
    - Added 10-minute TTL caching for Groq/Gemini `/models` discovery (`groq.py`, `gemini.py`) plus a loop-aware keep-alive `httpx.AsyncClient` in `orchestrator.py`, dropping warm `model_discovery_ms` from ~430 ms to 0 ms.
+
+---
+
+### 🟢 `v0.3.3`: Persistent ONNX Session, KV Prefix Cache, Non-Blocking RAG & Honest Benchmarks (Completed — Current)
+*Focus: Eliminating per-query ONNX reloads and fixed-256 CPU padding, keeping the FastAPI event loop non-blocking, optimizing KV prefix caching, and separating uncached vs. cached RAG latency.*
+1. ✅ **Persistent `ONNXMiniLM_L6_V2` & Dynamic Single-Query Padding (`memory_store.py`)**:
+   - Added `_PersistentDefaultEF(DefaultEmbeddingFunction)` keeping one `ONNXMiniLM_L6_V2` session resident in RAM (fixing ChromaDB `1.5.9`'s per-call reload) and disabling fixed 256-token padding on single queries (`enable_truncation(max_length=256)` preserved), cutting uncached `rag_cold_query_ms` `p50` from `389.6 ms` to **`9.7 ms`** (**`40×` faster**) with `max_abs_diff < 1e-5`.
+   - Removed private `_embedding_function` access and redundant `collection.get()` pre-queries in `_query_memory_group()`, restricted `_embed_lock` to LRU cache lookups/writes only, reused `query_embeddings` + `embeddings` in `add_memory()`, and added reentrant thread-scoped SQLite `connection_scope()` with explicit WAL transactions.
+2. ✅ **KV Prefix Cache Prompt Ordering & Non-Blocking Turn I/O (`orchestrator.py`)**:
+   - Reordered `_build_system_prompt()` to place static persona/language/canonical-voice blocks at the top and per-turn memories, exemplars, rolling summary, and circadian telemetry at the bottom.
+   - Offloaded `_prepare_turn_context()` and `_persist_turn_result()` (including offline simulator + barge-in persistence) via `asyncio.to_thread()` inside `connection_scope()`.
+3. ✅ **Lifespan-Aware Honest Benchmarking & Test Coverage (`benchmark_amadeus.py`, `tests/`)**:
+   - Updated `run_offline_suite()` to run inside `with TestClient(app) as client:` and report explicit `rag_cold_query_ms` (`9.7 ms` `p50`) vs. `rag_cached_ms` (`5.1 ms` `p50`) plus uncached `chat_offline` runs (`34.6–35.4 ms` `p50`).
+   - Added unit coverage for connection reuse/rollback, `collection.get()` removal, single-embedding `add_memory`, concurrent `_embed_query`, KV prefix ordering, and `_PersistentDefaultEF` batch/truncation safety (`88/88` tests in `21.06 s`).
 
 ---
 

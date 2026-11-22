@@ -2,7 +2,7 @@
 
 A full-stack, modular **trilingual (Japanese / English / Brazilian Portuguese)** multimodal conversational AI runtime inspired by the **Amadeus System** from *Steins;Gate 0*. It features interactive visual novel sprite animations (with a copyright-safe procedural holographic silhouette fallback), F1/F2 spectral formant lip-sync, Silero neural VAD, real-time HTML5 Canvas oscilloscope telemetry, ultra-low-latency neural voice cloning (**Kurisu Qwen3-TTS Multilingual with CUDA Graphs**, **Kokoro-TTS 82M**, **Microsoft Edge-TTS**, and **Kurisu RVC v2**), Dynamic Few-Shot Retrieval-Augmented Generation (RAG), and fault-tolerant multi-provider LLM orchestration.
 
-[![Version](https://img.shields.io/badge/version-0.3.2-blue.svg)](https://semver.org/)
+[![Version](https://img.shields.io/badge/version-0.3.3-blue.svg)](https://semver.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -59,9 +59,21 @@ OpenAmadeus scales from CPU-only laptops to local NVIDIA GPUs and free/low-cost 
 | **Tier 4: Qwen3-TTS (`faster`)** | **Streaming PCM16 (CUDA Graphs)** | **Colab L4/A100 or Local GPU (~4–6 GB VRAM)** | **~391 ms** | **1.92x** *(L4)* | End-to-end Kurisu synthesis with natural sighs, calibrated cadence, and pure-weight SFT stability |
 | **Tier 4 (Legacy): Qwen3-TTS (`stock`)** | Batch WAV (Dynamic Cache) | NVIDIA GPU (~6 GB VRAM) | ~14,000–20,000 ms | ~0.44x | Fallback batch mode when `faster-qwen3-tts` is disabled (`QWEN_BACKEND=stock`) |
 
-### 📈 Measured Performance & Optimization Gains (`v0.3.2`)
+### 📈 Measured Performance & Optimization Gains (`v0.3.2` → `v0.3.3`)
 
 Empirical runtime measurements collected with OpenAmadeus' built-in telemetry (`/api/metrics`) and [server/scripts/benchmark_amadeus.py](server/scripts/benchmark_amadeus.py):
+
+#### Persistent ONNX, Non-Blocking RAG & Honest Uncached Benchmarks (`v0.3.2` → `v0.3.3`)
+
+| Metric | Before (`v0.3.2`) | After (`v0.3.3`) | Measured Gain |
+| :--- | ---: | ---: | :--- |
+| **Gateway `/api/health` (`p50` / `p95`)** | `20.2 / 135.3 ms` | **`7.9 / 11.0 ms`** | **`2.6×` faster `p50`**, `12.3×` lower `p95` |
+| **ONNX Warm-up (`onnx_warmup_ms`)** | `37,427.6 ms` *(1st probe)* | **`204.5 ms`** | Persistent `ONNXMiniLM_L6_V2` session kept warm in RAM |
+| **RAG Uncached Query (`rag_cold_query_ms`, `p50` / `p95`)** | `389.6 / 28,170.6 ms` | **`9.7 / 13.4 ms`** | **`40×` faster `p50`** (single-query dynamic padding + zero `collection.get()`) |
+| **RAG Cached Query (`rag_cached_ms`, LRU hit, `p50` / `p95`)** | *—* | **`5.1 / 5.4 ms`** | Sub-6 ms HNSW lookup on repeated prompts |
+| **Offline `/api/chat` (`100%` uncached, `p50` / `p95`)** | `96.7 / 448.5 ms` *(with LRU hits)* | **`34.6 / 39.2 ms`** | Measured on unique uncached utterances (`_embed_cache.clear()`) |
+| **Offline `/api/chat/stream` (`100%` uncached, `p50` / `p95`)** | `87.7 / 420.2 ms` *(with LRU hits)* | **`35.4 / 38.9 ms`** | Non-blocking `asyncio.to_thread` + single SQLite connection per turn |
+| **Backend Unit Tests (`88` tests)** | `71.66 s` | **`21.06 s`** | **`3.4×` faster** full suite |
 
 #### Cold-Start & Backend Pipeline (`v0.3.1` → `v0.3.2`)
 
@@ -369,7 +381,7 @@ Live runtime diagnostics are available directly in the UI (**click the TTFA late
 <p align="center">
   <img src="docs/screenshots/07_settings_live_telemetry_diagnostics.png" alt="Live Latency Telemetry & Diagnostics Panel" width="760">
   <br>
-  <em>Setup → SYSTEM (native &lt;dialog&gt; modal) — Live Latency Telemetry &amp; Diagnostics (p50/p95 percentiles, cold vs. warm averages, 1-click subsystem probes) paired with the Active Runtime Stack ledger for v0.3.2.</em>
+  <em>Setup → SYSTEM (native &lt;dialog&gt; modal) — Live Latency Telemetry &amp; Diagnostics (p50/p95 percentiles, cold vs. warm averages, 1-click subsystem probes) paired with the Active Runtime Stack ledger for v0.3.3.</em>
 </p>
 
 Run the automated test and benchmark suites before submitting pull requests:
