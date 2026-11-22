@@ -173,8 +173,6 @@ def run_offline_suite(runs: int = 3) -> Dict[str, Any]:
     from app.services.llm.sentence_stream import SentenceStream
     from app.services.metrics import metrics_registry
 
-    client = TestClient(app)
-    metrics_registry.reset()
     created_sessions: List[str] = []
     report: Dict[str, Any] = {
         "mode": "offline",
@@ -182,97 +180,116 @@ def run_offline_suite(runs: int = 3) -> Dict[str, Any]:
         "checks": {},
     }
 
-    try:
-        # 1. Health latency
-        health_ms: List[float] = []
-        health_data = {}
-        for _ in range(runs):
-            t0 = time.perf_counter()
-            res = client.get("/api/health")
-            health_ms.append((time.perf_counter() - t0) * 1000.0)
-            assert res.status_code == 200
-            health_data = res.json()
-        report["checks"]["health"] = {
-            "pass": health_data.get("status") == "online",
-            "latency_ms": _summary_stats(health_ms),
-            "chromaCount": health_data.get("chromaCount"),
-            "exemplarsCount": health_data.get("exemplarsCount"),
-            "totalMemories": health_data.get("totalMemories"),
-        }
+    with TestClient(app) as client:
+        metrics_registry.reset()
+        warmup_ms = memory_store.warmup_embeddings()
+        try:
+            # 1. Health latency
+            health_ms: List[float] = []
+            health_data = {}
+            for _ in range(runs):
+                t0 = time.perf_counter()
+                res = client.get("/api/health")
+                health_ms.append((time.perf_counter() - t0) * 1000.0)
+                assert res.status_code == 200
+                health_data = res.json()
+            report["checks"]["health"] = {
+                "pass": health_data.get("status") == "online",
+                "latency_ms": _summary_stats(health_ms),
+                "chromaCount": health_data.get("chromaCount"),
+                "exemplarsCount": health_data.get("exemplarsCount"),
+                "totalMemories": health_data.get("totalMemories"),
+            }
 
-        # 2. RAG retrieval speed & top-1 hit rate (read-only)
-        rag_ms: List[float] = []
-        hits = 0
-        for query, expected_id in RAG_PROBES:
-            t0 = time.perf_counter()
-            matches = memory_store.search_memories(query, max_kurisu=2, max_learned=2)
-            rag_ms.append((time.perf_counter() - t0) * 1000.0)
-            if matches and matches[0]["id"] == expected_id:
-                hits += 1
-        report["checks"]["rag"] = {
-            "pass": hits >= max(1, len(RAG_PROBES) - 1),
-            "top1_hits": f"{hits}/{len(RAG_PROBES)}",
-            "hit_rate": round(hits / len(RAG_PROBES), 3),
-            "latency_ms": _summary_stats(rag_ms),
-        }
+            # 2. RAG retrieval speed & top-1 hit rate (explicit cache miss vs LRU cache hit)
+            memory_store._embed_cache.clear()
+            cold_query_ms: List[float] = []
+            hits = 0
+            for query, expected_id in RAG_PROBES:
+                t0 = time.perf_counter()
+                matches = memory_store.search_memories(query, max_kurisu=2, max_learned=2)
+                cold_query_ms.append((time.perf_counter() - t0) * 1000.0)
+                if matches and matches[0]["id"] == expected_id:
+                    hits += 1
 
-        # 3. Offline /api/chat and /api/chat/stream contract & latency
-        chat_ms: List[float] = []
-        stream_ms: List[float] = []
-        stream_ok = True
-        for i in range(runs):
-            sid = memory_store.create_session()
-            created_sessions.append(sid)
-            t0 = time.perf_counter()
-            r = client.post("/api/chat", json={"message": "Olá Kurisu, fale sobre o IBN 5100.", "sessionId": sid, "selectedModel": "offline"})
-            chat_ms.append((time.perf_counter() - t0) * 1000.0)
-            body = r.json()
-            if r.status_code != 200 or not isinstance(body.get("metrics"), dict):
-                stream_ok = False
+            cached_ms: List[float] = []
+            for query, _expected_id in RAG_PROBES:
+                t0 = time.perf_counter()
+                memory_store.search_memories(query, max_kurisu=2, max_learned=2)
+                cached_ms.append((time.perf_counter() - t0) * 1000.0)
 
-            sse_res = _read_sse_stream(
-                client,
-                "/api/chat/stream",
-                {"message": "Teste de stream offline.", "sessionId": sid, "selectedModel": "offline", "canonicalVoice": True},
+            report["checks"]["rag"] = {
+                "pass": hits >= max(1, len(RAG_PROBES) - 1),
+                "top1_hits": f"{hits}/{len(RAG_PROBES)}",
+                "hit_rate": round(hits / len(RAG_PROBES), 3),
+                "onnx_warmup_ms": warmup_ms,
+                "rag_cold_query_ms": _summary_stats(cold_query_ms),
+                "rag_cached_ms": _summary_stats(cached_ms),
+                "latency_ms": _summary_stats(cold_query_ms),
+            }
+
+            # 3. Offline /api/chat and /api/chat/stream contract & latency (unique uncached utterances per run)
+            chat_ms: List[float] = []
+            stream_ms: List[float] = []
+            stream_ok = True
+            for i in range(runs):
+                sid = memory_store.create_session()
+                created_sessions.append(sid)
+
+                memory_store._embed_cache.clear()
+                chat_msg = f"Olá Kurisu, analise os registros do IBN 5100 na rodada {i + 1}."
+                t0 = time.perf_counter()
+                r = client.post("/api/chat", json={"message": chat_msg, "sessionId": sid, "selectedModel": "offline"})
+                chat_ms.append((time.perf_counter() - t0) * 1000.0)
+                body = r.json()
+                if r.status_code != 200 or not isinstance(body.get("metrics"), dict):
+                    stream_ok = False
+
+                memory_store._embed_cache.clear()
+                stream_msg = f"Explique a teoria de digitalização de memórias do laboratório no turno {i + 1}."
+                sse_res = _read_sse_stream(
+                    client,
+                    "/api/chat/stream",
+                    {"message": stream_msg, "sessionId": sid, "selectedModel": "offline", "canonicalVoice": True},
+                )
+                stream_ms.append(sse_res["total_ms"])
+                if not sse_res["ok"] or sse_res["leaked_tags"] or not sse_res.get("metrics"):
+                    stream_ok = False
+
+            report["checks"]["chat_offline"] = {
+                "pass": stream_ok,
+                "chat_ms": _summary_stats(chat_ms),
+                "stream_ms": _summary_stats(stream_ms),
+            }
+
+            # 4. SentenceStream trilingual + canonical JP check
+            splitter = SentenceStream()
+            sample = (
+                "<!--emotion:annoyed,pose:crossed_arms--> "
+                "<!--ja:私の名前は紅莉栖よ！助手じゃない！--> Meu nome é Kurisu! Não sou sua assistente! "
+                "<!--ja:ちゃんと聞きなさい。--> Preste atenção agora."
             )
-            stream_ms.append(sse_res["total_ms"])
-            if not sse_res["ok"] or sse_res["leaked_tags"] or not sse_res.get("metrics"):
-                stream_ok = False
+            evs = splitter.feed(sample) + splitter.flush()
+            ja_count = sum(1 for k, _ in evs if k == "ja")
+            sent_count = sum(1 for k, _ in evs if k == "sentence")
+            dir_count = sum(1 for k, _ in evs if k == "directive")
+            report["checks"]["sentence_stream"] = {
+                "pass": dir_count == 1 and ja_count == 2 and sent_count == 2,
+                "directives": dir_count,
+                "ja_tags": ja_count,
+                "sentences": sent_count,
+            }
 
-        report["checks"]["chat_offline"] = {
-            "pass": stream_ok,
-            "chat_ms": _summary_stats(chat_ms),
-            "stream_ms": _summary_stats(stream_ms),
-        }
-
-        # 4. SentenceStream trilingual + canonical JP check
-        splitter = SentenceStream()
-        sample = (
-            "<!--emotion:annoyed,pose:crossed_arms--> "
-            "<!--ja:私の名前は紅莉栖よ！助手じゃない！--> Meu nome é Kurisu! Não sou sua assistente! "
-            "<!--ja:ちゃんと聞きなさい。--> Preste atenção agora."
-        )
-        evs = splitter.feed(sample) + splitter.flush()
-        ja_count = sum(1 for k, _ in evs if k == "ja")
-        sent_count = sum(1 for k, _ in evs if k == "sentence")
-        dir_count = sum(1 for k, _ in evs if k == "directive")
-        report["checks"]["sentence_stream"] = {
-            "pass": dir_count == 1 and ja_count == 2 and sent_count == 2,
-            "directives": dir_count,
-            "ja_tags": ja_count,
-            "sentences": sent_count,
-        }
-
-        # 5. /api/metrics endpoint check
-        m_snap = client.get("/api/metrics").json()
-        report["checks"]["metrics_api"] = {
-            "pass": m_snap["counters"]["chat_total"] == runs * 2 and m_snap["chat"]["total_ms"]["p50"] is not None,
-            "chat_total": m_snap["counters"]["chat_total"],
-            "chat_p50_ms": m_snap["chat"]["total_ms"]["p50"],
-            "rag_p50_ms": m_snap["chat"]["rag_ms"]["p50"],
-        }
-    finally:
-        _cleanup_sessions(memory_store, created_sessions)
+            # 5. /api/metrics endpoint check
+            m_snap = client.get("/api/metrics").json()
+            report["checks"]["metrics_api"] = {
+                "pass": m_snap["counters"]["chat_total"] == runs * 2 and m_snap["chat"]["total_ms"]["p50"] is not None,
+                "chat_total": m_snap["counters"]["chat_total"],
+                "chat_p50_ms": m_snap["chat"]["total_ms"]["p50"],
+                "rag_p50_ms": m_snap["chat"]["rag_ms"]["p50"],
+            }
+        finally:
+            _cleanup_sessions(memory_store, created_sessions)
 
     return report
 
@@ -549,7 +566,11 @@ def format_markdown(report: Dict[str, Any]) -> str:
             lines.append(f"| `/api/health` | {h.get('chromaCount')} vec / {h.get('exemplarsCount')} ex | {h['latency_ms']['p50']} | {h['latency_ms']['p95']} |")
         if "rag" in checks:
             r = checks["rag"]
-            lines.append(f"| RAG Top-1 Retrieval | {r['top1_hits']} ({int(r['hit_rate']*100)}%) | {r['latency_ms']['p50']} | {r['latency_ms']['p95']} |")
+            cold_stats = r.get("rag_cold_query_ms") or r["latency_ms"]
+            lines.append(f"| RAG Uncached Query (cache miss) | {r['top1_hits']} ({int(r['hit_rate']*100)}%) | {cold_stats['p50']} | {cold_stats['p95']} |")
+            if r.get("rag_cached_ms"):
+                c_stats = r["rag_cached_ms"]
+                lines.append(f"| RAG Cached Query (LRU hit) | {r['top1_hits']} ({int(r['hit_rate']*100)}%) | {c_stats['p50']} | {c_stats['p95']} |")
         if "chat_offline" in checks:
             c = checks["chat_offline"]
             lines.append(f"| `/api/chat` (offline) | - | {c['chat_ms']['p50']} | {c['chat_ms']['p95']} |")

@@ -1,7 +1,9 @@
+import os
 import sys
 import asyncio
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
@@ -148,41 +150,42 @@ class TestQwenTTS(unittest.TestCase):
         self.assertTrue(Path(py_exe).exists())
 
     def test_resolve_target_url(self):
-        # Explicit remote URL provided
-        custom_url = "https://test-worker.trycloudflare.com/"
-        resolved = QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=custom_url)
-        self.assertEqual(resolved, "https://test-worker.trycloudflare.com")
-        self.assertTrue(QwenTTSManager.is_remote_url(resolved))
+        with patch.dict(os.environ, {"QWEN_REMOTE_URL": "", "QWEN_MODE": "remote"}, clear=False):
+            # Explicit remote URL provided
+            custom_url = "https://test-worker.trycloudflare.com/"
+            resolved = QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=custom_url)
+            self.assertEqual(resolved, "https://test-worker.trycloudflare.com")
+            self.assertTrue(QwenTTSManager.is_remote_url(resolved))
 
-        # Local loopback default
-        local_resolved = QwenTTSManager.resolve_target_url(qwen_mode="local", custom_url=None)
-        self.assertEqual(local_resolved, "http://127.0.0.1:8005")
-        self.assertFalse(QwenTTSManager.is_remote_url(local_resolved))
+            # Local loopback default
+            local_resolved = QwenTTSManager.resolve_target_url(qwen_mode="local", custom_url=None)
+            self.assertEqual(local_resolved, "http://127.0.0.1:8005")
+            self.assertFalse(QwenTTSManager.is_remote_url(local_resolved))
 
-        # Local mode must ignore stale remote custom_url from frontend settings
-        local_with_stale_remote = QwenTTSManager.resolve_target_url(
-            qwen_mode="local", custom_url="https://stale-tunnel.trycloudflare.com"
-        )
-        self.assertEqual(local_with_stale_remote, "http://127.0.0.1:8005")
-
-        # Valid Colab tunnel URL
-        colab_url = "https://worth-dont-award-yeast.trycloudflare.com/"
-        self.assertEqual(
-            QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=colab_url),
-            "https://worth-dont-award-yeast.trycloudflare.com",
-        )
-
-        # SSRF guard: reject private/link-local IPs and non-worker localhost ports
-        for unsafe_url in (
-            "http://169.254.169.254/latest/meta-data",
-            "http://192.168.1.10:8080",
-            "http://127.0.0.1:22",
-        ):
-            self.assertFalse(QwenTTSManager.is_allowed_worker_url(unsafe_url))
-            self.assertEqual(
-                QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=unsafe_url),
-                "http://127.0.0.1:8005",
+            # Local mode must ignore stale remote custom_url from frontend settings
+            local_with_stale_remote = QwenTTSManager.resolve_target_url(
+                qwen_mode="local", custom_url="https://stale-tunnel.trycloudflare.com"
             )
+            self.assertEqual(local_with_stale_remote, "http://127.0.0.1:8005")
+
+            # Valid Colab tunnel URL
+            colab_url = "https://worth-dont-award-yeast.trycloudflare.com/"
+            self.assertEqual(
+                QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=colab_url),
+                "https://worth-dont-award-yeast.trycloudflare.com",
+            )
+
+            # SSRF guard: reject private/link-local IPs and non-worker localhost ports
+            for unsafe_url in (
+                "http://169.254.169.254/latest/meta-data",
+                "http://192.168.1.10:8080",
+                "http://127.0.0.1:22",
+            ):
+                self.assertFalse(QwenTTSManager.is_allowed_worker_url(unsafe_url))
+                self.assertEqual(
+                    QwenTTSManager.resolve_target_url(qwen_mode="remote", custom_url=unsafe_url),
+                    "http://127.0.0.1:8005",
+                )
 
     def test_apply_boundary_continuity(self):
         from app.services.qwen_tts.qwen_worker import apply_boundary_continuity

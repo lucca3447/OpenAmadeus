@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -128,7 +129,12 @@ class TestChatStream(unittest.TestCase):
         self.assertIn("Primeira frase", saved[0]["content"])
 
     def test_offline_without_key_emits_single_sentence_and_done(self):
-        ev = read_events(self.client, {"message": "oi", "sessionId": memory_store.create_session()})
+        with patch.dict(
+            os.environ,
+            {"GROQ_API_KEY": "", "OPENROUTER_API_KEY": "", "GEMINI_API_KEY": ""},
+            clear=False,
+        ):
+            ev = read_events(self.client, {"message": "oi", "sessionId": memory_store.create_session()})
         names = [e["event"] for e in ev]
         self.assertEqual(names[0], "meta")
         self.assertEqual(names.count("sentence"), 1)

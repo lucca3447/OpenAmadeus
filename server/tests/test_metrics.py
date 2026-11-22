@@ -12,6 +12,7 @@ import httpx
 from fastapi.testclient import TestClient
 from main import app
 from app.db.memory_store import MemoryStore, memory_store
+from app.schemas.chat import ChatRequest
 from app.services.metrics import MetricsRegistry, metrics_registry, percentile
 from app.services.llm import orchestrator as orch_module
 from app.services.qwen_tts.qwen_manager import QwenTTSManager
@@ -219,7 +220,7 @@ class TestMetrics(unittest.TestCase):
                 metadatas=[{"user": "Curvas temporais", "assistant": "Kerr.", "lang": "pt"}],
             )
 
-            orig_ef = store.collection._embedding_function
+            orig_ef = store.embedding_fn
             embed_calls = 0
 
             def counting_ef(texts):
@@ -228,12 +229,70 @@ class TestMetrics(unittest.TestCase):
                 return orig_ef(texts)
 
             store._embed_cache.clear()
-            with patch.object(store.collection, "_embedding_function", side_effect=counting_ef):
+            with patch.object(store, "embedding_fn", side_effect=counting_ef):
                 q = "Pesquisa sobre curvas temporais fechadas"
                 mems = store.search_memories(q, max_kurisu=2, max_learned=2)
                 store.get_learned_context(q, precomputed_learned=[m for m in mems if m.get("source") == "learned"])
                 store.search_exemplars(q, n_results=1, lang="pt")
             self.assertEqual(embed_calls, 1)
+
+    def test_06_kv_prefix_cache_prompt_ordering(self):
+        persona = {
+            "systemPrompt": "BASE_SYSTEM_PROMPT",
+            "languageProfiles": {
+                "pt": "PT_LANG_PROFILE",
+                "en": "EN_LANG_PROFILE",
+            },
+            "canonicalVoicePrompt": "CANONICAL_VOICE_PROMPT",
+        }
+        semantic_matches = [
+            {
+                "id": "mem_01",
+                "title": "Digitalização",
+                "content": "Mapeamento sináptico em Viktor Chondria.",
+                "emotionalWeight": "Factual",
+                "source": "canonical",
+            }
+        ]
+        history = [
+            {"role": "user", "content": "Olá"},
+            {"role": "assistant", "content": "Olá."},
+        ]
+
+        with patch.object(memory_store, "get_learned_context", return_value=[]), \
+             patch.object(memory_store, "search_exemplars", return_value=[]):
+            pt_prompt = orch_module.orchestrator._build_system_prompt(
+                ChatRequest(message="Explique o Amadeus", lang="pt", canonicalVoice=True),
+                persona,
+                semantic_matches,
+                "Explique o Amadeus",
+                history,
+                "Resumo prévio da sessão.",
+                120.0,
+                "Assunto da ligação anterior",
+            )
+            en_prompt = orch_module.orchestrator._build_system_prompt(
+                ChatRequest(message="Explain Amadeus", lang="en", canonicalVoice=False),
+                persona,
+                semantic_matches,
+                "Explain Amadeus",
+                history,
+                "Previous summary.",
+                120.0,
+                "Previous topic",
+            )
+
+        self.assertLess(pt_prompt.index("BASE_SYSTEM_PROMPT"), pt_prompt.index("PT_LANG_PROFILE"))
+        self.assertLess(pt_prompt.index("PT_LANG_PROFILE"), pt_prompt.index("CANONICAL_VOICE_PROMPT"))
+        self.assertLess(pt_prompt.index("CANONICAL_VOICE_PROMPT"), pt_prompt.index("MEMÓRIAS DIGITALIZADAS"))
+        self.assertLess(pt_prompt.index("MEMÓRIAS DIGITALIZADAS"), pt_prompt.index("RESUMO DO CONTEXTO ANTERIOR"))
+        self.assertLess(pt_prompt.index("RESUMO DO CONTEXTO ANTERIOR"), pt_prompt.index("[TELEMETRIA DA CHAMADA AMADEUS]"))
+
+        self.assertLess(en_prompt.index("BASE_SYSTEM_PROMPT"), en_prompt.index("EN_LANG_PROFILE"))
+        self.assertLess(en_prompt.index("EN_LANG_PROFILE"), en_prompt.index("[LANGUAGE ANCHOR]"))
+        self.assertLess(en_prompt.index("[LANGUAGE ANCHOR]"), en_prompt.index("MEMÓRIAS DIGITALIZADAS"))
+        self.assertLess(en_prompt.index("MEMÓRIAS DIGITALIZADAS"), en_prompt.index("[AMADEUS CALL TELEMETRY]"))
+        self.assertIn("below", en_prompt.split("[LANGUAGE ANCHOR]")[1].split("\n\n")[0])
 
 
 if __name__ == "__main__":

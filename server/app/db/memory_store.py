@@ -11,6 +11,12 @@ from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 
 import chromadb
+import numpy as np
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+try:
+    from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+except Exception:  # pragma: no cover - fallback if internal module layout changes
+    ONNXMiniLM_L6_V2 = None
 from app.core.config import (
     SQLITE_PATH,
     CHROMA_DIR,
@@ -25,11 +31,71 @@ def _sanitize_field(value: Optional[str], max_len: int) -> str:
     return clean[:max_len]
 
 
+class _PersistentDefaultEF(DefaultEmbeddingFunction):
+    """Keeps one ONNXMiniLM_L6_V2 session warm and avoids fixed-256 padding on single queries."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._onnx = ONNXMiniLM_L6_V2() if ONNXMiniLM_L6_V2 is not None else None
+        self._init_lock = threading.Lock()
+        self._ready = False
+        self._single_tokenizer: Optional[Any] = None
+
+    def _ensure_ready(self) -> None:
+        if self._ready or self._onnx is None:
+            return
+        with self._init_lock:
+            if self._ready:
+                return
+            self._onnx._download_model_if_not_exists()
+            _ = self._onnx.model
+            try:
+                tok_path = os.path.join(
+                    self._onnx.DOWNLOAD_PATH,
+                    self._onnx.EXTRACTED_FOLDER_NAME,
+                    "tokenizer.json",
+                )
+                tok = self._onnx.Tokenizer.from_file(tok_path)
+                tok.enable_truncation(max_length=256)
+                tok.no_padding()
+                self._single_tokenizer = tok
+            except Exception:
+                self._single_tokenizer = None
+            self._ready = True
+
+    def __call__(self, input):
+        if self._onnx is None:
+            return super().__call__(input)
+        self._ensure_ready()
+        if len(input) == 1 and self._single_tokenizer is not None:
+            enc = self._single_tokenizer.encode(input[0])
+            if enc.ids:
+                input_ids = np.array([enc.ids], dtype=np.int64)
+                attention_mask = np.array([enc.attention_mask], dtype=np.int64)
+                onnx_input = {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "token_type_ids": np.zeros_like(input_ids),
+                }
+                last_hidden = self._onnx.model.run(None, onnx_input)[0]
+                mask_exp = np.broadcast_to(np.expand_dims(attention_mask, -1), last_hidden.shape)
+                pooled = np.sum(last_hidden * mask_exp, 1) / np.clip(mask_exp.sum(1), a_min=1e-9, a_max=None)
+                return self._onnx._normalize(pooled).astype(np.float32)
+        return self._onnx(input)
+
+
 class MemoryStore:
-    def __init__(self, sqlite_path: Path = SQLITE_PATH, chroma_dir: Path = CHROMA_DIR):
+    def __init__(
+        self,
+        sqlite_path: Path = SQLITE_PATH,
+        chroma_dir: Path = CHROMA_DIR,
+        embedding_fn: Optional[Any] = None,
+    ):
         self.sqlite_path = sqlite_path
         self.chroma_dir = chroma_dir
+        self.embedding_fn = embedding_fn if embedding_fn is not None else _PersistentDefaultEF()
         self._canonical_keywords: Dict[str, List[str]] = {}
+        self._local = threading.local()
         self._embed_lock = threading.Lock()
         self._embed_cache: OrderedDict[str, List[float]] = OrderedDict()
         self._init_sqlite()
@@ -38,28 +104,27 @@ class MemoryStore:
     def _embed_query(self, query: str) -> Optional[List[float]]:
         """Computes the ChromaDB query embedding once and reuses it across memory + exemplar queries."""
         key = (query or "").strip()
-        if not key:
+        if not key or self.embedding_fn is None:
             return None
         with self._embed_lock:
             cached = self._embed_cache.get(key)
             if cached is not None:
                 self._embed_cache.move_to_end(key)
                 return cached
-            ef = getattr(self.collection, "_embedding_function", None)
-            if ef is None:
+        try:
+            raw = self.embedding_fn([key])
+            if not raw:
                 return None
-            try:
-                raw = ef([key])
-                if not raw:
-                    return None
-                vec = raw[0]
-                vec_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
-                self._embed_cache[key] = vec_list
-                if len(self._embed_cache) > 32:
-                    self._embed_cache.popitem(last=False)
-                return vec_list
-            except Exception:
-                return None
+            vec = raw[0]
+            vec_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+        except Exception:
+            return None
+        with self._embed_lock:
+            self._embed_cache[key] = vec_list
+            self._embed_cache.move_to_end(key)
+            if len(self._embed_cache) > 32:
+                self._embed_cache.popitem(last=False)
+        return vec_list
 
     def warmup_embeddings(self) -> float:
         """Primes the ONNX embedding model at server boot so Turn 1 avoids the cold-load stall."""
@@ -68,10 +133,41 @@ class MemoryStore:
         return round((time.perf_counter() - t0) * 1000.0, 1)
 
     @contextmanager
-    def _conn(self):
-        conn = sqlite3.connect(self.sqlite_path)
+    def connection_scope(self):
+        """Reuses a single SQLite connection on the current thread across a turn (reentrant)."""
+        existing = getattr(self._local, "conn", None)
+        created_here = existing is None
+        if created_here:
+            conn = sqlite3.connect(self.sqlite_path)
+            conn.execute("PRAGMA busy_timeout=5000;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            self._local.conn = conn
+        else:
+            conn = existing
         try:
             yield conn
+        finally:
+            if created_here:
+                self._local.conn = None
+                conn.close()
+
+    @contextmanager
+    def _conn(self):
+        scoped = getattr(self._local, "conn", None)
+        if scoped is not None:
+            prev_factory = scoped.row_factory
+            try:
+                with scoped:
+                    yield scoped
+            finally:
+                scoped.row_factory = prev_factory
+            return
+
+        conn = sqlite3.connect(self.sqlite_path)
+        conn.execute("PRAGMA busy_timeout=5000;")
+        try:
+            with conn:
+                yield conn
         finally:
             conn.close()
 
@@ -124,10 +220,12 @@ class MemoryStore:
         self.chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
         self.collection = self.chroma_client.get_or_create_collection(
             name="amadeus_cortex",
+            embedding_function=self.embedding_fn,
             metadata={"description": "Makise Kurisu digitized memories and user-learned facts"}
         )
         self.exemplars_collection = self.chroma_client.get_or_create_collection(
             name="kurisu_exemplars",
+            embedding_function=self.embedding_fn,
             metadata={"description": "Fine-tuning dialogue exemplars for Dynamic Few-Shot prompting"}
         )
 
@@ -353,19 +451,19 @@ class MemoryStore:
     ) -> List[Dict[str, Any]]:
         if group_limit <= 0:
             return []
-        group_ids = (self.collection.get(where=where_filter, include=[]) or {}).get("ids") or []
-        if not group_ids:
-            return []
 
         q_kwargs: Dict[str, Any] = {
-            "n_results": min(group_limit, len(group_ids)),
+            "n_results": group_limit,
             "where": where_filter,
         }
         if query_embedding is not None:
             q_kwargs["query_embeddings"] = [query_embedding]
         else:
             q_kwargs["query_texts"] = [query]
-        results = self.collection.query(**q_kwargs)
+        try:
+            results = self.collection.query(**q_kwargs)
+        except Exception:
+            return []
 
         matched: List[Dict[str, Any]] = []
         if results and results.get("ids") and len(results["ids"]) > 0:
@@ -472,6 +570,7 @@ class MemoryStore:
 
         now = time.time()
         doc_text = f"{clean_title}: {clean_content}"
+        doc_vec = self._embed_query(doc_text)
         mem_id: Optional[str] = None
 
         with self._conn() as conn:
@@ -485,13 +584,14 @@ class MemoryStore:
                 if row:
                     mem_id = row[0]
                 else:
-                    learned_ids = (self.collection.get(where={"source": "learned"}, include=[]) or {}).get("ids") or []
-                    if learned_ids:
-                        q = self.collection.query(
-                            query_texts=[doc_text],
-                            n_results=1,
-                            where={"source": "learned"}
-                        )
+                    cursor.execute("SELECT 1 FROM memories WHERE source = 'learned' LIMIT 1")
+                    if cursor.fetchone() is not None:
+                        q_kwargs: Dict[str, Any] = {"n_results": 1, "where": {"source": "learned"}}
+                        if doc_vec is not None:
+                            q_kwargs["query_embeddings"] = [doc_vec]
+                        else:
+                            q_kwargs["query_texts"] = [doc_text]
+                        q = self.collection.query(**q_kwargs)
                         if (
                             q
                             and q.get("ids")
@@ -514,17 +614,20 @@ class MemoryStore:
                 )
             conn.commit()
 
-        self.collection.upsert(
-            ids=[mem_id],
-            documents=[doc_text],
-            metadatas=[{
+        upsert_kwargs: Dict[str, Any] = {
+            "ids": [mem_id],
+            "documents": [doc_text],
+            "metadatas": [{
                 "title": clean_title,
                 "category": clean_category,
                 "emotional_weight": clean_emotion,
                 "source": clean_source,
                 "raw_content": clean_content
-            }]
-        )
+            }],
+        }
+        if doc_vec is not None:
+            upsert_kwargs["embeddings"] = [doc_vec]
+        self.collection.upsert(**upsert_kwargs)
 
         return {
             "id": mem_id,

@@ -1,8 +1,11 @@
 import json
+import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
@@ -289,6 +292,139 @@ class TestMemoryRAG(unittest.TestCase):
         ep = self.store.get_temporal_and_episodic_context(s3, is_system_event=True)
         self.assertIn("Kerr", ep["lastSessionTopic"])
         self.assertIn("singularidade em anel", ep["lastSessionTopic"])
+
+    def test_12_connection_scope_reentrancy_and_row_factory(self):
+        memory_store_mod = sys.modules["app.db.memory_store"]
+        with tempfile.TemporaryDirectory(prefix="amadeus_test_scope_", ignore_cleanup_errors=True) as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = MemoryStore(sqlite_path=tmp_path / "scope.db", chroma_dir=tmp_path / "memory_db")
+
+            with patch.object(memory_store_mod.sqlite3, "connect", wraps=sqlite3.connect) as connect_spy:
+                with store.connection_scope() as outer_conn:
+                    sid = store.create_session()
+                    with store.connection_scope() as inner_conn:
+                        self.assertIs(outer_conn, inner_conn)
+                        store.save_message(sid, sender="user", content="Olá Kurisu")
+                        msgs = store.get_session_messages(sid)
+                        self.assertEqual(len(msgs), 1)
+                        self.assertIsNone(outer_conn.row_factory)
+                        self.assertEqual(store.get_session_context_summary(sid), "")
+                        store.get_temporal_and_episodic_context(sid)
+
+                        with self.assertRaises(RuntimeError):
+                            with store._conn() as tx_conn:
+                                tx_conn.execute(
+                                    "INSERT INTO sessions (id, started_at) VALUES (?, ?)",
+                                    ("sess_rolled_back", 1.0),
+                                )
+                                raise RuntimeError("force rollback")
+
+                    sessions = store.list_sessions()
+                    self.assertFalse(any(s["id"] == "sess_rolled_back" for s in sessions))
+                    self.assertTrue(any(s["id"] == sid for s in sessions))
+
+                self.assertEqual(connect_spy.call_count, 1)
+                self.assertIsNone(getattr(store._local, "conn", None))
+
+    def test_13_query_memory_group_without_collection_get(self):
+        self.store.clear_learned_memories()
+        with patch.object(self.store.collection, "get", side_effect=AssertionError("collection.get should not be called")):
+            matches_zero = self.store.search_memories("Como funciona a sua pesquisa de digitalizar memórias no Amadeus?")
+            self.assertGreaterEqual(len(matches_zero), 1)
+            self.assertEqual(matches_zero[0]["id"], "mem_01")
+
+        self.store.add_memory("user", "Cidade Natal", "O operador mora em Recife.", source="learned")
+        try:
+            self.store._embed_cache.clear()
+            with patch.object(self.store.collection, "get", side_effect=AssertionError("collection.get should not be called")):
+                matches_one = self.store.search_memories("Em qual cidade o operador mora?")
+                self.assertGreaterEqual(len(matches_one), 1)
+        finally:
+            self.store.clear_learned_memories()
+
+    def test_14_add_memory_reuses_single_embedding(self):
+        with tempfile.TemporaryDirectory(prefix="amadeus_test_add_embed_", ignore_cleanup_errors=True) as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            store = MemoryStore(sqlite_path=tmp_path / "add_embed.db", chroma_dir=tmp_path / "memory_db")
+            store.add_memory("user", "Cidade do Operador", "O operador mora em São Paulo.", source="learned")
+
+            orig_ef = store.embedding_fn
+            embed_calls = 0
+
+            def counting_ef(texts):
+                nonlocal embed_calls
+                embed_calls += 1
+                return orig_ef(texts)
+
+            store._embed_cache.clear()
+            with patch.object(store, "embedding_fn", side_effect=counting_ef):
+                updated = store.add_memory("user", "Moradia Atual", "O operador mudou-se e agora mora em Campinas.", source="learned")
+            self.assertEqual(embed_calls, 1)
+            matches = store.search_memories("Onde o operador mora atualmente em Campinas?")
+            self.assertTrue(any(m["id"] == updated["id"] for m in matches))
+
+    def test_15_embed_query_releases_lock_during_inference(self):
+        with tempfile.TemporaryDirectory(prefix="amadeus_test_lock_", ignore_cleanup_errors=True) as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            barrier = threading.Barrier(2, timeout=2.0)
+
+            def concurrent_ef(texts):
+                barrier.wait()
+                return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+            store = MemoryStore(
+                sqlite_path=tmp_path / "lock.db",
+                chroma_dir=tmp_path / "memory_db",
+            )
+
+            results = {}
+            errors = []
+
+            def run_query(name: str, q: str):
+                try:
+                    results[name] = store._embed_query(q)
+                except Exception as exc:
+                    errors.append(exc)
+
+            with patch.object(store, "embedding_fn", side_effect=concurrent_ef):
+                t1 = threading.Thread(target=run_query, args=("t1", "query alpha"))
+                t2 = threading.Thread(target=run_query, args=("t2", "query beta"))
+                t1.start()
+                t2.start()
+                t1.join(timeout=3.0)
+                t2.join(timeout=3.0)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(results.get("t1"), [0.1, 0.2, 0.3, 0.4])
+            self.assertEqual(results.get("t2"), [0.1, 0.2, 0.3, 0.4])
+            self.assertIn("query alpha", store._embed_cache)
+            self.assertIn("query beta", store._embed_cache)
+
+    def test_16_persistent_ef_matches_default_and_handles_batch(self):
+        import numpy as np
+        from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+        from app.db.memory_store import _PersistentDefaultEF
+
+        ef = _PersistentDefaultEF()
+        self.assertEqual(ef.name(), "default")
+
+        q = "Como funciona a digitalização de memórias no Amadeus?"
+        v_fast = np.array(ef([q])[0], dtype=np.float32)
+        v_ref = np.array(ONNXMiniLM_L6_V2()([q])[0], dtype=np.float32)
+        self.assertLess(float(np.max(np.abs(v_fast - v_ref))), 1e-5)
+
+        batch = ef(["Oi", "Texto significativamente mais longo sobre física teórica e buracos negros de Kerr."])
+        self.assertEqual(len(batch), 2)
+        self.assertEqual(len(batch[0]), len(v_ref))
+        self.assertEqual(len(batch[1]), len(v_ref))
+
+        long_text = " ".join(["neurociência", "sinapse", "paradoxo", "kerr", "amadeus"] * 70)
+        self.assertEqual(len(ef._single_tokenizer.encode(long_text).ids), 256)
+        v_long = np.array(ef([long_text])[0], dtype=np.float32)
+        v_long_ref = np.array(ONNXMiniLM_L6_V2()([long_text])[0], dtype=np.float32)
+        self.assertEqual(len(v_long), len(v_ref))
+        self.assertTrue(bool(np.all(np.isfinite(v_long))))
+        self.assertLess(float(np.max(np.abs(v_long - v_long_ref))), 1e-5)
 
 
 if __name__ == "__main__":
