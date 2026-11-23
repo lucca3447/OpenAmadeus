@@ -12,6 +12,12 @@ export interface BackendHealth {
   totalMemories: number;
   totalSessions: number;
   edgeTtsAvailable: boolean;
+  configuredProviders?: {
+    groq: boolean;
+    openrouter: boolean;
+    gemini: boolean;
+  };
+  activeLlmProvider?: 'offline' | 'groq' | 'openrouter' | 'gemini';
 }
 
 export interface BackendChatResponse {

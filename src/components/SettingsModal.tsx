@@ -52,6 +52,7 @@ interface SettingsModalProps {
   onChangeUiLang?: (lang: AppLanguage) => void;
   lastTurnTelemetry?: ClientTurnTelemetry | null;
   turnTelemetryHistory?: ClientTurnTelemetry[];
+  serverLlmProvider?: 'offline' | 'groq' | 'openrouter' | 'gemini';
 }
 
 const CAPSULE_SECTIONS: { id: SettingsSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -142,6 +143,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onChangeUiLang,
   lastTurnTelemetry,
   turnTelemetryHistory = [],
+  serverLlmProvider = 'offline',
 }) => {
   const ui = getUiText(uiLang || lang);
   const t = ui.settingsModal;
@@ -163,6 +165,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [availableRvcModels, setAvailableRvcModels] = useState<string[]>(['KurisuRVCv147']);
   const [backendMetrics, setBackendMetrics] = useState<BackendMetricsSnapshot | null>(null);
   const [diagHealth, setDiagHealth] = useState<BackendHealth | null>(null);
+  const effectiveServerProvider = diagHealth?.activeLlmProvider || serverLlmProvider;
   const [diagVoice, setDiagVoice] = useState<VoiceEngineStatus | null>(null);
   const [isRunningDiag, setIsRunningDiag] = useState(false);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -525,7 +528,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           ? 'GOOGLE GEMINI'
                           : tempApiKey.trim().startsWith('sk-or-')
                             ? 'OPENROUTER'
-                            : 'MODO OFFLINE'}
+                            : effectiveServerProvider !== 'offline'
+                              ? `SERVER .ENV (${effectiveServerProvider.toUpperCase()})`
+                              : 'MODO OFFLINE'}
                     </span>
                   </div>
                   <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
@@ -1777,7 +1782,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       spec: `FastAPI + ChromaDB (${diagHealth?.chromaCount ?? 36}+) + SQLite WAL • Groq / Gemini / OpenRouter`,
                       desc: t.systemSec.memoryCortexDesc,
                       dotClass:
-                        isOnlineBackend && Boolean(tempApiKey.trim())
+                        isOnlineBackend && (Boolean(tempApiKey.trim()) || effectiveServerProvider !== 'offline')
                           ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
                           : isOnlineBackend
                             ? 'bg-amber-400'

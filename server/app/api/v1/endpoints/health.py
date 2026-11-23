@@ -1,3 +1,4 @@
+import os
 import time
 from fastapi import APIRouter
 from app.db.memory_store import memory_store
@@ -10,6 +11,15 @@ router = APIRouter()
 @router.get("/health")
 def health():
     total_memories, total_sessions = memory_store.get_counts()
+    configured = {
+        "groq": bool(os.environ.get("GROQ_API_KEY", "").strip()),
+        "openrouter": bool(os.environ.get("OPENROUTER_API_KEY", "").strip()),
+        "gemini": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+    }
+    active_llm_provider = next(
+        (name for name in ("groq", "openrouter", "gemini") if configured[name]),
+        "offline",
+    )
     return {
         "status": "online",
         "system": f"AMADEUS OS v{APP_VERSION}",
@@ -20,6 +30,8 @@ def health():
         "totalMemories": total_memories,
         "totalSessions": total_sessions,
         "edgeTtsAvailable": check_edge_tts_available(),
+        "configuredProviders": configured,
+        "activeLlmProvider": active_llm_provider,
         "uptimeSeconds": round(time.time() - metrics_registry.started_at, 1),
     }
 

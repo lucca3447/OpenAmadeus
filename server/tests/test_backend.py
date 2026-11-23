@@ -430,6 +430,35 @@ class TestAmadeusBackend(unittest.TestCase):
                 "gsk_req_key",
             )
 
+    def test_19_health_reports_configured_providers_without_leaking_keys(self):
+        cases = [
+            (
+                {"GROQ_API_KEY": "gsk_secret", "OPENROUTER_API_KEY": "", "GEMINI_API_KEY": "AIza_secret"},
+                {"groq": True, "openrouter": False, "gemini": True},
+                "groq",
+            ),
+            (
+                {"GROQ_API_KEY": "", "OPENROUTER_API_KEY": "", "GEMINI_API_KEY": "AIza_secret"},
+                {"groq": False, "openrouter": False, "gemini": True},
+                "gemini",
+            ),
+            (
+                {"GROQ_API_KEY": "", "OPENROUTER_API_KEY": "", "GEMINI_API_KEY": ""},
+                {"groq": False, "openrouter": False, "gemini": False},
+                "offline",
+            ),
+        ]
+        for env_vals, expected_flags, expected_active in cases:
+            with patch.dict(os.environ, env_vals, clear=False):
+                res = self.client.get("/api/health")
+                self.assertEqual(res.status_code, 200)
+                body = res.json()
+                self.assertEqual(body.get("configuredProviders"), expected_flags)
+                self.assertEqual(body.get("activeLlmProvider"), expected_active)
+                serialized = res.text
+                self.assertNotIn("gsk_secret", serialized)
+                self.assertNotIn("AIza_secret", serialized)
+
 if __name__ == "__main__":
     unittest.main()
 

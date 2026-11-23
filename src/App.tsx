@@ -17,11 +17,13 @@ import {
 import { MemoryService } from './services/memoryService';
 import {
   AIService,
+  AIProvider,
   AIStatus,
   ModelOption,
   OFFLINE_MODEL_ID,
   getProviderFromKey,
   getModelOptionsForKey,
+  getModelOptionsForProvider,
 } from './services/aiService';
 import { BackendService, BackendHealth } from './services/backendService';
 import { SpeechService, type SentenceSpeaker, type SpeakOptions } from './services/speechService';
@@ -94,8 +96,14 @@ export const App: React.FC = () => {
     localStorage.setItem('amadeus_llm_settings', JSON.stringify(next));
   };
 
+  const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
+
   // Active AI Model and dynamic options
-  const currentProvider = getProviderFromKey(apiKey);
+  const serverLlmProvider: AIProvider = backendHealth?.activeLlmProvider || 'offline';
+  const currentProvider: AIProvider = apiKey.trim()
+    ? getProviderFromKey(apiKey)
+    : serverLlmProvider;
+  const hasLlmKey = Boolean(apiKey.trim()) || serverLlmProvider !== 'offline';
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(() => getModelOptionsForKey(apiKey));
   const [modelNotice, setModelNotice] = useState<string | null>(null);
 
@@ -160,7 +168,6 @@ export const App: React.FC = () => {
   const [isListening, setIsListening] = useState<boolean>(false);
   const [interimTranscript, setInterimTranscript] = useState<string>('');
   const [micError, setMicError] = useState<string | null>(null);
-  const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
 
   const [scanlines, setScanlines] = useState<boolean>(() => {
     const val = localStorage.getItem('amadeus_scanlines');
@@ -261,14 +268,28 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  // Synchronize model options on apiKey changes, and fetch active models in the background
+  // Synchronize model options on apiKey or server .env provider changes, fetching active models when a UI key is set
   useEffect(() => {
-    const initial = getModelOptionsForKey(apiKey);
+    const initial = getModelOptionsForProvider(currentProvider);
     setModelOptions(initial);
 
-    if (!apiKey.trim()) {
+    if (!hasLlmKey) {
       setCurrentModel(OFFLINE_MODEL_ID);
-      localStorage.setItem('amadeus_selected_model', OFFLINE_MODEL_ID);
+      if (backendHealth !== null) {
+        localStorage.setItem('amadeus_selected_model', OFFLINE_MODEL_ID);
+      }
+      return;
+    }
+
+    if (!apiKey.trim()) {
+      const saved = localStorage.getItem('amadeus_selected_model');
+      const nextModel =
+        saved && saved !== OFFLINE_MODEL_ID && initial.some((m) => m.id === saved)
+          ? saved
+          : initial[0].id;
+      setCurrentModel(nextModel);
+      localStorage.setItem('amadeus_selected_model', nextModel);
+      setAiStatus((prev) => (prev.kind === 'offline' ? { kind: 'pending' } : prev));
       return;
     }
 
@@ -300,7 +321,7 @@ export const App: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [apiKey]);
+  }, [apiKey, serverLlmProvider]);
 
   // Keyboard shortcut Ctrl+B for sidebar
   useEffect(() => {
@@ -784,7 +805,7 @@ export const App: React.FC = () => {
 
     const canQueryOnline =
       (llmSettings.idleInitiativeMode || 'voice') !== 'off' &&
-      Boolean(apiKey.trim()) &&
+      hasLlmKey &&
       currentModel !== OFFLINE_MODEL_ID;
 
     if (!canQueryOnline) {
@@ -1410,6 +1431,7 @@ export const App: React.FC = () => {
             initialSection={settingsSection}
             apiKey={apiKey}
             onSaveApiKey={handleSaveApiKey}
+            serverLlmProvider={serverLlmProvider}
             voiceSettings={voiceSettings}
             onSaveVoiceSettings={handleSaveVoiceSettings}
             llmSettings={llmSettings}

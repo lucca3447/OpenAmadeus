@@ -120,8 +120,7 @@ export function formatModelOptionLabel(id: string, provider: AIProvider): string
 }
 
 /** Synchronous, non-blocking resolver for model options (Cache + Default Catalogs) */
-export function getModelOptionsForKey(key?: string | null): ModelOption[] {
-  const provider = getProviderFromKey(key);
+export function getModelOptionsForProvider(provider: AIProvider): ModelOption[] {
   if (provider === 'offline') {
     return [OFFLINE_ONLY_OPTION];
   }
@@ -147,6 +146,10 @@ export function getModelOptionsForKey(key?: string | null): ModelOption[] {
     return [...OPENROUTER_DEFAULT_MODELS, OFFLINE_MODEL_OPTION];
   }
   return [...GEMINI_DEFAULT_MODELS, OFFLINE_MODEL_OPTION];
+}
+
+export function getModelOptionsForKey(key?: string | null): ModelOption[] {
+  return getModelOptionsForProvider(getProviderFromKey(key));
 }
 
 const MODEL_CACHE_KEY = 'amadeus_model';
