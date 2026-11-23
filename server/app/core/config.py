@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 from dotenv import load_dotenv
 
 # Base Directories
@@ -63,3 +63,36 @@ GROQ_FALLBACK_MODELS: List[str] = [
     "openai/gpt-oss-20b",
     "llama-3.1-8b-instant"
 ]
+
+# Cognitive Core & Sleep-Time Compute (v0.4.0)
+PREFERRED_BG_GEMINI_MODELS: List[str] = [
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+]
+
+GROQ_BG_MODELS: List[str] = [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+]
+
+CORE_MEMORY_BLOCK_KEYS: Tuple[str, ...] = (
+    "operator_profile",
+    "current_projects",
+    "preferences",
+    "open_loops",
+)
+CORE_MEMORY_MAX_BLOCK_CHARS: int = 400
+COGNITIVE_QUEUE_MAXSIZE: int = 32
+COGNITIVE_SWEEP_INTERVAL_SEC: float = 30.0
+
+
+def get_cognitive_idle_sec() -> float:
+    raw = (os.environ.get("AMADEUS_IDLE_CONSOLIDATE_SEC") or "").strip()
+    if not raw:
+        return 300.0
+    try:
+        return max(5.0, float(raw))
+    except ValueError:
+        return 300.0

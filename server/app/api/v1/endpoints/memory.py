@@ -1,8 +1,14 @@
+import asyncio
 from fastapi import APIRouter
 from app.db.memory_store import memory_store
 from app.schemas.memory import AddMemoryRequest
+from app.services.cognitive_worker import cognitive_worker
 
 router = APIRouter()
+
+@router.get("/core-memory")
+def get_core_memory():
+    return {"blocks": memory_store.get_core_memory_snapshot()}
 
 @router.get("/memories")
 def get_memories():
@@ -47,6 +53,12 @@ def delete_session(session_id: str):
     return {"ok": True, "deleted": session_id}
 
 @router.post("/sessions/{session_id}/close")
-def close_session(session_id: str):
-    summary = memory_store.close_session(session_id)
-    return {"ok": True, "sessionId": session_id, "contextSummary": summary}
+async def close_session(session_id: str):
+    summary = await asyncio.to_thread(memory_store.close_session, session_id)
+    enqueued = cognitive_worker.enqueue_session(session_id, reason="hangup")
+    return {
+        "ok": True,
+        "sessionId": session_id,
+        "contextSummary": summary,
+        "consolidationQueued": enqueued,
+    }

@@ -6,7 +6,7 @@ fallbacks, errors, and barge-in aborts without external dependencies.
 from collections import deque
 import math
 import time
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 WINDOW_SIZE = 50
 
@@ -48,12 +48,19 @@ def _summarize_series(events: List[Dict[str, Any]], key: str) -> Dict[str, Optio
 class MetricsRegistry:
     def __init__(self, maxlen: int = WINDOW_SIZE):
         self._maxlen = maxlen
+        self._cognitive_state_provider: Optional[Callable[[], Dict[str, Any]]] = None
         self.reset()
+
+    def set_cognitive_state_provider(
+        self, provider: Optional[Callable[[], Dict[str, Any]]]
+    ) -> None:
+        self._cognitive_state_provider = provider
 
     def reset(self) -> None:
         self.started_at = time.time()
         self._chat: Deque[Dict[str, Any]] = deque(maxlen=self._maxlen)
         self._tts: Deque[Dict[str, Any]] = deque(maxlen=self._maxlen)
+        self._cognitive: Deque[Dict[str, Any]] = deque(maxlen=self._maxlen)
         self._seen_llm_keys: set[str] = set()
         self.counters: Dict[str, int] = {
             "chat_total": 0,
@@ -64,6 +71,16 @@ class MetricsRegistry:
             "tts_errors": 0,
             "tts_aborts": 0,
             "tts_fallbacks": 0,
+        }
+        self.cognitive_counters: Dict[str, int] = {
+            "jobs_enqueued": 0,
+            "jobs_coalesced": 0,
+            "jobs_dropped_full": 0,
+            "jobs_completed": 0,
+            "jobs_skipped_noop": 0,
+            "jobs_failed": 0,
+            "schema_retries": 0,
+            "provider_failovers": 0,
         }
 
     def mark_llm_cold_start(self, provider_key: str) -> bool:
@@ -135,11 +152,54 @@ class MetricsRegistry:
             self.counters["tts_fallbacks"] += 1
         return clean
 
+    def record_cognitive_enqueue(self, coalesced: bool = False, dropped: bool = False) -> None:
+        if coalesced:
+            self.cognitive_counters["jobs_coalesced"] += 1
+        elif dropped:
+            self.cognitive_counters["jobs_dropped_full"] += 1
+        else:
+            self.cognitive_counters["jobs_enqueued"] += 1
+
+    def record_cognitive_job(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        clean = {
+            "ts": round(time.time(), 3),
+            "session_id": event.get("session_id") or "",
+            "reason": event.get("reason") or "hangup",
+            "status": event.get("status") or "ok",
+            "provider": event.get("provider") or "offline",
+            "model": event.get("model") or "",
+            "latency_ms": _round_opt(event.get("latency_ms")),
+            "schema_retries": int(event.get("schema_retries") or 0),
+            "failovers": int(event.get("failovers") or 0),
+            "facts_saved": int(event.get("facts_saved") or 0),
+            "core_blocks_updated": int(event.get("core_blocks_updated") or 0),
+            "error": event.get("error"),
+        }
+        self._cognitive.append(clean)
+        if clean["status"] == "ok":
+            self.cognitive_counters["jobs_completed"] += 1
+        elif clean["status"] == "noop":
+            self.cognitive_counters["jobs_skipped_noop"] += 1
+        elif clean["status"] == "error":
+            self.cognitive_counters["jobs_failed"] += 1
+        self.cognitive_counters["schema_retries"] += clean["schema_retries"]
+        self.cognitive_counters["provider_failovers"] += clean["failovers"]
+        return clean
+
     def snapshot(self) -> Dict[str, Any]:
         chat_list = list(self._chat)
         tts_list = list(self._tts)
+        cog_list = list(self._cognitive)
         chat_ok = [e for e in chat_list if e["status"] == "ok"]
         tts_ok = [e for e in tts_list if e["status"] == "ok" and not e["aborted"]]
+        cog_ok = [e for e in cog_list if e["status"] == "ok"]
+
+        cog_state: Dict[str, Any] = {}
+        if self._cognitive_state_provider is not None:
+            try:
+                cog_state = self._cognitive_state_provider() or {}
+            except Exception:
+                cog_state = {}
 
         cold_chats = [e for e in chat_ok if e["cold_start"] and e.get("total_ms") is not None]
         warm_chats = [e for e in chat_ok if not e["cold_start"] and e.get("total_ms") is not None]
@@ -189,9 +249,18 @@ class MetricsRegistry:
                 "realtime_speed_x": _summarize_series(tts_ok, "realtime_speed_x"),
                 "engines": engines_count,
             },
+            "cognitive": {
+                **self.cognitive_counters,
+                "queue_depth": int(cog_state.get("queue_depth") or 0),
+                "worker_running": bool(cog_state.get("worker_running", False)),
+                "core_memory_blocks": int(cog_state.get("core_memory_blocks") or 0),
+                "last": cog_list[-1] if cog_list else None,
+                "bg_latency_ms": _summarize_series(cog_ok, "latency_ms"),
+            },
             "recent": {
                 "chat": chat_list[-10:],
                 "tts": tts_list[-10:],
+                "cognitive": cog_list[-10:],
             },
         }
 

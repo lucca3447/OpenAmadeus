@@ -17,6 +17,7 @@ from app.services.persona_service import load_persona
 from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_reasoning, parse_tags, sanitize_repetitive_openers, infer_pose_and_camera, infer_lead_expression, infer_sentence_shift
 from app.services.offline_simulator import offline_simulator
 from app.services.metrics import metrics_registry
+from app.services.cognitive_worker import cognitive_worker
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
@@ -533,15 +534,22 @@ class LLMOrchestrator:
                 emotion=emotion,
                 recalled=recalled_ids,
             )
+            cognitive_worker.touch_session(session_id)
 
     def _build_system_prompt(self, req, persona, semantic_matches, search_query, history_turns,
                              context_summary, gap_seconds, last_session_topic) -> str:
         # 2. Build Memory Context for LLM (static KV-cacheable prefix first, dynamic per-turn suffix last)
         lang_code = (req.lang or "pt").strip().lower()[:2]
         canonical_voice = bool(getattr(req, "canonicalVoice", False)) and lang_code != "ja"
+        core_memory_snapshot = memory_store.get_core_memory_snapshot()
+        core_memory_block = memory_store.format_core_memory_block(lang_code)
         kurisu_memories = [m for m in semantic_matches if m.get("source") != "learned"]
         learned_matches = [m for m in semantic_matches if m.get("source") == "learned"]
-        user_memories = memory_store.get_learned_context(search_query, precomputed_learned=learned_matches)
+        user_memories = (
+            learned_matches
+            if core_memory_block
+            else memory_store.get_learned_context(search_query, precomputed_learned=learned_matches)
+        )
 
         # Static prefix blocks (stable across turns for KV prefix caching)
         static_blocks: List[str] = []
@@ -565,6 +573,10 @@ class LLMOrchestrator:
                     "- Para CADA frase da sua resposta, inclua imediatamente antes do texto na língua do operador a tag <!--ja:セリフ--> contendo a fala equivalente autêntica de Makise Kurisu em japonês nativo.\n"
                     "- Exemplo: <!--emotion:wink,pose:default,camera:closeup--> <!--ja:冗談よ、そんなにムキにならないで。--> Brincadeira, não precisa levar tão a sério."
                 )
+
+        # Core Memory is immutable mid-call (sleep-time updated only), so it lives at the end of the KV prefix
+        if core_memory_block:
+            static_blocks.append(core_memory_block)
 
         # Dynamic per-turn blocks (memories, exemplars, rolling summary, circadian telemetry)
         dynamic_blocks: List[str] = []
@@ -597,7 +609,8 @@ class LLMOrchestrator:
             dynamic_blocks.append(f"[RESUMO DO CONTEXTO ANTERIOR DESTA CONVERSA]:\n{context_summary}")
 
         turn_count = (len(history_turns) // 2) + 1
-        dynamic_blocks.append(_build_call_telemetry(turn_count, len(user_memories), gap_seconds, last_session_topic, lang_code))
+        rapport_signal_count = max(len(user_memories), len(core_memory_snapshot))
+        dynamic_blocks.append(_build_call_telemetry(turn_count, rapport_signal_count, gap_seconds, last_session_topic, lang_code))
 
         memory_ctx_blocks = static_blocks + dynamic_blocks
         memory_ctx = ("\n\n" + "\n\n".join(memory_ctx_blocks)) if memory_ctx_blocks else ""
@@ -1245,6 +1258,7 @@ class LLMOrchestrator:
                             recalled_ids,
                         )
                     )
+                    cognitive_worker.touch_session(session_id)
                 except asyncio.CancelledError:
                     pass
 
