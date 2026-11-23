@@ -40,10 +40,10 @@ export const OFFLINE_MODEL_OPTION: ModelOption = {
 };
 
 export const GROQ_DEFAULT_MODELS: ModelOption[] = [
-  { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Versatile)', provider: 'groq', isRecommended: true },
-  { id: 'qwen-2.5-32b', label: 'Qwen 2.5 32B', provider: 'groq' },
+  { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', provider: 'groq', isRecommended: true },
+  { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B', provider: 'groq' },
   { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B', provider: 'groq' },
-  { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', provider: 'groq' },
+  { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Versatile)', provider: 'groq' },
   { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B (Instant)', provider: 'groq' },
 ];
 

@@ -66,15 +66,16 @@ GROQ_FALLBACK_MODELS: List[str] = [
 
 # Cognitive Core & Sleep-Time Compute (v0.4.0)
 PREFERRED_BG_GEMINI_MODELS: List[str] = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
 ]
 
 GROQ_BG_MODELS: List[str] = [
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
 ]
 
 CORE_MEMORY_BLOCK_KEYS: Tuple[str, ...] = (

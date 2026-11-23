@@ -262,6 +262,60 @@ class TestBackgroundRunner(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(res_fail.error)
         self.assertEqual(res_fail.failovers, 1)
 
+    async def test_05_http_404_discovers_active_model_fallback(self):
+        from app.services.llm.gemini import clear_gemini_model_cache
+
+        clear_gemini_model_cache()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "models?" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "models": [
+                            {
+                                "name": "models/gemini-custom-flash-lite",
+                                "supportedGenerationMethods": ["generateContent"],
+                            }
+                        ]
+                    },
+                )
+            if "gemini-custom-flash-lite:generateContent" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "text": json.dumps({
+                                                "session_summary": "Recuperado via discovery 404.",
+                                                "core_memory_updates": {},
+                                                "facts": [],
+                                            })
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(404, text="model not found")
+
+        env = {
+            "AMADEUS_BG_PROVIDER": "gemini",
+            "GEMINI_API_KEY": "gem_404_discover",
+            "AMADEUS_BG_GEMINI_MODEL": "",
+        }
+        with patch.dict(os.environ, env, clear=False), self._mock_transport(handler):
+            res = await complete_background("Consolidate", SleepTimeConsolidation)
+
+        self.assertIsNotNone(res.data)
+        self.assertEqual(res.provider, "gemini")
+        self.assertEqual(res.model, "gemini-custom-flash-lite")
+        self.assertGreaterEqual(res.failovers, 1)
+
 
 class TestCognitiveCoreAndWorker(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -467,6 +521,84 @@ class TestCognitiveCoreAndWorker(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(worker._running)
         self.assertIsNone(worker._worker_task)
         self.assertIsNone(worker._idle_task)
+
+    async def test_04_worker_session_backoff_and_circuit_breaker(self):
+        s_bad = self.store.create_session()
+        self.store.save_message(s_bad, "user", "Teste erro 1")
+        self.store.save_message(s_bad, "amadeus", "Resposta erro 1")
+
+        s_fresh = self.store.create_session()
+        self.store.save_message(s_fresh, "user", "Outra sessão idle")
+        self.store.save_message(s_fresh, "amadeus", "Resposta idle")
+
+        s_probe = self.store.create_session()
+        self.store.save_message(s_probe, "user", "Hangup probe")
+        self.store.save_message(s_probe, "amadeus", "Resposta probe")
+
+        old_ts = time.time() - 600.0
+        with self.store._conn() as conn:
+            conn.execute("UPDATE messages SET timestamp = ? WHERE session_id IN (?, ?)", (old_ts, s_bad, s_fresh))
+            conn.commit()
+
+        should_fail = True
+
+        async def flaky_complete(prompt, response_model, **kwargs):
+            if should_fail:
+                return bg_module.BackgroundResult(
+                    data=None,
+                    provider="groq",
+                    model="openai/gpt-oss-20b",
+                    latency_ms=10.0,
+                    schema_retries=0,
+                    failovers=0,
+                    error="simulated error",
+                )
+            return bg_module.BackgroundResult(
+                data=SleepTimeConsolidation(
+                    session_summary="Recuperado no probe half-open.",
+                    core_memory_updates=CoreMemoryPatch(),
+                    facts=[],
+                ),
+                provider="gemini",
+                model="gemini-flash-lite-latest",
+                latency_ms=15.0,
+                schema_retries=0,
+                failovers=0,
+            )
+
+        worker = CognitiveWorker(
+            store=self.store,
+            metrics=self.metrics,
+            complete_fn=flaky_complete,
+            idle_seconds=300.0,
+            circuit_failure_threshold=3,
+            circuit_cooldown_sec=300.0,
+            session_backoff_base_sec=60.0,
+        )
+
+        # 1st failure puts s_bad into per-session backoff (s_fresh still eligible)
+        ev1 = await worker.process_session(s_bad, reason="idle")
+        self.assertEqual(ev1["status"], "error")
+        self.assertFalse(self.metrics.snapshot()["cognitive"]["circuit_open"])
+        worker.start()
+        try:
+            queued = await worker.run_idle_sweep_once()
+            self.assertEqual(queued, 1)
+            self.assertEqual(worker._queued_sessions, {s_fresh})
+        finally:
+            await worker.stop()
+
+        # 2 more failures open the global circuit breaker -> idle sweep stops completely
+        await worker.process_session(s_fresh, reason="idle")
+        await worker.process_session(s_bad, reason="idle")
+        self.assertTrue(self.metrics.snapshot()["cognitive"]["circuit_open"])
+        self.assertEqual(await worker.run_idle_sweep_once(), 0)
+
+        # Hangup probe succeeds -> closes circuit breaker and clears consecutive failure counter
+        should_fail = False
+        ev_ok = await worker.process_session(s_probe, reason="hangup")
+        self.assertEqual(ev_ok["status"], "ok")
+        self.assertFalse(self.metrics.snapshot()["cognitive"]["circuit_open"])
 
 
 class TestPromptOrderingAndEndpoints(unittest.TestCase):

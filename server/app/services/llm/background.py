@@ -17,6 +17,8 @@ from app.core.config import (
     GROQ_BG_MODELS,
     PREFERRED_BG_GEMINI_MODELS,
 )
+from app.services.llm.gemini import get_candidate_models
+from app.services.llm.groq import get_groq_candidate_models
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -215,6 +217,33 @@ def _build_candidates() -> List[Tuple[str, str, str]]:
     return candidates
 
 
+async def _discover_bg_fallback_models(
+    http_client: httpx.AsyncClient,
+    provider: str,
+    api_key: str,
+    tried: Set[str],
+) -> List[str]:
+    try:
+        if provider == "gemini":
+            discovered = await get_candidate_models(http_client, api_key, {})
+            extra = [m for m in discovered if m not in tried]
+            extra.sort(key=lambda m: ("lite" not in m, "flash" not in m))
+            return extra[:2]
+        if provider == "groq":
+            discovered = await get_groq_candidate_models(http_client, api_key)
+            extra = [
+                m
+                for m in discovered
+                if m not in tried
+                and not re.search(r"orpheus|safeguard|prompt-guard", m, re.IGNORECASE)
+            ]
+            extra.sort(key=lambda m: ("20b" not in m and "8b" not in m, "27b" not in m))
+            return extra[:2]
+    except Exception:
+        return []
+    return []
+
+
 async def _call_gemini(
     client: httpx.AsyncClient,
     api_key: str,
@@ -230,7 +259,7 @@ async def _call_gemini(
         "contents": contents,
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 1024,
+            "maxOutputTokens": 2048,
             "responseMimeType": "application/json",
             "responseSchema": gemini_schema,
         },
@@ -264,7 +293,7 @@ async def _call_groq(
         "model": model,
         "messages": messages,
         "temperature": 0.2,
-        "max_tokens": 1024,
+        "max_tokens": 2048,
         "response_format": {"type": "json_object"},
     }
     res = await client.post(_GROQ_CHAT_URL, headers=headers, json=payload, timeout=timeout_sec)
@@ -311,11 +340,14 @@ async def complete_background(
     last_error = "unknown"
     last_provider = candidates[0][0]
     last_model = candidates[0][2]
+    tried_by_provider: Dict[str, Set[str]] = {}
+    discovered_providers: Set[str] = set()
 
     async with _bg_http_client(timeout_sec, client) as http_client:
         idx = 0
         while idx < len(candidates):
             provider, api_key, model = candidates[idx]
+            tried_by_provider.setdefault(provider, set()).add(model)
             last_provider = provider
             last_model = model
 
@@ -385,6 +417,17 @@ async def complete_background(
             if (http_failed_code is not None and http_failed_code != 404) or provider_done:
                 while next_idx < len(candidates) and candidates[next_idx][0] == provider:
                     next_idx += 1
+            elif (
+                http_failed_code == 404
+                and provider not in discovered_providers
+                and (next_idx >= len(candidates) or candidates[next_idx][0] != provider)
+            ):
+                discovered_providers.add(provider)
+                extra_models = await _discover_bg_fallback_models(
+                    http_client, provider, api_key, tried_by_provider.get(provider, set())
+                )
+                for offset, extra_model in enumerate(extra_models):
+                    candidates.insert(idx + 1 + offset, (provider, api_key, extra_model))
 
             if next_idx < len(candidates):
                 failovers += 1

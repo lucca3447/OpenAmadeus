@@ -254,6 +254,7 @@ class MetricsRegistry:
                 "queue_depth": int(cog_state.get("queue_depth") or 0),
                 "worker_running": bool(cog_state.get("worker_running", False)),
                 "core_memory_blocks": int(cog_state.get("core_memory_blocks") or 0),
+                "circuit_open": bool(cog_state.get("circuit_open", False)),
                 "last": cog_list[-1] if cog_list else None,
                 "bg_latency_ms": _summarize_series(cog_ok, "latency_ms"),
             },
