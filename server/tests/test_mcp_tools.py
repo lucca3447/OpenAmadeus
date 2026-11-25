@@ -623,8 +623,8 @@ class TestAgentLoopAndHITLApprovals(unittest.TestCase):
         self.assertGreaterEqual(len(g3_reqs), 4)
 
         for body in g25_reqs:
-            self.assertIn("presencePenalty", body["generationConfig"])
-            self.assertIn("frequencyPenalty", body["generationConfig"])
+            self.assertNotIn("presencePenalty", body["generationConfig"])
+            self.assertNotIn("frequencyPenalty", body["generationConfig"])
 
         for body in g3_reqs:
             self.assertNotIn("presencePenalty", body["generationConfig"])

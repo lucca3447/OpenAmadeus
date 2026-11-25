@@ -202,7 +202,7 @@ class TestChatStream(unittest.TestCase):
                 )
             url_str = str(request.url)
             gemini_calls.append(url_str)
-            if "gemini-2.5-flash:" in url_str:
+            if len(gemini_calls) == 1:
                 return httpx.Response(
                     400,
                     json={"error": {"code": 400, "message": "Penalty is not enabled for this model", "status": "INVALID_ARGUMENT"}},

@@ -1051,7 +1051,7 @@ class LLMOrchestrator:
                                 except GeminiError as e:
                                     last_error = e
                                     if allow_model_fallback and (
-                                        e.code in (503, 429, 404) or is_gemini_retryable_400(e.code, e.message)
+                                        e.code in (0, 503, 429, 404) or is_gemini_retryable_400(e.code, e.message)
                                     ):
                                         fallback_attempts += 1
                                         print(f"[OpenAmadeus Core] Model {candidate_model} returned {e.code}, trying next...")

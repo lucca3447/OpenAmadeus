@@ -420,7 +420,7 @@ async def run_non_streaming_tool_loop(
                     except GeminiError as exc:
                         last_err = exc
                         if allow_fallback and (
-                            exc.code in (404, 429, 503) or is_gemini_retryable_400(exc.code, exc.message)
+                            exc.code in (0, 404, 429, 503) or is_gemini_retryable_400(exc.code, exc.message)
                         ):
                             fallback_attempts += 1
                             continue
@@ -445,7 +445,7 @@ async def run_non_streaming_tool_loop(
                     break
             except GeminiError as exc:
                 last_err = exc
-                is_retryable_err = exc.code in (404, 429, 502, 503) or (
+                is_retryable_err = exc.code in (0, 404, 429, 502, 503) or (
                     exc.code == 400 if (is_groq or is_openrouter) else is_gemini_retryable_400(exc.code, exc.message)
                 )
                 if allow_fallback and is_retryable_err:

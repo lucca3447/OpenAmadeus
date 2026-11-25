@@ -39,10 +39,11 @@ API_BASE_GEMINI = "https://generativelanguage.googleapis.com/v1beta"
 MAX_HISTORY_MESSAGES = 20
 
 PREFERRED_GEMINI_MODELS: List[str] = [
-    "gemini-2.5-flash",
     "gemini-flash-latest",
-    "gemini-2.5-flash-lite",
     "gemini-flash-lite-latest",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
 ]
 
 OPENROUTER_FREE_MODELS: List[str] = [

@@ -6,7 +6,6 @@ from app.core.config import API_BASE_GEMINI, PREFERRED_GEMINI_MODELS
 
 MODEL_LIST_TTL_SEC = 600.0
 _gemini_usable_cache: Dict[str, Tuple[float, List[str]]] = {}
-_GEMINI_NO_PENALTY_RE = re.compile(r"(?:^gemini-3\b|gemini-3[.-]|preview|exp\b|thinking|gemma)", re.IGNORECASE)
 
 
 def clear_gemini_model_cache() -> None:
@@ -14,24 +13,21 @@ def clear_gemini_model_cache() -> None:
 
 
 def gemini_supports_penalties(model: str) -> bool:
-    return not bool(_GEMINI_NO_PENALTY_RE.search(model or ""))
+    return False
 
 
 def build_gemini_generation_config(
-    model: str,
+    model: str = "",
     *,
     temperature: float = 0.85,
     max_output_tokens: int = 2048,
-    allow_penalties: bool = True,
+    allow_penalties: bool = False,
 ) -> Dict[str, Any]:
-    cfg: Dict[str, Any] = {
+    # Active Gemini aliases (flash-latest / 3.x) reject presence/frequency penalties with HTTP 400.
+    return {
         "temperature": temperature,
         "maxOutputTokens": max_output_tokens,
     }
-    if allow_penalties and gemini_supports_penalties(model):
-        cfg["presencePenalty"] = 0.4
-        cfg["frequencyPenalty"] = 0.4
-    return cfg
 
 
 def is_gemini_retryable_400(code: int, message: str) -> bool:
@@ -76,7 +72,8 @@ async def gemini_request(client: httpx.AsyncClient, method: str, path: str, api_
     try:
         res = await client.request(method, url, headers=headers, json=body, timeout=30.0)
     except Exception as e:
-        raise GeminiError(0, f"Sem conexão com a Google: {e}")
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        raise GeminiError(0, f"Sem conexão com a Google: {detail}")
 
     if res.status_code != 200:
         data = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
