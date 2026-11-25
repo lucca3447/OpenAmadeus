@@ -4,7 +4,7 @@ Each generator yields ("model", name) once the provider accepted a candidate, th
 ("delta", text) per token chunk. Candidate fallback only happens BEFORE the first token.
 """
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -47,47 +47,51 @@ def _collect_chunk_tool_calls(
             found = True
             raw_args = fc.get("args")
             call_id = f"call_{len(gemini_acc)}"
+            thought_sig = part.get("thoughtSignature")
             if isinstance(raw_args, dict):
-                gemini_acc.append(
-                    {"id": call_id, "name": str(fc["name"]), "arguments": raw_args, "parse_error": None}
-                )
+                entry: Dict[str, Any] = {
+                    "id": call_id,
+                    "name": str(fc["name"]),
+                    "arguments": raw_args,
+                    "parse_error": None,
+                }
             elif isinstance(raw_args, str):
                 stripped = raw_args.strip()
                 try:
                     obj = json.loads(stripped) if stripped else {}
                     if isinstance(obj, dict):
-                        gemini_acc.append(
-                            {"id": call_id, "name": str(fc["name"]), "arguments": obj, "parse_error": None}
-                        )
+                        entry = {
+                            "id": call_id,
+                            "name": str(fc["name"]),
+                            "arguments": obj,
+                            "parse_error": None,
+                        }
                     else:
-                        gemini_acc.append(
-                            {
-                                "id": call_id,
-                                "name": str(fc["name"]),
-                                "arguments": {},
-                                "parse_error": "Tool arguments JSON must be an object.",
-                                "raw_arguments": raw_args,
-                            }
-                        )
-                except json.JSONDecodeError as exc:
-                    gemini_acc.append(
-                        {
+                        entry = {
                             "id": call_id,
                             "name": str(fc["name"]),
                             "arguments": {},
-                            "parse_error": f"Malformed JSON arguments: {exc.msg}",
+                            "parse_error": "Tool arguments JSON must be an object.",
                             "raw_arguments": raw_args,
                         }
-                    )
-            else:
-                gemini_acc.append(
-                    {
+                except json.JSONDecodeError as exc:
+                    entry = {
                         "id": call_id,
                         "name": str(fc["name"]),
                         "arguments": {},
-                        "parse_error": None if raw_args is None else "Tool arguments must be a JSON object.",
+                        "parse_error": f"Malformed JSON arguments: {exc.msg}",
+                        "raw_arguments": raw_args,
                     }
-                )
+            else:
+                entry = {
+                    "id": call_id,
+                    "name": str(fc["name"]),
+                    "arguments": {},
+                    "parse_error": None if raw_args is None else "Tool arguments must be a JSON object.",
+                }
+            if isinstance(thought_sig, str) and thought_sig:
+                entry["thought_signature"] = thought_sig
+            gemini_acc.append(entry)
     return found
 
 
@@ -158,6 +162,7 @@ async def stream_candidates(
     label: str,
     *,
     collect_tool_calls: bool = False,
+    retry_check: Optional[Callable[[int, str], bool]] = None,
 ) -> AsyncIterator[Event]:
     """Generic candidate loop: POST streaming request per model, extract text with delta_of(chunk)."""
     last_err: Optional[GeminiError] = None
@@ -170,7 +175,10 @@ async def stream_candidates(
                 if res.status_code != 200:
                     err_body = (await res.aread()).decode("utf-8", "ignore")
                     err = GeminiError(res.status_code, f"[{label} • {model}] {err_body}")
-                    if allow_fallback and res.status_code in retry_codes:
+                    is_retryable = res.status_code in retry_codes or (
+                        retry_check is not None and retry_check(res.status_code, err_body)
+                    )
+                    if allow_fallback and is_retryable:
                         last_err = err
                         yield ("fallback", f"{model}:{res.status_code}")
                         continue

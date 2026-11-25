@@ -543,6 +543,103 @@ class TestAgentLoopAndHITLApprovals(unittest.TestCase):
             asyncio.set_event_loop(None)
             loop.close()
 
+    def test_04_gemini3_omits_penalties_and_preserves_thought_signature(self):
+        from app.services.llm.gemini import clear_gemini_model_cache
+
+        clear_gemini_model_cache()
+        orch_module._model_cache.clear()
+        seen_requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "googleapis.com" in request.url.host:
+                return httpx.Response(
+                    200,
+                    json={
+                        "models": [
+                            {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                            {"name": "models/gemini-3-flash-preview", "supportedGenerationMethods": ["generateContent"]},
+                        ]
+                    },
+                )
+
+            url_str = str(request.url)
+            body = json.loads(request.content)
+            seen_requests.append((url_str, body))
+            is_stream = ":streamGenerateContent" in url_str
+
+            # Step 0 on gemini-2.5-flash: verify penalties ARE present, return 429 to force fallback to gemini-3
+            if "gemini-2.5-flash:" in url_str:
+                return httpx.Response(429, json={"error": {"code": 429, "message": "quota"}})
+
+            # Gemini 3 calls: first call emits functionCall + thoughtSignature; second verifies thoughtSignature echoed back
+            if len(body.get("contents") or []) == 1:
+                fc_payload = {
+                    "candidates": [
+                        {
+                            "content": {
+                                "role": "model",
+                                "parts": [
+                                    {
+                                        "thoughtSignature": "sig_test_123",
+                                        "functionCall": {"name": "lab_notes__list_lab_notes", "args": {}},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+                if is_stream:
+                    return httpx.Response(200, content=_gemini_sse_chunks([fc_payload]))
+                return httpx.Response(200, json=fc_payload)
+
+            final_payload = {
+                "candidates": [
+                    {"content": {"parts": [{"text": "<!--emotion:analytical--> Gemini 3 preservou thoughtSignature."}]}}
+                ]
+            }
+            if is_stream:
+                return httpx.Response(200, content=_gemini_sse_chunks([final_payload]))
+            return httpx.Response(200, json=final_payload)
+
+        with patch.dict(os.environ, {"AMADEUS_MCP_CONFIG": str(self.cfg_path), "AMADEUS_BG_PROVIDER": "off"}, clear=False):
+            with self._mock_orch_httpx(handler), TestClient(app) as client:
+                sid = memory_store.create_session()
+
+                # 1. Non-streaming /api/chat
+                res = client.post("/api/chat", json={"message": "Liste as notas.", "sessionId": sid, "apiKey": KEY_GEMINI})
+                self.assertEqual(res.status_code, 200)
+                self.assertIn("thoughtSignature", res.json()["response"])
+
+                # 2. Streaming /api/chat/stream
+                sid_stream = memory_store.create_session()
+                orch_module._model_cache.clear()
+                ev = _read_sse_events(client, {"message": "Liste via stream.", "sessionId": sid_stream, "apiKey": KEY_GEMINI})
+                done = next(e for e in ev if e.get("event") == "done")["response"]
+                self.assertIn("thoughtSignature", done["response"])
+
+        g25_reqs = [b for u, b in seen_requests if "gemini-2.5-flash:" in u]
+        g3_reqs = [b for u, b in seen_requests if "gemini-3-flash-preview:" in u]
+        self.assertGreaterEqual(len(g25_reqs), 2)
+        self.assertGreaterEqual(len(g3_reqs), 4)
+
+        for body in g25_reqs:
+            self.assertIn("presencePenalty", body["generationConfig"])
+            self.assertIn("frequencyPenalty", body["generationConfig"])
+
+        for body in g3_reqs:
+            self.assertNotIn("presencePenalty", body["generationConfig"])
+            self.assertNotIn("frequencyPenalty", body["generationConfig"])
+
+        # Step 2 bodies (contents has >= 3 turns: initial user + model functionCall + user functionResponse)
+        step2_g3 = [b for b in g3_reqs if len(b["contents"]) >= 3]
+        self.assertEqual(len(step2_g3), 2)
+        for body in step2_g3:
+            model_turn = body["contents"][-2]
+            func_resp_turn = body["contents"][-1]
+            self.assertEqual(model_turn["role"], "model")
+            self.assertEqual(model_turn["parts"][0].get("thoughtSignature"), "sig_test_123")
+            self.assertIn("functionResponse", func_resp_turn["parts"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

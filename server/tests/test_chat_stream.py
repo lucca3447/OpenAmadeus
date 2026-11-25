@@ -184,6 +184,137 @@ class TestChatStream(unittest.TestCase):
             "これ以上ゾンビ扱いするなら、データストリームを書き換えてあげるわ。",
         )
 
+    def test_gemini_retryable_400_penalty_fallback_vs_invalid_key_fail_fast(self):
+        from app.services.llm.gemini import clear_gemini_model_cache
+
+        gemini_calls = []
+
+        def gemini_handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "models": [
+                            {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                            {"name": "models/gemini-flash-latest", "supportedGenerationMethods": ["generateContent"]},
+                        ]
+                    },
+                )
+            url_str = str(request.url)
+            gemini_calls.append(url_str)
+            if "gemini-2.5-flash:" in url_str:
+                return httpx.Response(
+                    400,
+                    json={"error": {"code": 400, "message": "Penalty is not enabled for this model", "status": "INVALID_ARGUMENT"}},
+                )
+            sse_ok = (
+                "data: "
+                + json.dumps({"candidates": [{"content": {"parts": [{"text": "<!--emotion:happy--> Fallback Gemini 400 ok."}]}}]})
+                + "\n\n"
+            ).encode("utf-8")
+            return httpx.Response(200, content=sse_ok)
+
+        def factory(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(gemini_handler)
+            return REAL_ASYNC_CLIENT(*args, **kwargs)
+
+        clear_gemini_model_cache()
+        orch_module._model_cache.clear()
+        with patch.object(orch_module.httpx, "AsyncClient", factory):
+            ev = read_events(self.client, self.payload(apiKey="AIza_test_penalty_0001"))
+        self.assertEqual(len(gemini_calls), 2)
+        self.assertEqual(ev[-1]["event"], "done")
+        self.assertIn("Fallback Gemini 400 ok.", ev[-1]["response"]["response"])
+
+        # Invalid API key 400 must fail immediately without iterating fallback candidates
+        invalid_calls = []
+
+        def bad_key_handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "models": [
+                            {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                            {"name": "models/gemini-flash-latest", "supportedGenerationMethods": ["generateContent"]},
+                        ]
+                    },
+                )
+            invalid_calls.append(str(request.url))
+            return httpx.Response(
+                400,
+                json={"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.", "status": "INVALID_ARGUMENT"}},
+            )
+
+        def bad_factory(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(bad_key_handler)
+            return REAL_ASYNC_CLIENT(*args, **kwargs)
+
+        clear_gemini_model_cache()
+        orch_module._model_cache.clear()
+        with patch.object(orch_module.httpx, "AsyncClient", bad_factory):
+            ev_bad = read_events(self.client, self.payload(apiKey="AIza_test_badkey_0002"))
+        self.assertEqual(len(invalid_calls), 1)
+        self.assertEqual([e["event"] for e in ev_bad], ["done"])
+        self.assertTrue(ev_bad[0]["response"]["error"])
+
+    def test_env_cross_provider_failover_groq_429_to_gemini(self):
+        from app.services.llm.gemini import clear_gemini_model_cache
+        from app.services.llm.groq import clear_groq_model_cache
+
+        called_urls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            called_urls.append(url_str)
+            if "api.groq.com" in request.url.host:
+                if request.url.path.endswith("/models"):
+                    return httpx.Response(200, json={"data": [{"id": "openai/gpt-oss-120b"}, {"id": "qwen/qwen3.8-27b"}]})
+                return httpx.Response(429, text="rate_limit_exceeded")
+            if "googleapis.com" in request.url.host:
+                if request.method == "GET":
+                    return httpx.Response(
+                        200,
+                        json={"models": [{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]}]},
+                    )
+                sse_ok = (
+                    "data: "
+                    + json.dumps({"candidates": [{"content": {"parts": [{"text": "<!--emotion:analytical--> Failover para Gemini concluído."}]}}]})
+                    + "\n\n"
+                ).encode("utf-8")
+                return httpx.Response(200, content=sse_ok)
+            return httpx.Response(404)
+
+        def factory(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return REAL_ASYNC_CLIENT(*args, **kwargs)
+
+        clear_gemini_model_cache()
+        clear_groq_model_cache()
+        orch_module._model_cache.clear()
+        with patch.dict(
+            os.environ,
+            {"GROQ_API_KEY": "gsk_env_test_1111", "OPENROUTER_API_KEY": "", "GEMINI_API_KEY": "AIza_env_test_2222"},
+            clear=False,
+        ):
+            with patch.object(orch_module.httpx, "AsyncClient", factory):
+                ev = read_events(
+                    self.client,
+                    {
+                        "message": "Teste de failover entre provedores.",
+                        "sessionId": memory_store.create_session(),
+                        "selectedModel": "openai/gpt-oss-120b",
+                    },
+                )
+
+        done = next(e for e in ev if e.get("event") == "done")["response"]
+        self.assertFalse(done.get("error"))
+        self.assertIn("Failover para Gemini concluído.", done["response"])
+        self.assertEqual(done["metrics"]["provider"], "gemini")
+        self.assertGreaterEqual(done["metrics"]["llm_fallback_attempts"], 1)
+        # Ensure Groq's model ID was never forwarded to Google's endpoint
+        self.assertFalse(any("gpt-oss" in u for u in called_urls if "googleapis.com" in u))
+
 
 if __name__ == "__main__":
     unittest.main()

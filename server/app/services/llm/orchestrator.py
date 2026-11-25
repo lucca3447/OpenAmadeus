@@ -26,7 +26,13 @@ from app.services.mcp.tool_runner import (
     execute_tool_batch,
     run_non_streaming_tool_loop,
 )
-from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
+from app.services.llm.gemini import (
+    GeminiError,
+    build_gemini_generation_config,
+    gemini_request,
+    get_candidate_models,
+    is_gemini_retryable_400,
+)
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
 from app.services.llm.streaming import stream_candidates, openai_delta, gemini_delta, gemini_stream_url
@@ -38,17 +44,26 @@ def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
 
-def _resolve_api_key(req: ChatRequest) -> str:
+def _resolve_api_keys(req: ChatRequest) -> List[str]:
     if (req.selectedModel or "").strip().lower() == "offline":
-        return ""
+        return []
     explicit = (req.apiKey or "").strip()
     if explicit:
-        return explicit
-    return (
-        os.environ.get("GROQ_API_KEY", "").strip()
-        or os.environ.get("OPENROUTER_API_KEY", "").strip()
-        or os.environ.get("GEMINI_API_KEY", "").strip()
-    )
+        return [explicit]
+    keys = [
+        os.environ.get(env_name, "").strip()
+        for env_name in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY")
+    ]
+    return [k for k in keys if k]
+
+
+def _resolve_api_key(req: ChatRequest) -> str:
+    keys = _resolve_api_keys(req)
+    return keys[0] if keys else ""
+
+
+def _is_provider_failover_error(err: GeminiError) -> bool:
+    return err.code in (0, 404, 429, 502, 503) or is_gemini_retryable_400(err.code, err.message)
 
 
 def _build_openai_messages(
@@ -662,7 +677,8 @@ class LLMOrchestrator:
 
     async def handle_chat(self, req: ChatRequest) -> ChatResponse:
         t_start = time.perf_counter()
-        api_key = _resolve_api_key(req)
+        api_keys = _resolve_api_keys(req)
+        api_key = api_keys[0] if api_keys else ""
         t_rag0 = time.perf_counter()
         ctx, system_prompt = await asyncio.to_thread(self._prepare_turn_context, req, bool(api_key))
         rag_ms = (time.perf_counter() - t_rag0) * 1000.0
@@ -739,6 +755,7 @@ class LLMOrchestrator:
                 metrics=recorded,
             )
 
+        active_keys = api_keys if allow_model_fallback else api_keys[:1]
         provider = "groq" if is_groq else ("openrouter" if is_openrouter else "gemini")
         cold_start = metrics_registry.mark_llm_cold_start(f"{provider}:{api_key[-8:]}")
         model_discovery_ms = 0.0
@@ -753,278 +770,318 @@ class LLMOrchestrator:
             pending_approvals: List[Dict[str, Any]] = []
             tools_active = mcp_registry.has_tools() and not is_system_event
 
-            if tools_active:
-                async with self._llm_client(35.0) as client:
-                    if is_groq:
-                        msgs_or_contents = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
-                        if not allow_model_fallback and preferred_model:
-                            cands = [preferred_model]
-                        else:
-                            t_disc0 = time.perf_counter()
-                            cands = await get_groq_candidate_models(client, api_key)
-                            model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
-                            cands = self._order_candidates(cands, self.model_cache.get(api_key[-8:]), preferred_model)
+            for prov_idx, current_key in enumerate(active_keys):
+                api_key = current_key
+                is_groq = api_key.startswith("gsk_")
+                is_openrouter = api_key.startswith("sk-or-")
+                provider = "groq" if is_groq else ("openrouter" if is_openrouter else "gemini")
+                if prov_idx > 0:
+                    cold_start = metrics_registry.mark_llm_cold_start(f"{provider}:{api_key[-8:]}")
+                effective_preferred = preferred_model if prov_idx == 0 else ""
+
+                try:
+                    raw_reply = ""
+                    used_model = ""
+                    selected_gemini_model = ""
+                    tool_events = []
+                    pending_approvals = []
+
+                    if tools_active:
+                        async with self._llm_client(35.0) as client:
+                            if is_groq:
+                                msgs_or_contents = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+                                if not allow_model_fallback and effective_preferred:
+                                    cands = [effective_preferred]
+                                else:
+                                    t_disc0 = time.perf_counter()
+                                    cands = await get_groq_candidate_models(client, api_key)
+                                    model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                                    cands = self._order_candidates(cands, self.model_cache.get(api_key[-8:]), effective_preferred)
+                            elif is_openrouter:
+                                msgs_or_contents = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+                                cands = (
+                                    [effective_preferred]
+                                    if (not allow_model_fallback and effective_preferred)
+                                    else self._order_candidates(list(OPENROUTER_FREE_MODELS), None, effective_preferred)
+                                )
+                            else:
+                                msgs_or_contents = _build_gemini_contents(history_turns, effective_user_prompt)
+                                if not allow_model_fallback and effective_preferred:
+                                    cands = [effective_preferred]
+                                else:
+                                    t_disc0 = time.perf_counter()
+                                    cands = await get_candidate_models(client, api_key, self.model_cache)
+                                    model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                                    cands = self._order_candidates(cands, None, effective_preferred)
+
+                            (
+                                raw_reply,
+                                used_model,
+                                selected_gemini_model,
+                                loop_fallbacks,
+                                model_discovery_ms,
+                                llm_total_ms,
+                                tool_events,
+                                pending_approvals,
+                            ) = await run_non_streaming_tool_loop(
+                                client=client,
+                                provider=provider,
+                                api_key=api_key,
+                                system_prompt=system_prompt,
+                                messages_or_contents=msgs_or_contents,
+                                candidates=cands,
+                                allow_fallback=allow_model_fallback,
+                                session_id=session_id,
+                                lang=req_lang,
+                                model_discovery_ms=model_discovery_ms,
+                            )
+                            fallback_attempts += loop_fallbacks
+                            if is_groq and used_model:
+                                self.model_cache[api_key[-8:]] = used_model.split(" ")[0]
+                            elif selected_gemini_model:
+                                self.model_cache[api_key[-8:]] = selected_gemini_model
+
+                    # --- A. Groq Branch (Ultra-fast LPU) ---
+                    elif is_groq:
+                        messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+
+                        last_groq_err: Optional[GeminiError] = None
+                        fp = api_key[-8:]
+                        async with self._llm_client(35.0) as client:
+                            if not allow_model_fallback and effective_preferred:
+                                groq_candidates = [effective_preferred]
+                            else:
+                                t_disc0 = time.perf_counter()
+                                groq_candidates = await get_groq_candidate_models(client, api_key)
+                                model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                                if fp in self.model_cache and self.model_cache[fp] in groq_candidates:
+                                    groq_candidates.remove(self.model_cache[fp])
+                                    groq_candidates.insert(0, self.model_cache[fp])
+                                if effective_preferred:
+                                    if effective_preferred in groq_candidates:
+                                        groq_candidates.remove(effective_preferred)
+                                    groq_candidates.insert(0, effective_preferred)
+
+                            t_llm0 = time.perf_counter()
+                            for candidate_groq in groq_candidates:
+                                try:
+                                    res = await client.post(
+                                        "https://api.groq.com/openai/v1/chat/completions",
+                                        headers={
+                                            "Authorization": f"Bearer {api_key}",
+                                            "Content-Type": "application/json",
+                                        },
+                                        json={
+                                            "model": candidate_groq,
+                                            "messages": messages,
+                                            "temperature": 0.85,
+                                            "max_tokens": 2048,
+                                            "presence_penalty": 0.4,
+                                            "frequency_penalty": 0.4,
+                                        }
+                                    )
+                                    if res.status_code != 200:
+                                        err_body = res.text
+                                        if not allow_model_fallback:
+                                            raise GeminiError(res.status_code, f"[MODO FIXO GROQ • {candidate_groq}] {err_body}")
+                                        is_retryable = (
+                                            res.status_code in (400, 404, 429, 502, 503)
+                                            or "decommissioned" in err_body.lower()
+                                            or "rate_limit" in err_body.lower()
+                                            or "rate limit" in err_body.lower()
+                                        )
+                                        if is_retryable:
+                                            last_groq_err = GeminiError(res.status_code, err_body)
+                                            fallback_attempts += 1
+                                            print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned {res.status_code} ({err_body[:80]}...), trying next...")
+                                            continue
+                                        raise GeminiError(res.status_code, err_body)
+
+                                    data = res.json()
+                                    choice_msg = (data.get("choices") or [{}])[0].get("message") or {}
+                                    content_val = choice_msg.get("content")
+                                    clean_candidate = strip_thinking_tags(content_val if isinstance(content_val, str) else "")
+
+                                    if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
+                                        if not allow_model_fallback:
+                                            raise GeminiError(502, f"[MODO FIXO GROQ • {candidate_groq}] Resposta vazia ou raciocínio interno sem diálogo.")
+                                        last_groq_err = GeminiError(502, f"[GROQ • {candidate_groq}] Resposta vazia ou raciocínio interno.")
+                                        fallback_attempts += 1
+                                        print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned empty/reasoning, trying next candidate...")
+                                        continue
+
+                                    raw_reply = clean_candidate
+                                    used_model = f"{candidate_groq} (Groq LPU)"
+                                    self.model_cache[fp] = candidate_groq
+                                    last_groq_err = None
+                                    break
+                                except GeminiError as e:
+                                    last_groq_err = e
+                                    if allow_model_fallback and e.code in (400, 404, 429, 502, 503):
+                                        fallback_attempts += 1
+                                        continue
+                                    raise
+                            llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
+
+                        if last_groq_err and not raw_reply:
+                            raise last_groq_err
+                        if not raw_reply:
+                            raise GeminiError(502, "[GROQ] Nenhum modelo candidato disponível.")
+
+                    # --- B. OpenRouter Branch ---
                     elif is_openrouter:
-                        msgs_or_contents = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
-                        cands = (
-                            [preferred_model]
-                            if (not allow_model_fallback and preferred_model)
-                            else self._order_candidates(list(OPENROUTER_FREE_MODELS), None, preferred_model)
-                        )
-                    else:
-                        msgs_or_contents = _build_gemini_contents(history_turns, effective_user_prompt)
-                        if not allow_model_fallback and preferred_model:
-                            cands = [preferred_model]
+                        messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+
+                        if not allow_model_fallback and effective_preferred:
+                            openrouter_candidates = [effective_preferred]
                         else:
-                            t_disc0 = time.perf_counter()
-                            cands = await get_candidate_models(client, api_key, self.model_cache)
-                            model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
-                            cands = self._order_candidates(cands, None, preferred_model)
+                            openrouter_candidates = list(OPENROUTER_FREE_MODELS)
+                            if effective_preferred:
+                                if effective_preferred in openrouter_candidates:
+                                    openrouter_candidates.remove(effective_preferred)
+                                openrouter_candidates.insert(0, effective_preferred)
 
-                    (
-                        raw_reply,
-                        used_model,
-                        selected_gemini_model,
-                        fallback_attempts,
-                        model_discovery_ms,
-                        llm_total_ms,
-                        tool_events,
-                        pending_approvals,
-                    ) = await run_non_streaming_tool_loop(
-                        client=client,
-                        provider=provider,
-                        api_key=api_key,
-                        system_prompt=system_prompt,
-                        messages_or_contents=msgs_or_contents,
-                        candidates=cands,
-                        allow_fallback=allow_model_fallback,
-                        session_id=session_id,
-                        lang=req_lang,
-                        model_discovery_ms=model_discovery_ms,
-                    )
-                    if is_groq and used_model:
-                        self.model_cache[api_key[-8:]] = used_model.split(" ")[0]
-                    elif selected_gemini_model:
-                        self.model_cache[api_key[-8:]] = selected_gemini_model
+                        last_or_err: Optional[GeminiError] = None
+                        async with self._llm_client(35.0) as client:
+                            t_llm0 = time.perf_counter()
+                            for candidate_or in openrouter_candidates:
+                                try:
+                                    res = await client.post(
+                                        "https://openrouter.ai/api/v1/chat/completions",
+                                        headers={
+                                            "Authorization": f"Bearer {api_key}",
+                                            "Content-Type": "application/json",
+                                            "HTTP-Referer": "http://localhost:5173",
+                                            "X-Title": "OpenAmadeus"
+                                        },
+                                        json={
+                                            "model": candidate_or,
+                                            "messages": messages,
+                                            "temperature": 0.85,
+                                            "max_tokens": 2048,
+                                            "presence_penalty": 0.4,
+                                            "frequency_penalty": 0.4,
+                                            "include_reasoning": False
+                                        }
+                                    )
+                                    if res.status_code != 200:
+                                        err_body = res.text
+                                        if not allow_model_fallback:
+                                            raise GeminiError(res.status_code, f"[MODO FIXO OPENROUTER • {candidate_or}] {err_body}")
+                                        is_retryable = (
+                                            res.status_code in (404, 429, 502, 503)
+                                            or "unavailable for free" in err_body.lower()
+                                            or "rate-limited" in err_body.lower()
+                                            or "rate limit" in err_body.lower()
+                                        )
+                                        if is_retryable:
+                                            last_or_err = GeminiError(res.status_code, err_body)
+                                            fallback_attempts += 1
+                                            print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned {res.status_code}, trying next...")
+                                            continue
+                                        raise GeminiError(res.status_code, err_body)
 
-            # --- A. Groq Branch (Ultra-fast LPU) ---
-            elif is_groq:
-                messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+                                    data = res.json()
+                                    choice_msg = (data.get("choices") or [{}])[0].get("message") or {}
+                                    content_val = choice_msg.get("content")
+                                    clean_candidate = strip_thinking_tags(content_val if isinstance(content_val, str) else "")
 
-                last_groq_err = None
-                fp = api_key[-8:]
-                async with self._llm_client(35.0) as client:
-                    if not allow_model_fallback and preferred_model:
-                        groq_candidates = [preferred_model]
+                                    if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
+                                        if not allow_model_fallback:
+                                            raise GeminiError(502, f"[MODO FIXO OPENROUTER • {candidate_or}] Resposta vazia ou raciocínio interno.")
+                                        last_or_err = GeminiError(502, f"[OPENROUTER • {candidate_or}] Resposta vazia ou raciocínio interno.")
+                                        fallback_attempts += 1
+                                        print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned empty/reasoning, trying next candidate...")
+                                        continue
+
+                                    raw_reply = clean_candidate
+                                    used_model = f"{candidate_or.replace(':free', '')} (OpenRouter)"
+                                    last_or_err = None
+                                    break
+                                except GeminiError as e:
+                                    last_or_err = e
+                                    if allow_model_fallback and e.code in (404, 429, 502, 503):
+                                        fallback_attempts += 1
+                                        continue
+                                    raise
+                            llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
+
+                        if last_or_err and not raw_reply:
+                            raise last_or_err
+                        if not raw_reply:
+                            raise GeminiError(502, "[OPENROUTER] Nenhum modelo candidato disponível.")
+
+                    # --- C. Google Gemini Branch ---
                     else:
-                        t_disc0 = time.perf_counter()
-                        groq_candidates = await get_groq_candidate_models(client, api_key)
-                        model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
-                        if fp in self.model_cache and self.model_cache[fp] in groq_candidates:
-                            groq_candidates.remove(self.model_cache[fp])
-                            groq_candidates.insert(0, self.model_cache[fp])
-                        if preferred_model:
-                            if preferred_model in groq_candidates:
-                                groq_candidates.remove(preferred_model)
-                            groq_candidates.insert(0, preferred_model)
+                        contents = _build_gemini_contents(history_turns, effective_user_prompt)
 
-                    t_llm0 = time.perf_counter()
-                    for candidate_groq in groq_candidates:
-                        try:
-                            res = await client.post(
-                                "https://api.groq.com/openai/v1/chat/completions",
-                                headers={
-                                    "Authorization": f"Bearer {api_key}",
-                                    "Content-Type": "application/json",
-                                },
-                                json={
-                                    "model": candidate_groq,
-                                    "messages": messages,
-                                    "temperature": 0.85,
-                                    "max_tokens": 2048,
-                                    "presence_penalty": 0.4,
-                                    "frequency_penalty": 0.4,
-                                }
-                            )
-                            if res.status_code != 200:
-                                err_body = res.text
-                                if not allow_model_fallback:
-                                    raise GeminiError(res.status_code, f"[MODO FIXO GROQ • {candidate_groq}] {err_body}")
-                                is_retryable = (
-                                    res.status_code in (400, 404, 429, 502, 503)
-                                    or "decommissioned" in err_body.lower()
-                                    or "rate_limit" in err_body.lower()
-                                    or "rate limit" in err_body.lower()
-                                )
-                                if is_retryable:
-                                    fallback_attempts += 1
-                                    print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned {res.status_code} ({err_body[:80]}...), trying next...")
-                                    continue
-                                raise GeminiError(res.status_code, err_body)
+                        base_payload = {
+                            "contents": contents,
+                            "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        }
 
-                            data = res.json()
-                            choice_msg = (data.get("choices") or [{}])[0].get("message") or {}
-                            content_val = choice_msg.get("content")
-                            clean_candidate = strip_thinking_tags(content_val if isinstance(content_val, str) else "")
+                        async with self._llm_client(30.0) as client:
+                            if not allow_model_fallback and effective_preferred:
+                                candidates = [effective_preferred]
+                            else:
+                                t_disc0 = time.perf_counter()
+                                candidates = await get_candidate_models(client, api_key, self.model_cache)
+                                model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                                if effective_preferred:
+                                    if effective_preferred in candidates:
+                                        candidates.remove(effective_preferred)
+                                    candidates.insert(0, effective_preferred)
 
-                            if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
-                                if not allow_model_fallback:
-                                    raise GeminiError(502, f"[MODO FIXO GROQ • {candidate_groq}] Resposta vazia ou raciocínio interno sem diálogo.")
-                                fallback_attempts += 1
-                                print(f"[OpenAmadeus Core] Groq model {candidate_groq} returned empty/reasoning, trying next candidate...")
-                                continue
-
-                            raw_reply = clean_candidate
-                            used_model = f"{candidate_groq} (Groq LPU)"
-                            self.model_cache[fp] = candidate_groq
-                            last_groq_err = None
-                            break
-                        except GeminiError as e:
-                            last_groq_err = e
-                            if allow_model_fallback and e.code in (400, 404, 429, 502, 503):
-                                fallback_attempts += 1
-                                continue
-                            raise
-                    llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
-
-                if last_groq_err and not raw_reply:
-                    raise last_groq_err
-
-            # --- B. OpenRouter Branch ---
-            elif is_openrouter:
-                messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
-
-                if not allow_model_fallback and preferred_model:
-                    openrouter_candidates = [preferred_model]
-                else:
-                    openrouter_candidates = list(OPENROUTER_FREE_MODELS)
-                    if preferred_model:
-                        if preferred_model in openrouter_candidates:
-                            openrouter_candidates.remove(preferred_model)
-                        openrouter_candidates.insert(0, preferred_model)
-
-                last_or_err = None
-                async with self._llm_client(35.0) as client:
-                    t_llm0 = time.perf_counter()
-                    for candidate_or in openrouter_candidates:
-                        try:
-                            res = await client.post(
-                                "https://openrouter.ai/api/v1/chat/completions",
-                                headers={
-                                    "Authorization": f"Bearer {api_key}",
-                                    "Content-Type": "application/json",
-                                    "HTTP-Referer": "http://localhost:5173",
-                                    "X-Title": "OpenAmadeus"
-                                },
-                                json={
-                                    "model": candidate_or,
-                                    "messages": messages,
-                                    "temperature": 0.85,
-                                    "max_tokens": 2048,
-                                    "presence_penalty": 0.4,
-                                    "frequency_penalty": 0.4,
-                                    "include_reasoning": False
-                                }
-                            )
-                            if res.status_code != 200:
-                                err_body = res.text
-                                if not allow_model_fallback:
-                                    raise GeminiError(res.status_code, f"[MODO FIXO OPENROUTER • {candidate_or}] {err_body}")
-                                is_retryable = (
-                                    res.status_code in (404, 429, 502, 503)
-                                    or "unavailable for free" in err_body.lower()
-                                    or "rate-limited" in err_body.lower()
-                                    or "rate limit" in err_body.lower()
-                                )
-                                if is_retryable:
-                                    fallback_attempts += 1
-                                    print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned {res.status_code}, trying next...")
-                                    continue
-                                raise GeminiError(res.status_code, err_body)
-
-                            data = res.json()
-                            choice_msg = (data.get("choices") or [{}])[0].get("message") or {}
-                            content_val = choice_msg.get("content")
-                            clean_candidate = strip_thinking_tags(content_val if isinstance(content_val, str) else "")
-
-                            if not clean_candidate or is_scratchpad_or_reasoning(clean_candidate):
-                                if not allow_model_fallback:
-                                    raise GeminiError(502, f"[MODO FIXO OPENROUTER • {candidate_or}] Resposta vazia ou raciocínio interno.")
-                                fallback_attempts += 1
-                                print(f"[OpenAmadeus Core] OpenRouter model {candidate_or} returned empty/reasoning, trying next candidate...")
-                                continue
-
-                            raw_reply = clean_candidate
-                            used_model = f"{candidate_or.replace(':free', '')} (OpenRouter)"
-                            last_or_err = None
-                            break
-                        except GeminiError as e:
-                            last_or_err = e
-                            if allow_model_fallback and e.code in (404, 429, 502, 503):
-                                fallback_attempts += 1
-                                continue
-                            raise
-                    llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
-
-                if last_or_err and not raw_reply:
-                    raise last_or_err
-
-            # --- C. Google Gemini Branch ---
-            else:
-                contents = _build_gemini_contents(history_turns, effective_user_prompt)
-
-                payload = {
-                    "contents": contents,
-                    "systemInstruction": {"parts": [{"text": system_prompt}]},
-                    "generationConfig": {
-                        "temperature": 0.85,
-                        "maxOutputTokens": 2048,
-                        "presencePenalty": 0.4,
-                        "frequencyPenalty": 0.4,
-                    },
-                }
-
-                async with self._llm_client(30.0) as client:
-                    if not allow_model_fallback and preferred_model:
-                        candidates = [preferred_model]
-                    else:
-                        t_disc0 = time.perf_counter()
-                        candidates = await get_candidate_models(client, api_key, self.model_cache)
-                        model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
-                        if preferred_model:
-                            if preferred_model in candidates:
-                                candidates.remove(preferred_model)
-                            candidates.insert(0, preferred_model)
-
-                    selected_model = candidates[0]
-                    data = None
-                    last_error = None
-
-                    t_llm0 = time.perf_counter()
-                    for candidate_model in candidates:
-                        try:
-                            data = await gemini_request(client, "POST", f"models/{candidate_model}:generateContent", api_key, payload)
-                            selected_model = candidate_model
-                            self.model_cache[api_key[-8:]] = candidate_model
+                            selected_model = candidates[0]
+                            data = None
                             last_error = None
-                            break
-                        except GeminiError as e:
-                            last_error = e
-                            if allow_model_fallback and e.code in (503, 429, 404):
-                                fallback_attempts += 1
-                                print(f"[OpenAmadeus Core] Model {candidate_model} returned {e.code}, trying next...")
-                                continue
-                            raise
-                    llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
 
-                    if last_error and not data:
-                        raise last_error
+                            t_llm0 = time.perf_counter()
+                            for candidate_model in candidates:
+                                try:
+                                    payload = {
+                                        **base_payload,
+                                        "generationConfig": build_gemini_generation_config(candidate_model),
+                                    }
+                                    data = await gemini_request(client, "POST", f"models/{candidate_model}:generateContent", api_key, payload)
+                                    selected_model = candidate_model
+                                    self.model_cache[api_key[-8:]] = candidate_model
+                                    last_error = None
+                                    break
+                                except GeminiError as e:
+                                    last_error = e
+                                    if allow_model_fallback and (
+                                        e.code in (503, 429, 404) or is_gemini_retryable_400(e.code, e.message)
+                                    ):
+                                        fallback_attempts += 1
+                                        print(f"[OpenAmadeus Core] Model {candidate_model} returned {e.code}, trying next...")
+                                        continue
+                                    raise
+                            llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
 
-                    candidate = (data.get("candidates") or [{}])[0]
-                    parts = (candidate.get("content") or {}).get("parts") or []
-                    raw_reply = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
-                    used_model = selected_model
-                    selected_gemini_model = selected_model
+                            if last_error and not data:
+                                raise last_error
+
+                            candidate = (data.get("candidates") or [{}])[0]
+                            parts = (candidate.get("content") or {}).get("parts") or []
+                            raw_reply = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+                            used_model = selected_model
+                            selected_gemini_model = selected_model
+
+                    break
+                except GeminiError as prov_err:
+                    if (
+                        allow_model_fallback
+                        and prov_idx + 1 < len(active_keys)
+                        and _is_provider_failover_error(prov_err)
+                    ):
+                        fallback_attempts += 1
+                        print(
+                            f"[OpenAmadeus Core] Provider '{provider}' exhausted ({prov_err.code}); "
+                            "failing over to next .env provider..."
+                        )
+                        continue
+                    raise
 
             response = await self._finalize_chat(
                 req, raw_reply, is_system_event, session_id, recalled_ids, used_model,
@@ -1095,7 +1152,8 @@ class LLMOrchestrator:
         Async generator of events: meta -> sentence* -> done (or error after speech started).
         Offline / autonomous system events reuse handle_chat and emit a single sentence.
         """
-        api_key = _resolve_api_key(req)
+        api_keys = _resolve_api_keys(req)
+        api_key = api_keys[0] if api_keys else ""
         system_event = (req.systemEvent or "").strip()
         user_ctx = None if system_event else req.message
 
@@ -1124,6 +1182,7 @@ class LLMOrchestrator:
         provider = "groq" if is_groq else ("openrouter" if is_openrouter else "gemini")
         cold_start = metrics_registry.mark_llm_cold_start(f"{provider}:{api_key[-8:]}")
         allow_fallback = req.allowModelFallback if req.allowModelFallback is not None else True
+        active_keys = api_keys if allow_fallback else api_keys[:1]
         preferred = (req.selectedModel or "").strip() if req.selectedModel and req.selectedModel != "offline" else ""
 
         splitter = SentenceStream()
@@ -1205,155 +1264,187 @@ class LLMOrchestrator:
 
         try:
             tools_active = mcp_registry.has_tools() and not is_system_event
-            openai_tools = mcp_registry.to_openai_tools() if tools_active and (is_groq or is_openrouter) else []
-            gemini_decls = mcp_registry.to_gemini_declarations() if tools_active and not (is_groq or is_openrouter) else []
             tool_events: List[Dict[str, Any]] = []
             pending_approvals: List[Dict[str, Any]] = []
             max_loop_steps = MCP_MAX_TOOL_STEPS if tools_active else 0
 
             async with self._llm_client(35.0) as client:
-                if is_groq or is_openrouter:
-                    messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
-                    body: Dict[str, Any] = {
-                        "messages": messages, "temperature": 0.85, "max_tokens": 2048,
-                        "presence_penalty": 0.4, "frequency_penalty": 0.4, "stream": True,
-                    }
-                    if is_groq:
-                        label, url = "GROQ", "https://api.groq.com/openai/v1/chat/completions"
-                        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                        retry = (400, 404, 429, 502, 503)
-                        if not allow_fallback and preferred:
-                            candidates = [preferred]
-                        else:
-                            t_disc0 = time.perf_counter()
-                            discovered = await get_groq_candidate_models(client, api_key)
-                            model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
-                            candidates = self._order_candidates(
-                                discovered, self.model_cache.get(api_key[-8:]), preferred)
-                    else:
-                        label, url = "OPENROUTER", "https://openrouter.ai/api/v1/chat/completions"
-                        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
-                                   "HTTP-Referer": "http://localhost:5173", "X-Title": "OpenAmadeus"}
-                        retry = (404, 429, 502, 503)
-                        body["include_reasoning"] = False
-                        if not allow_fallback and preferred:
-                            candidates = [preferred]
-                        else:
-                            candidates = self._order_candidates(list(OPENROUTER_FREE_MODELS), None, preferred)
-                else:
-                    contents = _build_gemini_contents(history_turns, effective_user_prompt)
-                    payload: Dict[str, Any] = {
-                        "contents": contents,
-                        "systemInstruction": {"parts": [{"text": system_prompt}]},
-                        "generationConfig": {"temperature": 0.85, "maxOutputTokens": 2048,
-                                             "presencePenalty": 0.4, "frequencyPenalty": 0.4},
-                    }
-                    if not allow_fallback and preferred:
-                        candidates = [preferred]
-                    else:
-                        t_disc0 = time.perf_counter()
-                        discovered = await get_candidate_models(client, api_key, self.model_cache)
-                        model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
-                        candidates = self._order_candidates(discovered, None, preferred)
+                for prov_idx, current_key in enumerate(active_keys):
+                    api_key = current_key
+                    is_groq = api_key.startswith("gsk_")
+                    is_openrouter = api_key.startswith("sk-or-")
+                    provider = "groq" if is_groq else ("openrouter" if is_openrouter else "gemini")
+                    if prov_idx > 0:
+                        cold_start = metrics_registry.mark_llm_cold_start(f"{provider}:{api_key[-8:]}")
+                    effective_preferred = preferred if prov_idx == 0 else ""
 
-                t_llm0 = time.perf_counter()
-                locked_raw_model: Optional[str] = None
-                for step in range(max_loop_steps + 1):
-                    include_tools = step < max_loop_steps
-                    step_candidates = [locked_raw_model] if locked_raw_model else candidates
-                    if is_groq or is_openrouter:
-                        def make_openai_body(m: str, inc: bool = include_tools) -> Dict[str, Any]:
-                            req_body = {**body, "model": m}
-                            if inc and openai_tools:
-                                req_body["tools"] = openai_tools
-                                req_body["tool_choice"] = "auto"
-                            return req_body
+                    openai_tools = mcp_registry.to_openai_tools() if tools_active and (is_groq or is_openrouter) else []
+                    gemini_decls = mcp_registry.to_gemini_declarations() if tools_active and not (is_groq or is_openrouter) else []
+                    used_model = ""
+                    gemini_model = ""
+                    locked_raw_model: Optional[str] = None
 
-                        source = stream_candidates(
-                            client, lambda m: url, headers, make_openai_body,
-                            step_candidates, allow_fallback, retry, openai_delta, label,
-                            collect_tool_calls=include_tools,
-                        )
-                    else:
-                        def make_gemini_body(m: str, inc: bool = include_tools) -> Dict[str, Any]:
-                            if inc and gemini_decls:
-                                return {**payload, "tools": [{"functionDeclarations": gemini_decls}]}
-                            return payload
-
-                        source = stream_candidates(
-                            client, gemini_stream_url,
-                            {"Content-Type": "application/json", "x-goog-api-key": api_key},
-                            make_gemini_body, step_candidates, allow_fallback, (503, 429, 404), gemini_delta, "GEMINI",
-                            collect_tool_calls=include_tools,
-                        )
-
-                    step_raw = ""
-                    step_tool_calls: Optional[List[Dict[str, Any]]] = None
-                    async for kind, val in source:
-                        if kind == "fallback":
-                            fallback_attempts += 1
-                            continue
-                        if kind == "model":
-                            locked_raw_model = val
-                            used_model = f"{val} (Groq LPU)" if is_groq else (
-                                f"{val.replace(':free', '')} (OpenRouter)" if is_openrouter else val)
+                    try:
+                        if is_groq or is_openrouter:
+                            messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+                            body: Dict[str, Any] = {
+                                "messages": messages, "temperature": 0.85, "max_tokens": 2048,
+                                "presence_penalty": 0.4, "frequency_penalty": 0.4, "stream": True,
+                            }
                             if is_groq:
-                                self.model_cache[api_key[-8:]] = val
-                            elif not is_openrouter:
-                                gemini_model = val
-                                self.model_cache[api_key[-8:]] = val
-                            continue
-                        if kind == "tool_calls":
-                            step_tool_calls = val
-                            continue
-                        if llm_ttft_ms is None:
-                            llm_ttft_ms = (time.perf_counter() - t_llm0) * 1000.0
-                        raw += val
-                        step_raw += val
-                        for out in handle(splitter.feed(val)):
-                            yield out
+                                label, url = "GROQ", "https://api.groq.com/openai/v1/chat/completions"
+                                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                                retry = (400, 404, 429, 502, 503)
+                                if not allow_fallback and effective_preferred:
+                                    candidates = [effective_preferred]
+                                else:
+                                    t_disc0 = time.perf_counter()
+                                    discovered = await get_groq_candidate_models(client, api_key)
+                                    model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                                    candidates = self._order_candidates(
+                                        discovered, self.model_cache.get(api_key[-8:]), effective_preferred)
+                            else:
+                                label, url = "OPENROUTER", "https://openrouter.ai/api/v1/chat/completions"
+                                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
+                                           "HTTP-Referer": "http://localhost:5173", "X-Title": "OpenAmadeus"}
+                                retry = (404, 429, 502, 503)
+                                body["include_reasoning"] = False
+                                if not allow_fallback and effective_preferred:
+                                    candidates = [effective_preferred]
+                                else:
+                                    candidates = self._order_candidates(list(OPENROUTER_FREE_MODELS), None, effective_preferred)
+                        else:
+                            contents = _build_gemini_contents(history_turns, effective_user_prompt)
+                            payload: Dict[str, Any] = {
+                                "contents": contents,
+                                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                            }
+                            if not allow_fallback and effective_preferred:
+                                candidates = [effective_preferred]
+                            else:
+                                t_disc0 = time.perf_counter()
+                                discovered = await get_candidate_models(client, api_key, self.model_cache)
+                                model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                                candidates = self._order_candidates(discovered, None, effective_preferred)
 
-                    for out in handle(splitter.flush()):
-                        yield out
-                    pending_ja_queue.clear()
+                        t_llm0 = time.perf_counter()
+                        for step in range(max_loop_steps + 1):
+                            include_tools = step < max_loop_steps
+                            step_candidates = [locked_raw_model] if locked_raw_model else candidates
+                            if is_groq or is_openrouter:
+                                def make_openai_body(m: str, inc: bool = include_tools) -> Dict[str, Any]:
+                                    req_body = {**body, "model": m}
+                                    if inc and openai_tools:
+                                        req_body["tools"] = openai_tools
+                                        req_body["tool_choice"] = "auto"
+                                    return req_body
 
-                    if not step_tool_calls:
+                                source = stream_candidates(
+                                    client, lambda m: url, headers, make_openai_body,
+                                    step_candidates, allow_fallback, retry, openai_delta, label,
+                                    collect_tool_calls=include_tools,
+                                )
+                            else:
+                                def make_gemini_body(m: str, inc: bool = include_tools) -> Dict[str, Any]:
+                                    req_body: Dict[str, Any] = {
+                                        **payload,
+                                        "generationConfig": build_gemini_generation_config(m),
+                                    }
+                                    if inc and gemini_decls:
+                                        req_body["tools"] = [{"functionDeclarations": gemini_decls}]
+                                    return req_body
+
+                                source = stream_candidates(
+                                    client, gemini_stream_url,
+                                    {"Content-Type": "application/json", "x-goog-api-key": api_key},
+                                    make_gemini_body, step_candidates, allow_fallback, (503, 429, 404), gemini_delta, "GEMINI",
+                                    collect_tool_calls=include_tools,
+                                    retry_check=is_gemini_retryable_400,
+                                )
+
+                            step_raw = ""
+                            step_tool_calls: Optional[List[Dict[str, Any]]] = None
+                            async for kind, val in source:
+                                if kind == "fallback":
+                                    fallback_attempts += 1
+                                    continue
+                                if kind == "model":
+                                    locked_raw_model = val
+                                    used_model = f"{val} (Groq LPU)" if is_groq else (
+                                        f"{val.replace(':free', '')} (OpenRouter)" if is_openrouter else val)
+                                    if is_groq:
+                                        self.model_cache[api_key[-8:]] = val
+                                    elif not is_openrouter:
+                                        gemini_model = val
+                                        self.model_cache[api_key[-8:]] = val
+                                    continue
+                                if kind == "tool_calls":
+                                    step_tool_calls = val
+                                    continue
+                                if llm_ttft_ms is None:
+                                    llm_ttft_ms = (time.perf_counter() - t_llm0) * 1000.0
+                                raw += val
+                                step_raw += val
+                                for out in handle(splitter.feed(val)):
+                                    yield out
+
+                            for out in handle(splitter.flush()):
+                                yield out
+                            pending_ja_queue.clear()
+
+                            if not step_tool_calls:
+                                break
+
+                            llm_results, batch_events, batch_approvals = await execute_tool_batch(
+                                step_tool_calls, session_id, registry=mcp_registry, store=memory_store, metrics=metrics_registry
+                            )
+                            tool_events.extend(batch_events)
+                            for ev in batch_events:
+                                yield {"event": "tool_status", **ev}
+
+                            if batch_approvals:
+                                pending_approvals.extend(batch_approvals)
+                                for appr in batch_approvals:
+                                    yield {"event": "tool_approval_required", "approval": appr}
+                                confirm_reply = build_approval_prompt_reply(
+                                    batch_approvals, lang=req_lang, with_tag=(not meta_sent)
+                                )
+                                raw += confirm_reply
+                                for out in handle(splitter.feed(confirm_reply)):
+                                    yield out
+                                for out in handle(splitter.flush()):
+                                    yield out
+                                pending_ja_queue.clear()
+                                break
+
+                            if is_groq or is_openrouter:
+                                append_openai_tool_exchange(messages, step_raw, step_tool_calls, llm_results)
+                            else:
+                                append_gemini_tool_exchange(contents, step_raw, step_tool_calls, llm_results)
+
+                            if step + 1 == max_loop_steps:
+                                metrics_registry.record_tool_loop_limit()
+
+                        llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
+                        if not spoken:
+                            raise GeminiError(502, "Resposta vazia ou raciocínio interno sem diálogo.")
                         break
-
-                    llm_results, batch_events, batch_approvals = await execute_tool_batch(
-                        step_tool_calls, session_id, registry=mcp_registry, store=memory_store, metrics=metrics_registry
-                    )
-                    tool_events.extend(batch_events)
-                    for ev in batch_events:
-                        yield {"event": "tool_status", **ev}
-
-                    if batch_approvals:
-                        pending_approvals.extend(batch_approvals)
-                        for appr in batch_approvals:
-                            yield {"event": "tool_approval_required", "approval": appr}
-                        confirm_reply = build_approval_prompt_reply(
-                            batch_approvals, lang=req_lang, with_tag=(not meta_sent)
-                        )
-                        raw += confirm_reply
-                        for out in handle(splitter.feed(confirm_reply)):
-                            yield out
-                        for out in handle(splitter.flush()):
-                            yield out
-                        pending_ja_queue.clear()
-                        break
-
-                    if is_groq or is_openrouter:
-                        append_openai_tool_exchange(messages, step_raw, step_tool_calls, llm_results)
-                    else:
-                        append_gemini_tool_exchange(contents, step_raw, step_tool_calls, llm_results)
-
-                    if step + 1 == max_loop_steps:
-                        metrics_registry.record_tool_loop_limit()
-
-                llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
-
-            if not spoken:
-                raise GeminiError(502, "Resposta vazia ou raciocínio interno sem diálogo.")
+                    except GeminiError as prov_err:
+                        if (
+                            allow_fallback
+                            and prov_idx + 1 < len(active_keys)
+                            and not spoken
+                            and not tool_events
+                            and not pending_approvals
+                            and _is_provider_failover_error(prov_err)
+                        ):
+                            fallback_attempts += 1
+                            print(
+                                f"[OpenAmadeus Core] Provider '{provider}' exhausted ({prov_err.code}); "
+                                "failing over to next .env provider..."
+                            )
+                            continue
+                        raise
 
             print(f'[{_ts()}] [StreamChat] done model="{used_model}" sentences={len(spoken)}')
             response = await self._finalize_chat(

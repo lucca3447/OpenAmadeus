@@ -1,15 +1,55 @@
 import re
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple
 import httpx
 from app.core.config import API_BASE_GEMINI, PREFERRED_GEMINI_MODELS
 
 MODEL_LIST_TTL_SEC = 600.0
 _gemini_usable_cache: Dict[str, Tuple[float, List[str]]] = {}
+_GEMINI_NO_PENALTY_RE = re.compile(r"(?:^gemini-3\b|gemini-3[.-]|preview|exp\b|thinking|gemma)", re.IGNORECASE)
 
 
 def clear_gemini_model_cache() -> None:
     _gemini_usable_cache.clear()
+
+
+def gemini_supports_penalties(model: str) -> bool:
+    return not bool(_GEMINI_NO_PENALTY_RE.search(model or ""))
+
+
+def build_gemini_generation_config(
+    model: str,
+    *,
+    temperature: float = 0.85,
+    max_output_tokens: int = 2048,
+    allow_penalties: bool = True,
+) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = {
+        "temperature": temperature,
+        "maxOutputTokens": max_output_tokens,
+    }
+    if allow_penalties and gemini_supports_penalties(model):
+        cfg["presencePenalty"] = 0.4
+        cfg["frequencyPenalty"] = 0.4
+    return cfg
+
+
+def is_gemini_retryable_400(code: int, message: str) -> bool:
+    if code != 400:
+        return False
+    low = (message or "").lower()
+    if "api key" in low or "api_key" in low:
+        return False
+    return any(
+        tok in low
+        for tok in (
+            "penalty is not enabled",
+            "not enabled for this model",
+            "not supported for this model",
+            "not supported",
+            "is not found",
+        )
+    )
 
 class GeminiError(Exception):
     def __init__(self, code: int, message: str):

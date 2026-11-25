@@ -10,7 +10,13 @@ from app.core.config import MCP_MAX_TOOL_STEPS, MCP_TOOL_TIMEOUT_SEC, OPENROUTER
 from app.db.memory_store import memory_store
 from app.schemas.tools import ToolCallRequest, ToolExecutionEvent
 from app.services.emotion_service import is_scratchpad_or_reasoning, strip_thinking_tags
-from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
+from app.services.llm.gemini import (
+    GeminiError,
+    build_gemini_generation_config,
+    gemini_request,
+    get_candidate_models,
+    is_gemini_retryable_400,
+)
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.mcp.mcp_client import MCPRegistry, mcp_registry
 from app.services.metrics import MetricsRegistry, metrics_registry
@@ -231,7 +237,10 @@ def append_gemini_tool_exchange(
     if assistant_text:
         model_parts.append({"text": assistant_text})
     for tc in raw_tool_calls:
-        model_parts.append({"functionCall": {"name": tc["name"], "args": tc.get("arguments") or {}}})
+        fc_part: Dict[str, Any] = {"functionCall": {"name": tc["name"], "args": tc.get("arguments") or {}}}
+        if tc.get("thought_signature"):
+            fc_part["thoughtSignature"] = tc["thought_signature"]
+        model_parts.append(fc_part)
     contents.append({"role": "model", "parts": model_parts})
     contents.append(
         {
@@ -283,14 +292,16 @@ def _extract_gemini_function_calls(parts: List[Dict[str, Any]]) -> List[Dict[str
         fc = part.get("functionCall")
         if isinstance(fc, dict) and fc.get("name"):
             raw_args = fc.get("args")
-            out.append(
-                {
-                    "id": f"call_{len(out)}",
-                    "name": str(fc["name"]),
-                    "arguments": raw_args if isinstance(raw_args, dict) else {},
-                    "parse_error": None if (raw_args is None or isinstance(raw_args, dict)) else "Tool arguments must be an object.",
-                }
-            )
+            entry: Dict[str, Any] = {
+                "id": f"call_{len(out)}",
+                "name": str(fc["name"]),
+                "arguments": raw_args if isinstance(raw_args, dict) else {},
+                "parse_error": None if (raw_args is None or isinstance(raw_args, dict)) else "Tool arguments must be an object.",
+            }
+            thought_sig = part.get("thoughtSignature")
+            if isinstance(thought_sig, str) and thought_sig:
+                entry["thought_signature"] = thought_sig
+            out.append(entry)
     return out
 
 
@@ -398,12 +409,7 @@ async def run_non_streaming_tool_loop(
                     payload: Dict[str, Any] = {
                         "contents": messages_or_contents,
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
-                        "generationConfig": {
-                            "temperature": 0.85,
-                            "maxOutputTokens": 2048,
-                            "presencePenalty": 0.4,
-                            "frequencyPenalty": 0.4,
-                        },
+                        "generationConfig": build_gemini_generation_config(candidate),
                     }
                     if include_tools and gemini_decls:
                         payload["tools"] = [{"functionDeclarations": gemini_decls}]
@@ -413,7 +419,9 @@ async def run_non_streaming_tool_loop(
                         )
                     except GeminiError as exc:
                         last_err = exc
-                        if allow_fallback and exc.code in (400, 404, 429, 503):
+                        if allow_fallback and (
+                            exc.code in (404, 429, 503) or is_gemini_retryable_400(exc.code, exc.message)
+                        ):
                             fallback_attempts += 1
                             continue
                         raise
@@ -437,7 +445,10 @@ async def run_non_streaming_tool_loop(
                     break
             except GeminiError as exc:
                 last_err = exc
-                if allow_fallback and exc.code in (400, 404, 429, 502, 503):
+                is_retryable_err = exc.code in (404, 429, 502, 503) or (
+                    exc.code == 400 if (is_groq or is_openrouter) else is_gemini_retryable_400(exc.code, exc.message)
+                )
+                if allow_fallback and is_retryable_err:
                     fallback_attempts += 1
                     continue
                 raise
