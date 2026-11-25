@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "lab_notes": {
+      "transport": "stdio",
+      "command": "python",
+      "args": ["scripts/mcp_lab_notes_server.py"],
+      "enabled": true,
+      "read_only_tools": ["list_lab_notes", "read_lab_note"],
+      "blocked_tools": []
+    }
+  }
+}

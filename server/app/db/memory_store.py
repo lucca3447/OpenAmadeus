@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 from contextlib import contextmanager
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import chromadb
 import numpy as np
@@ -25,6 +25,7 @@ from app.core.config import (
     UPSERT_MAX_DISTANCE,
     CORE_MEMORY_BLOCK_KEYS,
     CORE_MEMORY_MAX_BLOCK_CHARS,
+    MCP_APPROVAL_TTL_SEC,
 )
 
 
@@ -229,6 +230,23 @@ class MemoryStore:
                     emotional_weight TEXT,
                     source TEXT,
                     created_at REAL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tool_approvals (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    server_id TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    mcp_name TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    risk_level TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    decided_at REAL,
+                    result_preview TEXT,
+                    error TEXT
                 )
             """)
             conn.commit()
@@ -1051,6 +1069,176 @@ class MemoryStore:
                 (cutoff, int(limit)),
             ).fetchall()
         return [r[0] for r in rows if r[0]]
+
+    # --- Atomic HITL Tool Approvals & Audit Log ---
+    @staticmethod
+    def _approval_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        try:
+            args = json.loads(row["arguments_json"] or "{}")
+            if not isinstance(args, dict):
+                args = {}
+        except json.JSONDecodeError:
+            args = {}
+        return {
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "server_id": row["server_id"],
+            "tool_name": row["tool_name"],
+            "mcp_name": row["mcp_name"],
+            "arguments": args,
+            "risk_level": row["risk_level"],
+            "status": row["status"],
+            "created_at": float(row["created_at"]),
+            "expires_at": float(row["expires_at"]),
+            "decided_at": float(row["decided_at"]) if row["decided_at"] is not None else None,
+            "result_preview": row["result_preview"],
+            "error": row["error"],
+        }
+
+    def create_tool_approval(
+        self,
+        session_id: Optional[str],
+        server_id: str,
+        tool_name: str,
+        mcp_name: str,
+        arguments: Dict[str, Any],
+        risk_level: str = "mutating",
+        ttl_sec: float = MCP_APPROVAL_TTL_SEC,
+    ) -> Dict[str, Any]:
+        now = time.time()
+        expires_at = now + max(1.0, float(ttl_sec))
+        approval_id = f"appr_{int(now)}_{os.urandom(3).hex()}"
+        args_json = json.dumps(arguments or {}, ensure_ascii=False)
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """
+                INSERT INTO tool_approvals (
+                    id, session_id, server_id, tool_name, mcp_name,
+                    arguments_json, risk_level, status, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (approval_id, session_id, server_id, tool_name, mcp_name, args_json, risk_level, now, expires_at),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+        return self._approval_row_to_dict(row)
+
+    def get_tool_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+        return self._approval_row_to_dict(row) if row else None
+
+    def claim_tool_approval(self, approval_id: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """Atomically transitions pending -> executing (single-use) and enforces TTL."""
+        now = time.time()
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                """
+                UPDATE tool_approvals
+                SET status = 'executing', decided_at = ?
+                WHERE id = ? AND status = 'pending' AND expires_at > ?
+                """,
+                (now, approval_id, now),
+            )
+            if cur.rowcount == 1:
+                conn.commit()
+                row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+                return "claimed", self._approval_row_to_dict(row)
+
+            row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+            if not row:
+                return "not_found", None
+            if row["status"] == "pending" and float(row["expires_at"]) <= now:
+                conn.execute(
+                    "UPDATE tool_approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'",
+                    (now, approval_id),
+                )
+                conn.commit()
+                row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+                return "expired", self._approval_row_to_dict(row)
+            return "conflict", self._approval_row_to_dict(row)
+
+    def reject_tool_approval(self, approval_id: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """Atomically transitions pending -> rejected without executing."""
+        now = time.time()
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                """
+                UPDATE tool_approvals
+                SET status = 'rejected', decided_at = ?
+                WHERE id = ? AND status = 'pending' AND expires_at > ?
+                """,
+                (now, approval_id, now),
+            )
+            if cur.rowcount == 1:
+                conn.commit()
+                row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+                return "rejected", self._approval_row_to_dict(row)
+
+            row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+            if not row:
+                return "not_found", None
+            if row["status"] == "pending" and float(row["expires_at"]) <= now:
+                conn.execute(
+                    "UPDATE tool_approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'",
+                    (now, approval_id),
+                )
+                conn.commit()
+                row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+                return "expired", self._approval_row_to_dict(row)
+            return "conflict", self._approval_row_to_dict(row)
+
+    def finalize_tool_approval(
+        self,
+        approval_id: str,
+        status: str,
+        result_preview: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        now = time.time()
+        clean_preview = _sanitize_field(result_preview, 400) if result_preview else None
+        clean_error = _sanitize_field(error, 280) if error else None
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """
+                UPDATE tool_approvals
+                SET status = ?, decided_at = ?, result_preview = ?, error = ?
+                WHERE id = ?
+                """,
+                (status, now, clean_preview, clean_error, approval_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM tool_approvals WHERE id = ?", (approval_id,)).fetchone()
+        return self._approval_row_to_dict(row) if row else None
+
+    def list_tool_approvals(self, status: Optional[str] = None, limit: int = 30) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM tool_approvals WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                    (status, int(limit)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM tool_approvals ORDER BY created_at DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+        return [self._approval_row_to_dict(r) for r in rows]
+
+    def count_pending_tool_approvals(self) -> int:
+        now = time.time()
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM tool_approvals WHERE status = 'pending' AND expires_at > ?",
+                (now,),
+            ).fetchone()
+        return int(row[0]) if row else 0
 
 # Global singleton instance
 memory_store = MemoryStore()

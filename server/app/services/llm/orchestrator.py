@@ -10,7 +10,7 @@ import httpx
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
-from app.core.config import MAX_HISTORY_MESSAGES, OPENROUTER_FREE_MODELS
+from app.core.config import MAX_HISTORY_MESSAGES, MCP_MAX_TOOL_STEPS, OPENROUTER_FREE_MODELS
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.db.memory_store import memory_store
 from app.services.persona_service import load_persona
@@ -18,6 +18,14 @@ from app.services.emotion_service import strip_thinking_tags, is_scratchpad_or_r
 from app.services.offline_simulator import offline_simulator
 from app.services.metrics import metrics_registry
 from app.services.cognitive_worker import cognitive_worker
+from app.services.mcp.mcp_client import mcp_registry
+from app.services.mcp.tool_runner import (
+    append_gemini_tool_exchange,
+    append_openai_tool_exchange,
+    build_approval_prompt_reply,
+    execute_tool_batch,
+    run_non_streaming_tool_loop,
+)
 from app.services.llm.gemini import GeminiError, gemini_request, get_candidate_models
 from app.services.llm.groq import get_groq_candidate_models
 from app.services.llm.sentence_stream import SentenceStream, extract_ja_tts
@@ -741,9 +749,66 @@ class LLMOrchestrator:
             raw_reply = ""
             used_model = ""
             selected_gemini_model = ""
+            tool_events: List[Dict[str, Any]] = []
+            pending_approvals: List[Dict[str, Any]] = []
+            tools_active = mcp_registry.has_tools() and not is_system_event
+
+            if tools_active:
+                async with self._llm_client(35.0) as client:
+                    if is_groq:
+                        msgs_or_contents = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+                        if not allow_model_fallback and preferred_model:
+                            cands = [preferred_model]
+                        else:
+                            t_disc0 = time.perf_counter()
+                            cands = await get_groq_candidate_models(client, api_key)
+                            model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                            cands = self._order_candidates(cands, self.model_cache.get(api_key[-8:]), preferred_model)
+                    elif is_openrouter:
+                        msgs_or_contents = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
+                        cands = (
+                            [preferred_model]
+                            if (not allow_model_fallback and preferred_model)
+                            else self._order_candidates(list(OPENROUTER_FREE_MODELS), None, preferred_model)
+                        )
+                    else:
+                        msgs_or_contents = _build_gemini_contents(history_turns, effective_user_prompt)
+                        if not allow_model_fallback and preferred_model:
+                            cands = [preferred_model]
+                        else:
+                            t_disc0 = time.perf_counter()
+                            cands = await get_candidate_models(client, api_key, self.model_cache)
+                            model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
+                            cands = self._order_candidates(cands, None, preferred_model)
+
+                    (
+                        raw_reply,
+                        used_model,
+                        selected_gemini_model,
+                        fallback_attempts,
+                        model_discovery_ms,
+                        llm_total_ms,
+                        tool_events,
+                        pending_approvals,
+                    ) = await run_non_streaming_tool_loop(
+                        client=client,
+                        provider=provider,
+                        api_key=api_key,
+                        system_prompt=system_prompt,
+                        messages_or_contents=msgs_or_contents,
+                        candidates=cands,
+                        allow_fallback=allow_model_fallback,
+                        session_id=session_id,
+                        lang=req_lang,
+                        model_discovery_ms=model_discovery_ms,
+                    )
+                    if is_groq and used_model:
+                        self.model_cache[api_key[-8:]] = used_model.split(" ")[0]
+                    elif selected_gemini_model:
+                        self.model_cache[api_key[-8:]] = selected_gemini_model
 
             # --- A. Groq Branch (Ultra-fast LPU) ---
-            if is_groq:
+            elif is_groq:
                 messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
 
                 last_groq_err = None
@@ -965,6 +1030,8 @@ class LLMOrchestrator:
                 req, raw_reply, is_system_event, session_id, recalled_ids, used_model,
                 selected_gemini_model, api_key, is_groq, is_openrouter,
             )
+            response.toolEvents = tool_events
+            response.pendingApprovals = pending_approvals
             total_ms = (time.perf_counter() - t_start) * 1000.0
             response.metrics = metrics_registry.record_chat({
                 "status": "ok",
@@ -1137,11 +1204,20 @@ class LLMOrchestrator:
             })
 
         try:
+            tools_active = mcp_registry.has_tools() and not is_system_event
+            openai_tools = mcp_registry.to_openai_tools() if tools_active and (is_groq or is_openrouter) else []
+            gemini_decls = mcp_registry.to_gemini_declarations() if tools_active and not (is_groq or is_openrouter) else []
+            tool_events: List[Dict[str, Any]] = []
+            pending_approvals: List[Dict[str, Any]] = []
+            max_loop_steps = MCP_MAX_TOOL_STEPS if tools_active else 0
+
             async with self._llm_client(35.0) as client:
                 if is_groq or is_openrouter:
                     messages = _build_openai_messages(system_prompt, history_turns, effective_user_prompt)
-                    body = {"messages": messages, "temperature": 0.85, "max_tokens": 2048,
-                            "presence_penalty": 0.4, "frequency_penalty": 0.4, "stream": True}
+                    body: Dict[str, Any] = {
+                        "messages": messages, "temperature": 0.85, "max_tokens": 2048,
+                        "presence_penalty": 0.4, "frequency_penalty": 0.4, "stream": True,
+                    }
                     if is_groq:
                         label, url = "GROQ", "https://api.groq.com/openai/v1/chat/completions"
                         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -1164,12 +1240,9 @@ class LLMOrchestrator:
                             candidates = [preferred]
                         else:
                             candidates = self._order_candidates(list(OPENROUTER_FREE_MODELS), None, preferred)
-                    source = stream_candidates(
-                        client, lambda m: url, headers, lambda m: {**body, "model": m},
-                        candidates, allow_fallback, retry, openai_delta, label)
                 else:
                     contents = _build_gemini_contents(history_turns, effective_user_prompt)
-                    payload = {
+                    payload: Dict[str, Any] = {
                         "contents": contents,
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
                         "generationConfig": {"temperature": 0.85, "maxOutputTokens": 2048,
@@ -1182,33 +1255,101 @@ class LLMOrchestrator:
                         discovered = await get_candidate_models(client, api_key, self.model_cache)
                         model_discovery_ms = (time.perf_counter() - t_disc0) * 1000.0
                         candidates = self._order_candidates(discovered, None, preferred)
-                    source = stream_candidates(
-                        client, gemini_stream_url,
-                        {"Content-Type": "application/json", "x-goog-api-key": api_key},
-                        lambda m: payload, candidates, allow_fallback, (503, 429, 404), gemini_delta, "GEMINI")
 
                 t_llm0 = time.perf_counter()
-                async for kind, val in source:
-                    if kind == "fallback":
-                        fallback_attempts += 1
-                        continue
-                    if kind == "model":
-                        used_model = f"{val} (Groq LPU)" if is_groq else (
-                            f"{val.replace(':free', '')} (OpenRouter)" if is_openrouter else val)
-                        if is_groq:
-                            self.model_cache[api_key[-8:]] = val
-                        elif not is_openrouter:
-                            gemini_model = val
-                            self.model_cache[api_key[-8:]] = val
-                        continue
-                    if llm_ttft_ms is None:
-                        llm_ttft_ms = (time.perf_counter() - t_llm0) * 1000.0
-                    raw += val
-                    for out in handle(splitter.feed(val)):
+                locked_raw_model: Optional[str] = None
+                for step in range(max_loop_steps + 1):
+                    include_tools = step < max_loop_steps
+                    step_candidates = [locked_raw_model] if locked_raw_model else candidates
+                    if is_groq or is_openrouter:
+                        def make_openai_body(m: str, inc: bool = include_tools) -> Dict[str, Any]:
+                            req_body = {**body, "model": m}
+                            if inc and openai_tools:
+                                req_body["tools"] = openai_tools
+                                req_body["tool_choice"] = "auto"
+                            return req_body
+
+                        source = stream_candidates(
+                            client, lambda m: url, headers, make_openai_body,
+                            step_candidates, allow_fallback, retry, openai_delta, label,
+                            collect_tool_calls=include_tools,
+                        )
+                    else:
+                        def make_gemini_body(m: str, inc: bool = include_tools) -> Dict[str, Any]:
+                            if inc and gemini_decls:
+                                return {**payload, "tools": [{"functionDeclarations": gemini_decls}]}
+                            return payload
+
+                        source = stream_candidates(
+                            client, gemini_stream_url,
+                            {"Content-Type": "application/json", "x-goog-api-key": api_key},
+                            make_gemini_body, step_candidates, allow_fallback, (503, 429, 404), gemini_delta, "GEMINI",
+                            collect_tool_calls=include_tools,
+                        )
+
+                    step_raw = ""
+                    step_tool_calls: Optional[List[Dict[str, Any]]] = None
+                    async for kind, val in source:
+                        if kind == "fallback":
+                            fallback_attempts += 1
+                            continue
+                        if kind == "model":
+                            locked_raw_model = val
+                            used_model = f"{val} (Groq LPU)" if is_groq else (
+                                f"{val.replace(':free', '')} (OpenRouter)" if is_openrouter else val)
+                            if is_groq:
+                                self.model_cache[api_key[-8:]] = val
+                            elif not is_openrouter:
+                                gemini_model = val
+                                self.model_cache[api_key[-8:]] = val
+                            continue
+                        if kind == "tool_calls":
+                            step_tool_calls = val
+                            continue
+                        if llm_ttft_ms is None:
+                            llm_ttft_ms = (time.perf_counter() - t_llm0) * 1000.0
+                        raw += val
+                        step_raw += val
+                        for out in handle(splitter.feed(val)):
+                            yield out
+
+                    for out in handle(splitter.flush()):
                         yield out
-                for out in handle(splitter.flush()):
-                    yield out
-                pending_ja_queue.clear()
+                    pending_ja_queue.clear()
+
+                    if not step_tool_calls:
+                        break
+
+                    llm_results, batch_events, batch_approvals = await execute_tool_batch(
+                        step_tool_calls, session_id, registry=mcp_registry, store=memory_store, metrics=metrics_registry
+                    )
+                    tool_events.extend(batch_events)
+                    for ev in batch_events:
+                        yield {"event": "tool_status", **ev}
+
+                    if batch_approvals:
+                        pending_approvals.extend(batch_approvals)
+                        for appr in batch_approvals:
+                            yield {"event": "tool_approval_required", "approval": appr}
+                        confirm_reply = build_approval_prompt_reply(
+                            batch_approvals, lang=req_lang, with_tag=(not meta_sent)
+                        )
+                        raw += confirm_reply
+                        for out in handle(splitter.feed(confirm_reply)):
+                            yield out
+                        for out in handle(splitter.flush()):
+                            yield out
+                        pending_ja_queue.clear()
+                        break
+
+                    if is_groq or is_openrouter:
+                        append_openai_tool_exchange(messages, step_raw, step_tool_calls, llm_results)
+                    else:
+                        append_gemini_tool_exchange(contents, step_raw, step_tool_calls, llm_results)
+
+                    if step + 1 == max_loop_steps:
+                        metrics_registry.record_tool_loop_limit()
+
                 llm_total_ms = (time.perf_counter() - t_llm0) * 1000.0
 
             if not spoken:
@@ -1218,6 +1359,8 @@ class LLMOrchestrator:
             response = await self._finalize_chat(
                 req, raw, is_system_event, session_id, recalled_ids, used_model,
                 gemini_model, api_key, is_groq, is_openrouter)
+            response.toolEvents = tool_events
+            response.pendingApprovals = pending_approvals
             response.metrics = _record_stream("ok")
             completed = True
             yield {"event": "done", "response": response.model_dump()}

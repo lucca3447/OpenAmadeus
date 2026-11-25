@@ -8,6 +8,7 @@ from app.core.config import PERSONAS_DIR, TRAINING_DIR, SERVER_DIR
 from app.db.memory_store import memory_store
 from app.services.cognitive_worker import cognitive_worker
 from app.services.llm.background import aclose_background_client
+from app.services.mcp.mcp_client import mcp_registry
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
 
     warmup_task = asyncio.create_task(_bg_warmup())
     cognitive_worker.start()
+    await mcp_registry.startup()
 
     yield
 
@@ -70,6 +72,7 @@ async def lifespan(app: FastAPI):
         from app.services.llm.orchestrator import orchestrator
         from app.services.qwen_tts.qwen_manager import QwenTTSManager
         from app.services.rvc.rvc_manager import RVCManager
+        await mcp_registry.shutdown()
         await cognitive_worker.stop()
         await aclose_background_client()
         await orchestrator.aclose()

@@ -49,6 +49,7 @@ class MetricsRegistry:
     def __init__(self, maxlen: int = WINDOW_SIZE):
         self._maxlen = maxlen
         self._cognitive_state_provider: Optional[Callable[[], Dict[str, Any]]] = None
+        self._tools_state_provider: Optional[Callable[[], Dict[str, Any]]] = None
         self.reset()
 
     def set_cognitive_state_provider(
@@ -56,11 +57,17 @@ class MetricsRegistry:
     ) -> None:
         self._cognitive_state_provider = provider
 
+    def set_tools_state_provider(
+        self, provider: Optional[Callable[[], Dict[str, Any]]]
+    ) -> None:
+        self._tools_state_provider = provider
+
     def reset(self) -> None:
         self.started_at = time.time()
         self._chat: Deque[Dict[str, Any]] = deque(maxlen=self._maxlen)
         self._tts: Deque[Dict[str, Any]] = deque(maxlen=self._maxlen)
         self._cognitive: Deque[Dict[str, Any]] = deque(maxlen=self._maxlen)
+        self._tools: Deque[Dict[str, Any]] = deque(maxlen=self._maxlen)
         self._seen_llm_keys: set[str] = set()
         self.counters: Dict[str, int] = {
             "chat_total": 0,
@@ -81,6 +88,17 @@ class MetricsRegistry:
             "jobs_failed": 0,
             "schema_retries": 0,
             "provider_failovers": 0,
+        }
+        self.tool_counters: Dict[str, int] = {
+            "calls_total": 0,
+            "calls_auto_executed": 0,
+            "calls_approval_required": 0,
+            "calls_blocked_policy": 0,
+            "calls_failed": 0,
+            "calls_timeout": 0,
+            "approvals_approved": 0,
+            "approvals_rejected": 0,
+            "loop_max_steps_hit": 0,
         }
 
     def mark_llm_cold_start(self, provider_key: str) -> bool:
@@ -186,13 +204,53 @@ class MetricsRegistry:
         self.cognitive_counters["provider_failovers"] += clean["failovers"]
         return clean
 
+    def record_tool_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        clean = {
+            "ts": round(time.time(), 3),
+            "tool_name": event.get("tool_name") or "",
+            "server_id": event.get("server_id") or "",
+            "risk_level": event.get("risk_level") or "mutating",
+            "status": event.get("status") or "executed",
+            "latency_ms": _round_opt(event.get("latency_ms")),
+            "approval_id": event.get("approval_id"),
+            "error": event.get("error"),
+        }
+        self._tools.append(clean)
+        status = clean["status"]
+        if status == "approved_executed":
+            self.tool_counters["approvals_approved"] += 1
+        elif status == "approved_failed":
+            self.tool_counters["approvals_approved"] += 1
+            self.tool_counters["calls_failed"] += 1
+        elif status == "rejected":
+            self.tool_counters["approvals_rejected"] += 1
+        else:
+            self.tool_counters["calls_total"] += 1
+            if status == "executed":
+                self.tool_counters["calls_auto_executed"] += 1
+            elif status == "approval_required":
+                self.tool_counters["calls_approval_required"] += 1
+            elif status in ("blocked", "invalid_args"):
+                self.tool_counters["calls_blocked_policy"] += 1
+            elif status == "timeout":
+                self.tool_counters["calls_timeout"] += 1
+                self.tool_counters["calls_failed"] += 1
+            elif status == "failed":
+                self.tool_counters["calls_failed"] += 1
+        return clean
+
+    def record_tool_loop_limit(self) -> None:
+        self.tool_counters["loop_max_steps_hit"] += 1
+
     def snapshot(self) -> Dict[str, Any]:
         chat_list = list(self._chat)
         tts_list = list(self._tts)
         cog_list = list(self._cognitive)
+        tools_list = list(self._tools)
         chat_ok = [e for e in chat_list if e["status"] == "ok"]
         tts_ok = [e for e in tts_list if e["status"] == "ok" and not e["aborted"]]
         cog_ok = [e for e in cog_list if e["status"] == "ok"]
+        tools_ok = [e for e in tools_list if e["status"] in ("executed", "approved_executed")]
 
         cog_state: Dict[str, Any] = {}
         if self._cognitive_state_provider is not None:
@@ -200,6 +258,13 @@ class MetricsRegistry:
                 cog_state = self._cognitive_state_provider() or {}
             except Exception:
                 cog_state = {}
+
+        tools_state: Dict[str, Any] = {}
+        if self._tools_state_provider is not None:
+            try:
+                tools_state = self._tools_state_provider() or {}
+            except Exception:
+                tools_state = {}
 
         cold_chats = [e for e in chat_ok if e["cold_start"] and e.get("total_ms") is not None]
         warm_chats = [e for e in chat_ok if not e["cold_start"] and e.get("total_ms") is not None]
@@ -258,10 +323,19 @@ class MetricsRegistry:
                 "last": cog_list[-1] if cog_list else None,
                 "bg_latency_ms": _summarize_series(cog_ok, "latency_ms"),
             },
+            "tools": {
+                **self.tool_counters,
+                "active_servers": int(tools_state.get("active_servers") or 0),
+                "registered_tools": int(tools_state.get("registered_tools") or 0),
+                "pending_approvals": int(tools_state.get("pending_approvals") or 0),
+                "last": tools_list[-1] if tools_list else None,
+                "tool_latency_ms": _summarize_series(tools_ok, "latency_ms"),
+            },
             "recent": {
                 "chat": chat_list[-10:],
                 "tts": tts_list[-10:],
                 "cognitive": cog_list[-10:],
+                "tools": tools_list[-10:],
             },
         }
 

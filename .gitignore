@@ -29,6 +29,7 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+server/mcp_servers.json
 
 # Persona Sprites & Commercial Assets (Pacotes de fã não distribuídos no Git)
 public/assets/sprites/kurisu/

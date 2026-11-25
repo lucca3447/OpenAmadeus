@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class HistoryTurn(BaseModel):
     role: str  # "user" or "model" / "assistant"
@@ -38,3 +38,5 @@ class ChatResponse(BaseModel):
     learnedMemory: Optional[LearnedMemoryInfo] = None
     error: Optional[str] = None
     metrics: Optional[Dict[str, Any]] = None
+    toolEvents: List[Dict[str, Any]] = Field(default_factory=list)
+    pendingApprovals: List[Dict[str, Any]] = Field(default_factory=list)

@@ -97,3 +97,24 @@ def get_cognitive_idle_sec() -> float:
         return max(5.0, float(raw))
     except ValueError:
         return 300.0
+
+
+# MCP Client & Agent Tool Execution (v0.4.0)
+MCP_CONFIG_PATH: Path = Path(
+    (os.environ.get("AMADEUS_MCP_CONFIG") or "").strip() or str(SERVER_DIR / "mcp_servers.json")
+)
+LAB_NOTES_DIR: Path = DATA_DIR / "lab_notes"
+MCP_MAX_TOOL_STEPS: int = 3
+MCP_TOOL_TIMEOUT_SEC: float = 10.0
+MCP_MAX_OUTPUT_CHARS: int = 4000
+MCP_APPROVAL_TTL_SEC: float = 300.0
+
+
+def get_mcp_config_path() -> Path:
+    raw = (os.environ.get("AMADEUS_MCP_CONFIG") or "").strip()
+    return Path(raw) if raw else (SERVER_DIR / "mcp_servers.json")
+
+
+def is_mcp_enabled() -> bool:
+    raw = (os.environ.get("AMADEUS_MCP_ENABLED") or "true").strip().lower()
+    return raw not in ("0", "false", "no", "off")
