@@ -251,6 +251,7 @@ class CognitiveWorker:
                         content=fact.content,
                         emotional_weight=fact.emotional_weight,
                         source="learned",
+                        confidence=fact.confidence,
                     )
                     saved += 1
                 self._store.mark_session_consolidated(

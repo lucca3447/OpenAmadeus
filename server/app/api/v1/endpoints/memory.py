@@ -1,5 +1,6 @@
 import asyncio
-from fastapi import APIRouter
+from typing import Annotated, Optional
+from fastapi import APIRouter, Query
 from app.db.memory_store import memory_store
 from app.schemas.memory import AddMemoryRequest
 from app.services.cognitive_worker import cognitive_worker
@@ -11,8 +12,15 @@ def get_core_memory():
     return {"blocks": memory_store.get_core_memory_snapshot()}
 
 @router.get("/memories")
-def get_memories():
-    return memory_store.get_all_memories()
+def get_memories(
+    include_history: Annotated[bool, Query()] = False,
+    as_of: Annotated[Optional[float], Query()] = None,
+):
+    return memory_store.get_all_memories(include_history=include_history, as_of=as_of)
+
+@router.get("/memories/{memory_id}/history")
+def get_memory_history(memory_id: str):
+    return {"memoryId": memory_id, "chain": memory_store.get_memory_history(memory_id)}
 
 @router.post("/memories")
 def create_memory(req: AddMemoryRequest):

@@ -1,11 +1,13 @@
 from collections import OrderedDict
 import hashlib
+import math
 import os
 import re
 import json
 import sqlite3
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Tuple
@@ -26,6 +28,9 @@ from app.core.config import (
     CORE_MEMORY_BLOCK_KEYS,
     CORE_MEMORY_MAX_BLOCK_CHARS,
     MCP_APPROVAL_TTL_SEC,
+    RRF_K,
+    FTS_STANDALONE_BM25_MAX,
+    BELIEF_HALF_LIFE_DAYS,
 )
 
 
@@ -33,6 +38,61 @@ def _sanitize_field(value: Optional[str], max_len: int) -> str:
     clean = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean[:max_len]
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(ch)
+    )
+
+
+_FTS_STOPWORDS = frozenset({
+    "qual", "quais", "como", "para", "onde", "quem", "que", "por", "porque", "com", "sem",
+    "uma", "uns", "umas", "seu", "sua", "seus", "suas", "meu", "minha", "meus", "minhas",
+    "isso", "isto", "esta", "este", "esse", "essa", "sobre", "fazer", "tudo", "bem", "voce",
+    "voces", "bom", "boa", "dia", "noite", "tarde", "ola", "amanha", "hoje", "agora", "aqui",
+    "ali", "melhor", "pior", "mais", "menos", "muito", "muita", "pouco", "explica", "explique",
+    "descreva", "fale", "diga", "favor", "nao", "sim", "estao", "sao", "era", "foi", "ser",
+    "ter", "tem", "pode", "entre", "costuma", "algum", "alguma", "quanto", "vai", "kurisu",
+    "makise", "the", "and", "for", "with", "about", "what", "where", "when", "why", "how",
+    "who", "which", "are", "was", "were", "you", "your", "this", "that", "from", "into",
+})
+
+
+def _extract_fts_terms(query: str) -> List[str]:
+    folded = _strip_accents(query or "").lower()
+    raw_tokens = re.findall(r"[a-z0-9]{3,}", folded)
+    terms: List[str] = []
+    for tok in raw_tokens:
+        if tok in _FTS_STOPWORDS or tok.isdigit():
+            continue
+        if tok not in terms:
+            terms.append(tok)
+    return terms[:8]
+
+
+def _count_term_hits(terms: List[str], haystack: str) -> int:
+    folded = _strip_accents(haystack or "").lower()
+    hits = 0
+    for term in terms:
+        pat = rf"\b{re.escape(term)}" if len(term) >= 5 else rf"\b{re.escape(term)}\b"
+        if re.search(pat, folded):
+            hits += 1
+    return hits
+
+
+def _compute_actr_boost(
+    confidence: Optional[float],
+    valid_from: Optional[float],
+    access_count: Optional[int],
+    now: float,
+) -> float:
+    """Bounded ACT-R activation tie-breaker blending belief confidence, recency, and reinforcement."""
+    conf = max(0.0, min(1.0, float(confidence if confidence is not None else 0.85)))
+    age_days = max(0.0, (now - float(valid_from or now)) / 86400.0)
+    decay = 0.5 + 0.5 * (2.0 ** (-age_days / max(1.0, BELIEF_HALF_LIFE_DAYS)))
+    rehearsal = 1.0 + 0.15 * math.log1p(max(0, int(access_count or 0)))
+    return 0.004 * conf * decay * rehearsal
 
 
 class _PersistentDefaultEF(DefaultEmbeddingFunction):
@@ -229,9 +289,52 @@ class MemoryStore:
                     content TEXT,
                     emotional_weight TEXT,
                     source TEXT,
-                    created_at REAL
+                    created_at REAL,
+                    confidence REAL DEFAULT 0.85,
+                    valid_from REAL,
+                    valid_to REAL,
+                    superseded_by TEXT,
+                    access_count INTEGER DEFAULT 0,
+                    last_accessed_at REAL,
+                    keywords TEXT DEFAULT ''
                 )
             """)
+            cursor.execute("PRAGMA table_info(memories)")
+            mem_cols = {row[1] for row in cursor.fetchall()}
+            for col_name, col_ddl in (
+                ("confidence", "REAL DEFAULT 0.85"),
+                ("valid_from", "REAL"),
+                ("valid_to", "REAL"),
+                ("superseded_by", "TEXT"),
+                ("access_count", "INTEGER DEFAULT 0"),
+                ("last_accessed_at", "REAL"),
+                ("keywords", "TEXT DEFAULT ''"),
+            ):
+                if col_name not in mem_cols:
+                    cursor.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_ddl}")
+            cursor.execute(
+                """
+                UPDATE memories
+                SET valid_from = COALESCE(valid_from, created_at),
+                    confidence = COALESCE(confidence, 0.85),
+                    access_count = COALESCE(access_count, 0),
+                    keywords = COALESCE(keywords, '')
+                WHERE valid_from IS NULL OR confidence IS NULL OR access_count IS NULL OR keywords IS NULL
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(source, valid_to)")
+            cursor.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    memory_id UNINDEXED,
+                    source UNINDEXED,
+                    title,
+                    content,
+                    keywords,
+                    tokenize='unicode61 remove_diacritics 2'
+                )
+                """
+            )
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tool_approvals (
                     id TEXT PRIMARY KEY,
@@ -249,8 +352,46 @@ class MemoryStore:
                     error TEXT
                 )
             """)
+            active_count = int(
+                cursor.execute("SELECT COUNT(*) FROM memories WHERE valid_to IS NULL").fetchone()[0]
+            )
+            fts_count = int(cursor.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0])
+            if fts_count != active_count:
+                self._rebuild_fts(conn)
             conn.commit()
             self._hydrate_core_memory_cache(conn)
+
+    @staticmethod
+    def _sync_fts_row(
+        conn: sqlite3.Connection,
+        mem_id: str,
+        source: str,
+        title: str,
+        content: str,
+        keywords: str = "",
+    ) -> None:
+        conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (mem_id,))
+        conn.execute(
+            "INSERT INTO memories_fts (memory_id, source, title, content, keywords) VALUES (?, ?, ?, ?, ?)",
+            (mem_id, source, title, content, keywords or ""),
+        )
+
+    @staticmethod
+    def _delete_fts_ids(conn: sqlite3.Connection, ids: List[str]) -> None:
+        for mem_id in ids:
+            conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (mem_id,))
+
+    @staticmethod
+    def _rebuild_fts(conn: sqlite3.Connection) -> None:
+        conn.execute("DELETE FROM memories_fts")
+        rows = conn.execute(
+            "SELECT id, source, title, content, COALESCE(keywords, '') FROM memories WHERE valid_to IS NULL"
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "INSERT INTO memories_fts (memory_id, source, title, content, keywords) VALUES (?, ?, ?, ?, ?)",
+                (row[0], row[1] or "canonical", row[2] or "", row[3] or "", row[4] or ""),
+            )
 
     def _init_chroma(self):
         # Persistent ChromaDB client saving to local directory
@@ -370,7 +511,7 @@ class MemoryStore:
 
     def rebuild_index(self, canonical_memories: Optional[List[Dict[str, Any]]] = None) -> int:
         """
-        Rebuilds the ChromaDB memory collection from SQLite (canonical, learned, and custom).
+        Rebuilds the ChromaDB and FTS5 indexes from active SQLite memories (valid_to IS NULL).
         """
         if canonical_memories:
             for mem in canonical_memories:
@@ -380,8 +521,13 @@ class MemoryStore:
         with self._conn() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, category, title, content, emotional_weight, source FROM memories")
+            cursor.execute(
+                "SELECT id, category, title, content, emotional_weight, source, COALESCE(keywords, '') AS keywords "
+                "FROM memories WHERE valid_to IS NULL"
+            )
             rows = cursor.fetchall()
+            self._rebuild_fts(conn)
+            conn.commit()
 
         existing_ids = (self.collection.get(include=[]) or {}).get("ids") or []
         if existing_ids:
@@ -399,7 +545,7 @@ class MemoryStore:
             content = row["content"]
             doc_text = f"{title}: {content}"
             kw_list = self._canonical_keywords.get(mem_id, [])
-            keywords = " ".join(kw_list)
+            keywords = " ".join(kw_list) if kw_list else (row["keywords"] or "").strip()
             full_text = f"{doc_text} (keywords: {keywords})" if keywords else doc_text
 
             ids.append(mem_id)
@@ -425,16 +571,23 @@ class MemoryStore:
                 self._canonical_keywords[mem["id"]] = mem["triggerKeywords"]
 
         changed_memories: List[Dict[str, Any]] = []
+        now = time.time()
         with self._conn() as conn:
             cursor = conn.cursor()
             for mem in memories:
                 mem_id = mem["id"]
                 emo_weight = mem.get("emotionalWeight", "Factual")
-                cursor.execute("SELECT title, content, emotional_weight FROM memories WHERE id = ?", (mem_id,))
+                kw_str = " ".join(mem.get("triggerKeywords") or [])
+                cursor.execute(
+                    "SELECT title, content, emotional_weight, COALESCE(keywords, '') FROM memories WHERE id = ?",
+                    (mem_id,),
+                )
                 row = cursor.fetchone()
                 if not row:
                     cursor.execute(
-                        "INSERT INTO memories (id, category, title, content, emotional_weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO memories "
+                        "(id, category, title, content, emotional_weight, source, created_at, confidence, valid_from, valid_to, access_count, keywords) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?)",
                         (
                             mem_id,
                             mem.get("category", "biography"),
@@ -442,19 +595,24 @@ class MemoryStore:
                             mem["content"],
                             emo_weight,
                             mem.get("source", "canonical"),
-                            time.time()
-                        )
+                            now,
+                            1.0,
+                            now,
+                            kw_str,
+                        ),
                     )
+                    self._sync_fts_row(conn, mem_id, mem.get("source", "canonical"), mem["title"], mem["content"], kw_str)
                     changed_memories.append(mem)
-                elif (row[0], row[1], row[2]) != (mem["title"], mem["content"], emo_weight):
+                elif (row[0], row[1], row[2], row[3]) != (mem["title"], mem["content"], emo_weight, kw_str):
                     cursor.execute(
-                        "UPDATE memories SET title = ?, content = ?, emotional_weight = ? WHERE id = ?",
-                        (mem["title"], mem["content"], emo_weight, mem_id)
+                        "UPDATE memories SET title = ?, content = ?, emotional_weight = ?, keywords = ?, valid_to = NULL WHERE id = ?",
+                        (mem["title"], mem["content"], emo_weight, kw_str, mem_id),
                     )
+                    self._sync_fts_row(conn, mem_id, mem.get("source", "canonical"), mem["title"], mem["content"], kw_str)
                     changed_memories.append(mem)
             conn.commit()
-            cursor.execute("SELECT COUNT(*) FROM memories")
-            sqlite_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM memories WHERE valid_to IS NULL")
+            sqlite_count = int(cursor.fetchone()[0])
 
         if self.collection.count() != sqlite_count:
             self.rebuild_index(memories)
@@ -524,6 +682,208 @@ class MemoryStore:
                 })
         return matched
 
+    def _fts_search_group(
+        self,
+        terms: List[str],
+        is_learned: bool,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        if not terms or limit <= 0:
+            return []
+
+        match_expr = " OR ".join(f'"{t}"*' if len(t) >= 5 else f'"{t}"' for t in terms)
+        src_clause = "m.source = 'learned'" if is_learned else "m.source != 'learned'"
+        fetch_limit = max(int(limit) * 3, 6)
+        sql = f"""
+            SELECT m.id, m.category, m.title, m.content, m.emotional_weight, m.source,
+                   m.confidence, m.valid_from, m.access_count, COALESCE(m.keywords, '') AS keywords,
+                   bm25(memories_fts, 0.0, 0.0, 3.0, 1.0, 2.5) AS bm25_score
+            FROM memories_fts
+            JOIN memories m ON m.id = memories_fts.memory_id
+            WHERE memories_fts MATCH ? AND m.valid_to IS NULL AND {src_clause}
+            ORDER BY bm25_score ASC
+            LIMIT ?
+        """
+        try:
+            with self._conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(sql, (match_expr, fetch_limit)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            title = r["title"] or ""
+            content = r["content"] or ""
+            keywords = r["keywords"] or ""
+            bm25_val = float(r["bm25_score"] or 0.0)
+            distinct_hits = _count_term_hits(terms, f"{title} {content} {keywords}")
+            title_kw_hits = _count_term_hits(terms, f"{title} {keywords}")
+            out.append({
+                "id": r["id"],
+                "title": title,
+                "category": r["category"] or "biography",
+                "content": content,
+                "emotionalWeight": r["emotional_weight"] or "Factual",
+                "source": r["source"] or "canonical",
+                "confidence": float(r["confidence"] if r["confidence"] is not None else 0.85),
+                "validFrom": r["valid_from"],
+                "accessCount": int(r["access_count"] or 0),
+                "bm25": bm25_val,
+                "distinctHits": distinct_hits,
+                "titleKwHits": title_kw_hits,
+                "distance": round(min(0.99, max(0.35, 0.85 + bm25_val * 0.03)), 4),
+            })
+        return out
+
+    def _load_memory_meta_map(self, mem_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not mem_ids:
+            return {}
+        placeholders = ",".join("?" for _ in mem_ids)
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"SELECT id, confidence, valid_from, valid_to, access_count FROM memories WHERE id IN ({placeholders})",
+                tuple(mem_ids),
+            ).fetchall()
+        return {
+            r["id"]: {
+                "confidence": float(r["confidence"] if r["confidence"] is not None else 0.85),
+                "valid_from": r["valid_from"],
+                "valid_to": r["valid_to"],
+                "access_count": int(r["access_count"] or 0),
+            }
+            for r in rows
+        }
+
+    def _fuse_hybrid_group(
+        self,
+        vec_matches: List[Dict[str, Any]],
+        fts_matches: List[Dict[str, Any]],
+        group_limit: int,
+        meta_by_id: Dict[str, Dict[str, Any]],
+        now: float,
+    ) -> List[Dict[str, Any]]:
+        if group_limit <= 0:
+            return []
+
+        vec_rank: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+        for idx, item in enumerate(vec_matches, start=1):
+            mid = item["id"]
+            meta = meta_by_id.get(mid)
+            if meta is not None and meta.get("valid_to") is not None:
+                continue
+            vec_rank[mid] = (idx, item)
+
+        fts_rank: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+        for idx, item in enumerate(fts_matches, start=1):
+            fts_rank[item["id"]] = (idx, item)
+
+        fused: List[Dict[str, Any]] = []
+        all_ids = list(dict.fromkeys([*vec_rank.keys(), *fts_rank.keys()]))
+        for mid in all_ids:
+            v_entry = vec_rank.get(mid)
+            f_entry = fts_rank.get(mid)
+            if v_entry is None and f_entry is not None:
+                f_item = f_entry[1]
+                # Gate standalone FTS hits so casual greetings/OOD never leak into prompt context
+                if not (
+                    f_item["distinctHits"] >= 2
+                    or (f_item["titleKwHits"] >= 1 and f_item["bm25"] <= FTS_STANDALONE_BM25_MAX)
+                ):
+                    continue
+
+            base = dict(v_entry[1]) if v_entry is not None else dict(f_entry[1])  # type: ignore[index]
+            meta = meta_by_id.get(mid) or {}
+            conf = float(base.get("confidence", meta.get("confidence", 0.85)))
+            v_from = base.get("validFrom", meta.get("valid_from"))
+            acc = int(base.get("accessCount", meta.get("access_count", 0)))
+
+            rrf = 0.0
+            if v_entry is not None:
+                rrf += 1.0 / (RRF_K + v_entry[0])
+            if f_entry is not None:
+                rrf += 1.0 / (RRF_K + f_entry[0])
+            rrf += _compute_actr_boost(conf, v_from, acc, now)
+
+            if v_entry is not None and f_entry is not None:
+                ret_src = "hybrid"
+            elif v_entry is not None:
+                ret_src = "vector"
+            else:
+                ret_src = "fts"
+
+            base["confidence"] = round(conf, 4)
+            base["validFrom"] = v_from
+            base["accessCount"] = acc
+            base["rrfScore"] = round(rrf, 6)
+            base["retrievalSource"] = ret_src
+            base.pop("bm25", None)
+            base.pop("distinctHits", None)
+            base.pop("titleKwHits", None)
+            fused.append(base)
+
+        fused.sort(key=lambda m: (-float(m.get("rrfScore") or 0.0), float(m.get("distance") or 999.0)))
+        return fused[:group_limit]
+
+    def _search_memories_as_of(
+        self,
+        query: str,
+        max_kurisu: int,
+        max_learned: int,
+        as_of: float,
+    ) -> List[Dict[str, Any]]:
+        terms = _extract_fts_terms(query)
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, category, title, content, emotional_weight, source, created_at,
+                       confidence, valid_from, valid_to, superseded_by, access_count, COALESCE(keywords, '') AS keywords
+                FROM memories
+                WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)
+                """,
+                (as_of, as_of),
+            ).fetchall()
+
+        kurisu_cand: List[Dict[str, Any]] = []
+        learned_cand: List[Dict[str, Any]] = []
+        for r in rows:
+            title = r["title"] or ""
+            content = r["content"] or ""
+            keywords = r["keywords"] or ""
+            tk_hits = _count_term_hits(terms, f"{title} {keywords}") if terms else 0
+            c_hits = _count_term_hits(terms, content) if terms else 0
+            if terms and (tk_hits + c_hits) == 0:
+                continue
+            conf = float(r["confidence"] if r["confidence"] is not None else 0.85)
+            score = (tk_hits * 2.0) + c_hits + _compute_actr_boost(conf, r["valid_from"], r["access_count"], as_of)
+            item = {
+                "id": r["id"],
+                "title": title,
+                "category": r["category"] or "biography",
+                "content": content,
+                "emotionalWeight": r["emotional_weight"] or "Factual",
+                "source": r["source"] or "canonical",
+                "distance": round(max(0.25, 0.9 - 0.15 * (tk_hits + c_hits)), 4),
+                "confidence": round(conf, 4),
+                "validFrom": r["valid_from"],
+                "validTo": r["valid_to"],
+                "supersededBy": r["superseded_by"],
+                "rrfScore": round(score, 6),
+                "retrievalSource": "bitemporal_as_of",
+            }
+            if (r["source"] or "") == "learned":
+                learned_cand.append(item)
+            else:
+                kurisu_cand.append(item)
+
+        kurisu_cand.sort(key=lambda m: (-m["rrfScore"], -(m["validFrom"] or 0.0)))
+        learned_cand.sort(key=lambda m: (-m["rrfScore"], -(m["validFrom"] or 0.0)))
+        combined = kurisu_cand[:max_kurisu] + learned_cand[:max_learned]
+        combined.sort(key=lambda m: (-m["rrfScore"], m["distance"]))
+        return combined
+
     def search_memories(
         self,
         query: str,
@@ -531,26 +891,48 @@ class MemoryStore:
         max_learned: int = 2,
         max_distance: float = MEMORY_MAX_DISTANCE,
         n_results: Optional[int] = None,
+        as_of: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Performs stratified semantic vector search in ChromaDB:
-        - Up to max_kurisu from source != 'learned' (canonical + custom)
-        - Up to max_learned from source == 'learned'
-        Discards any result with distance > max_distance.
+        Performs stratified Hybrid RRF search combining ChromaDB vector similarity,
+        SQLite FTS5 BM25 lexical matching, and ACT-R belief weighting (active memories only,
+        or point-in-time snapshot when `as_of` is supplied).
         """
-        if self.collection.count() == 0:
-            return []
-
         if n_results is not None:
             max_kurisu = n_results
             max_learned = n_results
 
-        query_vec = self._embed_query(query)
-        kurisu_matches = self._query_memory_group(query, {"source": {"$ne": "learned"}}, max_kurisu, max_distance, query_embedding=query_vec)
-        learned_matches = self._query_memory_group(query, {"source": "learned"}, max_learned, max_distance, query_embedding=query_vec)
+        if as_of is not None:
+            return self._search_memories_as_of(query, max_kurisu, max_learned, float(as_of))
 
-        combined = kurisu_matches + learned_matches
-        combined.sort(key=lambda m: m["distance"])
+        if self.collection.count() == 0:
+            return []
+
+        now = time.time()
+        # Keep recall strictly read-only on hot path (access_count updates on reinforcement writes)
+        query_vec = self._embed_query(query)
+        terms = _extract_fts_terms(query)
+
+        vec_k_limit = max(max_kurisu, 4) if max_kurisu > 0 else 0
+        vec_l_limit = max(max_learned, 4) if max_learned > 0 else 0
+
+        kurisu_vec = self._query_memory_group(query, {"source": {"$ne": "learned"}}, vec_k_limit, max_distance, query_embedding=query_vec)
+        learned_vec = self._query_memory_group(query, {"source": "learned"}, vec_l_limit, max_distance, query_embedding=query_vec)
+
+        vec_ids = list({m["id"] for m in (*kurisu_vec, *learned_vec)})
+        if terms or vec_ids:
+            with self.connection_scope():
+                kurisu_fts = self._fts_search_group(terms, is_learned=False, limit=max_kurisu) if terms else []
+                learned_fts = self._fts_search_group(terms, is_learned=True, limit=max_learned) if terms else []
+                meta_by_id = self._load_memory_meta_map(vec_ids)
+        else:
+            kurisu_fts, learned_fts, meta_by_id = [], [], {}
+
+        kurisu_fused = self._fuse_hybrid_group(kurisu_vec, kurisu_fts, max_kurisu, meta_by_id, now)
+        learned_fused = self._fuse_hybrid_group(learned_vec, learned_fts, max_learned, meta_by_id, now)
+
+        combined = kurisu_fused + learned_fused
+        combined.sort(key=lambda m: (-float(m.get("rrfScore") or 0.0), float(m.get("distance") or 999.0)))
         return combined
 
     def get_learned_context(
@@ -560,15 +942,16 @@ class MemoryStore:
         precomputed_learned: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Operator profile: returns up to `limit` most recent learned facts from SQLite
+        Operator profile: returns up to `limit` most recent active learned beliefs from SQLite
         plus any semantic learned matches within MEMORY_MAX_DISTANCE, deduplicated.
         """
         # shortcut: recência pura até limit=12 + top-2 semântico; revisar se passar de ~50 fatos aprendidos.
         with self._conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT id, category, title, content, emotional_weight FROM memories "
-                "WHERE source = 'learned' ORDER BY created_at DESC LIMIT ?",
+                "SELECT id, category, title, content, emotional_weight, confidence, valid_from "
+                "FROM memories WHERE source = 'learned' AND valid_to IS NULL "
+                "ORDER BY COALESCE(last_accessed_at, created_at) DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         recent = [
@@ -578,6 +961,8 @@ class MemoryStore:
                 "content": _sanitize_field(r["content"], 280),
                 "emotionalWeight": _sanitize_field(r["emotional_weight"], 80) or "Factual",
                 "source": "learned",
+                "confidence": float(r["confidence"] if r["confidence"] is not None else 0.85),
+                "validFrom": r["valid_from"],
             }
             for r in rows
             if r["title"] and r["content"]
@@ -591,16 +976,44 @@ class MemoryStore:
         extra = [m for m in semantic_learned if m["id"] not in seen]
         return recent + extra
 
-    def add_memory(self, category: str, title: str, content: str, emotional_weight: str = "Factual", source: str = "learned") -> Dict[str, Any]:
+    @staticmethod
+    def _memory_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "category": row["category"],
+            "title": row["title"],
+            "content": row["content"],
+            "emotionalWeight": row["emotional_weight"],
+            "source": row["source"],
+            "createdAt": row["created_at"],
+            "confidence": float(row["confidence"] if row["confidence"] is not None else 0.85),
+            "validFrom": row["valid_from"] if row["valid_from"] is not None else row["created_at"],
+            "validTo": row["valid_to"],
+            "supersededBy": row["superseded_by"],
+            "accessCount": int(row["access_count"] or 0),
+        }
+
+    def add_memory(
+        self,
+        category: str,
+        title: str,
+        content: str,
+        emotional_weight: str = "Factual",
+        source: str = "learned",
+        confidence: float = 0.85,
+        keywords: str = "",
+    ) -> Dict[str, Any]:
         """
-        Adds or updates (semantic upsert for source='learned') a memory in both SQLite and ChromaDB.
-        Sanitizes and bounds inputs at the storage trust boundary.
+        Persists a memory or non-destructively supersedes a colliding learned belief
+        in SQLite (bitemporal chain + FTS5) and ChromaDB. Reuses a single embedding call.
         """
         clean_category = _sanitize_field(category, 40) or "user"
         clean_title = _sanitize_field(title, 80)
         clean_content = _sanitize_field(content, 280)
         clean_emotion = _sanitize_field(emotional_weight, 80) or "Factual"
         clean_source = _sanitize_field(source, 40) or "learned"
+        clean_conf = max(0.0, min(1.0, float(confidence if confidence is not None else 0.85)))
+        clean_keywords = _sanitize_field(keywords, 240)
 
         if not clean_title or not clean_content:
             raise ValueError("Memory title and content must not be empty.")
@@ -608,20 +1021,22 @@ class MemoryStore:
         now = time.time()
         doc_text = f"{clean_title}: {clean_content}"
         doc_vec = self._embed_query(doc_text)
-        mem_id: Optional[str] = None
+        colliding: Optional[sqlite3.Row] = None
+        superseded_id: Optional[str] = None
+        reinforced = False
 
         with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             if clean_source == "learned":
                 cursor.execute(
-                    "SELECT id FROM memories WHERE source = 'learned' AND LOWER(TRIM(title)) = ? LIMIT 1",
-                    (clean_title.lower(),)
+                    "SELECT id, category, title, content, emotional_weight, confidence, valid_from, access_count, COALESCE(keywords, '') AS keywords "
+                    "FROM memories WHERE source = 'learned' AND valid_to IS NULL AND LOWER(TRIM(title)) = ? LIMIT 1",
+                    (clean_title.lower(),),
                 )
-                row = cursor.fetchone()
-                if row:
-                    mem_id = row[0]
-                else:
-                    cursor.execute("SELECT 1 FROM memories WHERE source = 'learned' LIMIT 1")
+                colliding = cursor.fetchone()
+                if colliding is None:
+                    cursor.execute("SELECT 1 FROM memories WHERE source = 'learned' AND valid_to IS NULL LIMIT 1")
                     if cursor.fetchone() is not None:
                         q_kwargs: Dict[str, Any] = {"n_results": 1, "where": {"source": "learned"}}
                         if doc_vec is not None:
@@ -636,20 +1051,90 @@ class MemoryStore:
                             and q.get("distances")
                             and q["distances"][0][0] <= UPSERT_MAX_DISTANCE
                         ):
-                            mem_id = q["ids"][0][0]
+                            cand_id = q["ids"][0][0]
+                            colliding = cursor.execute(
+                                "SELECT id, category, title, content, emotional_weight, confidence, valid_from, access_count, COALESCE(keywords, '') AS keywords "
+                                "FROM memories WHERE id = ? AND valid_to IS NULL LIMIT 1",
+                                (cand_id,),
+                            ).fetchone()
 
-            if mem_id:
-                cursor.execute(
-                    "UPDATE memories SET category = ?, title = ?, content = ?, emotional_weight = ?, created_at = ? WHERE id = ?",
-                    (clean_category, clean_title, clean_content, clean_emotion, now, mem_id)
-                )
+            if colliding is not None:
+                old_id = colliding["id"]
+                old_content_norm = _strip_accents(colliding["content"] or "").lower().strip()
+                new_content_norm = _strip_accents(clean_content).lower().strip()
+                old_valid_from = float(colliding["valid_from"] or now)
+                if old_content_norm == new_content_norm:
+                    mem_id = old_id
+                    new_conf = max(float(colliding["confidence"] or 0.0), clean_conf)
+                    new_acc = int(colliding["access_count"] or 0) + 1
+                    merged_kw = clean_keywords or colliding["keywords"] or ""
+                    cursor.execute(
+                        """
+                        UPDATE memories
+                        SET category = ?, title = ?, emotional_weight = ?, confidence = ?,
+                            access_count = ?, last_accessed_at = ?, keywords = ?
+                        WHERE id = ?
+                        """,
+                        (clean_category, clean_title, clean_emotion, new_conf, new_acc, now, merged_kw, mem_id),
+                    )
+                    self._sync_fts_row(conn, mem_id, clean_source, clean_title, clean_content, merged_kw)
+                    valid_from_out = old_valid_from
+                    final_conf = new_conf
+                    final_acc = new_acc
+                    reinforced = True
+                else:
+                    # Non-destructive bitemporal close of previous version; keep monotonic timestamps in tight loops
+                    now = max(now, old_valid_from + 1e-4)
+                    mem_id = f"mem_{clean_source}_{int(now)}_{os.urandom(3).hex()}"
+                    cursor.execute(
+                        "UPDATE memories SET valid_to = ?, superseded_by = ? WHERE id = ?",
+                        (now, mem_id, old_id),
+                    )
+                    self._delete_fts_ids(conn, [old_id])
+                    cursor.execute(
+                        """
+                        INSERT INTO memories (
+                            id, category, title, content, emotional_weight, source,
+                            created_at, confidence, valid_from, valid_to, superseded_by,
+                            access_count, last_accessed_at, keywords
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?)
+                        """,
+                        (
+                            mem_id, clean_category, clean_title, clean_content, clean_emotion,
+                            clean_source, now, clean_conf, now, now, clean_keywords,
+                        ),
+                    )
+                    self._sync_fts_row(conn, mem_id, clean_source, clean_title, clean_content, clean_keywords)
+                    superseded_id = old_id
+                    valid_from_out = now
+                    final_conf = clean_conf
+                    final_acc = 0
             else:
-                mem_id = f"mem_{clean_source}_{int(now)}_{os.urandom(2).hex()}"
+                mem_id = f"mem_{clean_source}_{int(now)}_{os.urandom(3).hex()}"
                 cursor.execute(
-                    "INSERT INTO memories (id, category, title, content, emotional_weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (mem_id, clean_category, clean_title, clean_content, clean_emotion, clean_source, now)
+                    """
+                    INSERT INTO memories (
+                        id, category, title, content, emotional_weight, source,
+                        created_at, confidence, valid_from, valid_to, superseded_by,
+                        access_count, last_accessed_at, keywords
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?)
+                    """,
+                    (
+                        mem_id, clean_category, clean_title, clean_content, clean_emotion,
+                        clean_source, now, clean_conf, now, now, clean_keywords,
+                    ),
                 )
+                self._sync_fts_row(conn, mem_id, clean_source, clean_title, clean_content, clean_keywords)
+                valid_from_out = now
+                final_conf = clean_conf
+                final_acc = 0
             conn.commit()
+
+        if superseded_id:
+            try:
+                self.collection.delete(ids=[superseded_id])
+            except Exception:
+                pass
 
         upsert_kwargs: Dict[str, Any] = {
             "ids": [mem_id],
@@ -666,35 +1151,52 @@ class MemoryStore:
             upsert_kwargs["embeddings"] = [doc_vec]
         self.collection.upsert(**upsert_kwargs)
 
-        return {
+        out: Dict[str, Any] = {
             "id": mem_id,
             "category": clean_category,
             "title": clean_title,
             "content": clean_content,
             "emotionalWeight": clean_emotion,
             "source": clean_source,
-            "createdAt": now
+            "createdAt": now,
+            "confidence": round(final_conf, 4),
+            "validFrom": valid_from_out,
+            "validTo": None,
+            "supersededBy": None,
+            "accessCount": final_acc,
         }
+        if superseded_id:
+            out["supersedes"] = superseded_id
+        if reinforced:
+            out["reinforced"] = True
+        return out
 
     def clear_learned_memories(self) -> int:
         with self._conn() as conn:
             cursor = conn.cursor()
+            active_count = int(
+                cursor.execute(
+                    "SELECT COUNT(*) FROM memories WHERE source = 'learned' AND valid_to IS NULL"
+                ).fetchone()[0]
+            )
             cursor.execute("SELECT id FROM memories WHERE source = 'learned'")
-            ids = [r[0] for r in cursor.fetchall()]
-            if ids:
+            all_ids = [r[0] for r in cursor.fetchall()]
+            if all_ids:
                 cursor.execute("DELETE FROM memories WHERE source = 'learned'")
+                self._delete_fts_ids(conn, all_ids)
                 conn.commit()
-        if ids:
+        if all_ids:
             try:
-                self.collection.delete(ids=ids)
+                self.collection.delete(ids=all_ids)
             except Exception:
                 pass
-        return len(ids)
+        return active_count
 
     def delete_memory(self, memory_id: str) -> bool:
         with self._conn() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            self._delete_fts_ids(conn, [memory_id])
             conn.commit()
 
         try:
@@ -706,30 +1208,65 @@ class MemoryStore:
     def get_counts(self) -> tuple[int, int]:
         with self._conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM memories")
+            cursor.execute("SELECT COUNT(*) FROM memories WHERE valid_to IS NULL")
             total_memories = int(cursor.fetchone()[0])
             cursor.execute("SELECT COUNT(*) FROM sessions")
             total_sessions = int(cursor.fetchone()[0])
             return total_memories, total_sessions
 
-    def get_all_memories(self) -> List[Dict[str, Any]]:
+    def get_all_memories(
+        self,
+        include_history: bool = False,
+        as_of: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
         with self._conn() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM memories ORDER BY created_at ASC")
+            if as_of is not None:
+                ts = float(as_of)
+                cursor.execute(
+                    "SELECT * FROM memories WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?) "
+                    "ORDER BY created_at ASC",
+                    (ts, ts),
+                )
+            elif include_history:
+                cursor.execute("SELECT * FROM memories ORDER BY created_at ASC")
+            else:
+                cursor.execute("SELECT * FROM memories WHERE valid_to IS NULL ORDER BY created_at ASC")
             rows = cursor.fetchall()
-            return [
-                {
-                    "id": row["id"],
-                    "category": row["category"],
-                    "title": row["title"],
-                    "content": row["content"],
-                    "emotionalWeight": row["emotional_weight"],
-                    "source": row["source"],
-                    "createdAt": row["created_at"]
-                }
-                for row in rows
-            ]
+            return [self._memory_row_to_dict(row) for row in rows]
+
+    def get_memory_history(self, memory_id: str) -> List[Dict[str, Any]]:
+        """Returns the full chronological bitemporal version chain for any node in it."""
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+            if not cur:
+                return []
+
+            head_id = cur["id"]
+            seen = {head_id}
+            while True:
+                prev = conn.execute(
+                    "SELECT id FROM memories WHERE superseded_by = ? LIMIT 1",
+                    (head_id,),
+                ).fetchone()
+                if not prev or prev["id"] in seen:
+                    break
+                head_id = prev["id"]
+                seen.add(head_id)
+
+            chain: List[Dict[str, Any]] = []
+            visited = set()
+            next_id: Optional[str] = head_id
+            while next_id and next_id not in visited:
+                visited.add(next_id)
+                row = conn.execute("SELECT * FROM memories WHERE id = ?", (next_id,)).fetchone()
+                if not row:
+                    break
+                chain.append(self._memory_row_to_dict(row))
+                next_id = row["superseded_by"]
+            return chain
 
     # --- SQLite Sessions & History ---
     def create_session(self) -> str:

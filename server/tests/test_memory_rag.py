@@ -74,7 +74,7 @@ class TestMemoryRAG(unittest.TestCase):
             emotional_weight="Simpatia",
             source="learned",
         )
-        # Update same topic with different wording and title
+        # Update same topic with different wording and title -> non-destructive bitemporal supersede
         m2 = self.store.add_memory(
             category="user",
             title="Moradia do Operador",
@@ -82,7 +82,8 @@ class TestMemoryRAG(unittest.TestCase):
             emotional_weight="Curiosidade",
             source="learned",
         )
-        self.assertEqual(m1["id"], m2["id"])
+        self.assertNotEqual(m1["id"], m2["id"])
+        self.assertEqual(m2.get("supersedes"), m1["id"])
 
         # Add an unrelated user fact
         m3 = self.store.add_memory(
@@ -96,12 +97,18 @@ class TestMemoryRAG(unittest.TestCase):
 
         all_learned = [m for m in self.store.get_all_memories() if m["source"] == "learned"]
         self.assertEqual(len(all_learned), 2)
-        updated = next(m for m in all_learned if m["id"] == m1["id"])
+        updated = next(m for m in all_learned if m["id"] == m2["id"])
         self.assertIn("Campinas", updated["content"])
+
+        all_with_hist = [m for m in self.store.get_all_memories(include_history=True) if m["source"] == "learned"]
+        self.assertEqual(len(all_with_hist), 3)
+        old_m1 = next(m for m in all_with_hist if m["id"] == m1["id"])
+        self.assertIsNotNone(old_m1["validTo"])
+        self.assertEqual(old_m1["supersededBy"], m2["id"])
 
         deleted_count = self.store.clear_learned_memories()
         self.assertEqual(deleted_count, 2)
-        self.assertEqual([m for m in self.store.get_all_memories() if m["source"] == "learned"], [])
+        self.assertEqual([m for m in self.store.get_all_memories(include_history=True) if m["source"] == "learned"], [])
 
     def test_04_sanitization_and_length_bounds(self):
         long_content = "Linha 1\nLinha 2\r\n" + ("A" * 350)

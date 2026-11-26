@@ -23,6 +23,12 @@ MEMORY_MAX_DISTANCE: float = 1.00
 EXEMPLAR_MAX_DISTANCE: float = 0.65
 UPSERT_MAX_DISTANCE: float = 0.75
 
+# Hybrid Retrieval (FTS5 + Vector RRF) & Belief Activation (v0.4.0)
+RRF_K: int = 60
+FTS_STANDALONE_BM25_MAX: float = -0.8
+BELIEF_HALF_LIFE_DAYS: float = 30.0
+GRAPH_RECALL_TIMEOUT_SEC: float = float(os.environ.get("AMADEUS_GRAPH_TIMEOUT_SEC") or "0.35")
+
 # Ensure runtime directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
