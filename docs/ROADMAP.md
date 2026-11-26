@@ -107,7 +107,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🟢 `v0.3.3`: Persistent ONNX Session, KV Prefix Cache, Non-Blocking RAG & Honest Benchmarks (Completed — Current)
+### 🟢 `v0.3.3`: Persistent ONNX Session, KV Prefix Cache, Non-Blocking RAG & Honest Benchmarks (Completed)
 *Focus: Eliminating per-query ONNX reloads and fixed-256 CPU padding, keeping the FastAPI event loop non-blocking, optimizing KV prefix caching, and separating uncached vs. cached RAG latency.*
 1. ✅ **Persistent `ONNXMiniLM_L6_V2` & Dynamic Single-Query Padding (`memory_store.py`)**:
    - Added `_PersistentDefaultEF(DefaultEmbeddingFunction)` keeping one `ONNXMiniLM_L6_V2` session resident in RAM (fixing ChromaDB `1.5.9`'s per-call reload) and disabling fixed 256-token padding on single queries (`enable_truncation(max_length=256)` preserved), cutting uncached `rag_cold_query_ms` `p50` from `389.6 ms` to **`9.7 ms`** (**`40×` faster**) with `max_abs_diff < 1e-5`.
@@ -121,7 +121,29 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🔨 `v0.4.0`: Flexible 3-Tier Multimodal Vision & Co-Pilot (Next Step)
+### 🔨 `v0.4.0`: Amadeus Cognitive Core, MCP Agentic Tooling & Automated Evals (In Progress — `feat/v040-cognitive-core`)
+*Focus: Asynchronous sleep-time memory consolidation, safe agentic MCP tool execution with Human-in-the-Loop approvals, quantitative evaluation gates, and bitemporal + emotional continuity.*
+1. ✅ **Cognitive Core Infra, RAM Core Memory & Sleep-Time Compute (Slice 1 — Completed)**:
+   - Implemented `complete_background()` structured-output runner (`background.py`) with Gemini schema sanitization, `/models` 404 fallback discovery, and Gemini ↔ Groq failover.
+   - Added RAM-resident 4-block `CoreMemory` (`0 ms` KV-prefix injection + `/api/core-memory` CRUD) and coalescing `CognitiveWorker` (`hangup` + `idle`) with per-session exponential backoff, global circuit breaker (`cognitive.circuit_open`), and `CURRENT DATE` grounding.
+   - Exposed non-secret `.env` provider auto-detection in `/api/health` + UI, added `.env` cross-provider failover (`Groq → OpenRouter → Gemini`), and handled Gemini 3 compatibility (penalty omission + `thoughtSignature` preservation).
+2. ✅ **Zero-Dependency MCP Client, Bounded Tool Loop & Atomic HITL Approvals (Slice 2 — Completed)**:
+   - Built stdlib JSON-RPC 2.0 `stdio` (`Popen` compatible with Windows `--reload`) and SSRF-guarded Streamable HTTP transports (`mcp_client.py`) plus opt-in reference server `mcp_lab_notes_server.py` (`0 ms` overhead when unconfigured).
+   - Enforced a fail-closed policy gate (ignoring external `readOnlyHint`, `jsonschema` validation, hard timeouts, and `UNTRUSTED EXTERNAL DATA` wrapping) alongside a bounded `max_steps=3` tool loop in `/api/chat` and `/api/chat/stream`.
+   - Added atomic single-use SQLite HITL approvals (`200`/`409`/`410`/`404`) via `/api/tools` and `/api/tools/approvals/*` plus `tools` telemetry in `GET /api/metrics`.
+3. ✅ **Automated Evals, Optional LLM-as-a-Judge & Baseline Regression Diff (Slice 3 — Completed)**:
+   - Added versioned `server/evals/golden_dataset.json`, CLI `server/scripts/run_evals.py` (`--offline`, `--live`, `--judge`, `--compare`), and CI-integrated `server/tests/test_evals.py` (`114/114` backend tests passing).
+   - Established deterministic 5-suite offline gates (RAG baseline `R@1=0.83`, `R@K=0.92`, `MRR=0.88`, `FP_Rej=1.00`, Lorebook `6/6`, Hygiene `8/8`, MCP Safety `7/7`, Cognitive `5/5`) plus live structured `EvalJudgeVerdict` scoring via `complete_background()` (`6/6` turns, `4.79/5.0` avg).
+4. ⏳ **Bitemporal SQLite Memory, FTS5 Hybrid RRF & Beliefs (Slice 4 — Next)**:
+   - Local 0-infra bitemporal history (`valid_from`/`valid_to`, non-destructive superseding), SQLite FTS5 + ChromaDB Reciprocal Rank Fusion (benchmarked against Slice 3's baseline via `--compare`), ACT-R/Ebbinghaus confidence-weighted Beliefs, and optional pluggable Graphiti (FalkorDB / Neo4j) adapter interface.
+5. ⏳ **Continuous PAD + Rapport Engine & Cognitive/HITL React UI (Slice 5 — Planned)**:
+   - 3D continuous emotional state (**PAD + Rapport**, *Tsundere Paradox* mapped to the 22 emotions), Core Memory/Beliefs tabs in `MemoryInspectorModal.tsx`, interactive HITL approval cards in chat, and cognitive/tool metrics in `Setup → SYSTEM`.
+6. ⏳ **Semantic End-of-Turn & Local Micro-Fillers (Slice 6 — Planned)**:
+   - CPU ONNX turn-taking (`pipecat-ai/smart-turn`, ~8 MB) and zero-latency local vocal micro-fillers during tool/LLM waits.
+
+---
+
+### 👁️ `v0.5.0`: Flexible 3-Tier Multimodal Vision & Co-Pilot (Realigned)
 *Focus: Giving Kurisu genuine visual perception of the operator's workspace, screen, and documents without forcing expensive APIs or heavy local models.*
 1. **3-Tier Vision Engines (Configurable in Settings > Vision)**:
    - **Tier 1 (Default — Free Cloud):** `Gemini 2.5 Flash` / `Groq Vision` / Remote Colab worker (`Qwen2.5-VL`) with 0 GB local VRAM footprint, high-resolution code and PDF reading.
@@ -145,7 +167,7 @@ No feature in OpenAmadeus may force the user into expensive enterprise APIs or r
 
 ---
 
-### 🪟 `v0.5.0`: Native Tauri v2 Desktop Companion & Always-on-Top Widget
+### 🪟 `v0.6.0`: Native Tauri v2 Desktop Companion & Always-on-Top Widget (Realigned)
 *Focus: Transforming OpenAmadeus into a native desktop companion running seamlessly alongside any workflow.*
 1. **Tauri v2 Desktop Shell (~15 MB RAM)**:
    - Native Rust/WebView2 wrapper over the existing React 19/Vite frontend with Python FastAPI sidecar managed via Windows Job Objects (guaranteeing zero orphaned GPU processes on exit).
